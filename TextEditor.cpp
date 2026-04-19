@@ -455,6 +455,10 @@ void TextEditor::renderText() {
 //
 
 void TextEditor::renderCursors() {
+	// Read-only: no caret
+	if (config.readOnly)
+		return;
+
 	// update cursor animation timer
 	cursorAnimationTimer = std::fmod(cursorAnimationTimer + ImGui::GetIO().DeltaTime, 1.0f);
 
