@@ -15,9 +15,13 @@
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "../TextEditor.h"
 #include "../TextDiff.h"
+#include "../extras/LspBridge.h"
+#include "../extras/Notifications.h"
+#include "../extras/TrieAutoComplete.h"
 
 
 //
@@ -61,9 +65,6 @@ public:
 	void renderConfirmQuit();
 	void renderConfirmError();
 
-	void setAutocompleteMode(bool flag);
-	void buildAutocompleteTrie();
-
 	inline bool isDirty() const { return editor.GetUndoIndex() != version; }
 	inline bool isSavable() const { return isDirty() && filename != "untitled"; }
 
@@ -74,15 +75,55 @@ public:
 	std::string filename;
 	size_t version;
 	bool done = false;
+	bool popup = true;
 	std::string errorMessage;
 	std::function<void()> onConfirmClose;
 
-	float fontSize = 17.0f;
-	inline void increaseFontSIze() { fontSize = std::clamp(fontSize + 1.0f, 8.0f, 24.0f); }
-	inline void decreaseFontSIze() { fontSize = std::clamp(fontSize - 1.0f, 8.0f, 24.0f); }
+	TextEditor::LineBreakConfig lineBreakConfig;
 
-	bool autocomplete = false;
-	TextEditor::Trie trie;
+	float fontSize = 17.0f;
+	inline void resetFontSize() { fontSize = 17.0f; }
+	inline void increaseFontSize() { fontSize = std::clamp(fontSize + 1.0f, 8.0f, 24.0f); }
+	inline void decreaseFontSize() { fontSize = std::clamp(fontSize - 1.0f, 8.0f, 24.0f); }
+
+	inline void setDarkPalette() {
+		ImGui::StyleColorsDark();
+		editor.SetPalette(editor.GetDarkPalette());
+		diff.SetPalette(editor.GetDarkPalette());
+	}
+
+	inline void setLightPalette() {
+		ImGui::StyleColorsLight();
+		editor.SetPalette(editor.GetLightPalette());
+		diff.SetPalette(editor.GetLightPalette());
+	}
+
+	void setLanguage(const TextEditor::Language* language);
+	void setLanguageByName(const std::string& name);
+	void setLanguageByExtention(const std::string& filename);
+
+	// examples
+	void toggleTrieAutoComplete();
+	void toggleLspBridge();
+	void toggleShowWordAtMouse();
+	void toggleLineMarkers();
+	void toggleLineDecorator();
+	void toggleContextMenus();
+	void toggleLineBreak();
+
+	bool demoTrieAutoComplete = false;
+	bool demoLspBridge = false;
+	bool showWordAtMouse = false;
+	bool showLineMarkers = false;
+	bool showLineDecorator = false;
+	bool showContextMenus = false;
+
+	TrieAutoComplete trieAutoComplete;
+	LspBridge lsp;
+	static constexpr int lspOptions = LspBridge::autocomplete | LspBridge::showHoverHelp;
+
+	// notification system
+	Notifications notifications;
 
 	// editor state
 	enum class State {

@@ -15,11 +15,11 @@ editor.SetLineDecorator(41.0f, [](TextEditor::Decorator& decorator) {
 
 		if (decorator.line == 15) {
 			if (ImGui::Button("^", ImVec2(size, size))) {
-				// performing useless action
+				// performing useful action
 			}
 
 			if (ImGui::IsItemHovered()) {
-				ImGui::SetTooltip("Perform useless action");
+				ImGui::SetTooltip("Perform useful action");
 			}
 
 		} else {
