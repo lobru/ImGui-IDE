@@ -143,7 +143,7 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border) {
 		// render parts in the text area
 		renderActiveBracketBackground();
 		renderSelections();
-		renderMarkers();
+		renderTextMarkers();
 		renderMatchingBracketLines();
 		renderText();
 		renderCursors();
@@ -152,6 +152,7 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border) {
 		drawList->PopClipRect();
 
 		// render other parts
+		renderLineNumberMarkers();
 		renderLineNumbers();
 		renderDecorations();
 		renderFoldIndicators();
@@ -294,10 +295,10 @@ void TextEditor::renderSelections() {
 
 
 //
-//	TextEditor::renderMarkers
+//	TextEditor::renderTextMarkers
 //
 
-void TextEditor::renderMarkers() {
+void TextEditor::renderTextMarkers() {
 	if (markers.size()) {
 		auto drawList = ImGui::GetWindowDrawList();
 
@@ -307,22 +308,6 @@ void TextEditor::renderMarkers() {
 			if (markerIndex) {
 				auto& marker = markers[markerIndex - 1];
 				auto y = cursorScreenPos.y + row * glyphSize.y;
-
-				if (((marker.lineNumberColor >> IM_COL32_A_SHIFT) & 0xFF) != 0) {
-					auto left = cursorScreenPos.x + lineNumberLeftOffset;
-					auto right = cursorScreenPos.x + lineNumberRightOffset;
-					auto start = ImVec2(left, y);
-					auto end = ImVec2(right, y + glyphSize.y);
-					drawList->AddRectFilled(start, end, marker.lineNumberColor);
-
-					if (marker.lineNumberTooltip.size() && ImGui::IsMouseHoveringRect(start, end)) {
-						ImGui::PushStyleColor(ImGuiCol_PopupBg, marker.lineNumberColor);
-						ImGui::BeginTooltip();
-						ImGui::TextUnformatted(marker.lineNumberTooltip.c_str());
-						ImGui::EndTooltip();
-						ImGui::PopStyleColor();
-					}
-				}
 
 				if (((marker.textColor >> IM_COL32_A_SHIFT) & 0xFF) != 0) {
 					auto left = cursorScreenPos.x + textLeftOffset;
@@ -502,6 +487,42 @@ void TextEditor::renderCursors() {
 			context->PlatformImeData.InputPos = ImVec2(cursorScreenPos.x - 1.0f, cursorScreenPos.y - context->FontSize);
 			context->PlatformImeData.InputLineHeight = context->FontSize;
 			context->PlatformImeData.ViewportId = ImGui::GetCurrentWindow()->Viewport->ID;
+		}
+	}
+}
+
+
+//
+//	TextEditor::renderLineNumberMarkers
+//
+
+void TextEditor::renderLineNumberMarkers() {
+	if (markers.size()) {
+		auto drawList = ImGui::GetWindowDrawList();
+
+		for (size_t row = firstVisibleRow; row <= lastVisibleRow; row++) {
+			auto markerIndex = document[typeSetter[row].line].marker;
+
+			if (markerIndex) {
+				auto& marker = markers[markerIndex - 1];
+				auto y = cursorScreenPos.y + row * glyphSize.y;
+
+				if (((marker.lineNumberColor >> IM_COL32_A_SHIFT) & 0xFF) != 0) {
+					auto left = cursorScreenPos.x + lineNumberLeftOffset;
+					auto right = cursorScreenPos.x + lineNumberRightOffset;
+					auto start = ImVec2(left, y);
+					auto end = ImVec2(right, y + glyphSize.y);
+					drawList->AddRectFilled(start, end, marker.lineNumberColor);
+
+					if (marker.lineNumberTooltip.size() && ImGui::IsMouseHoveringRect(start, end)) {
+						ImGui::PushStyleColor(ImGuiCol_PopupBg, marker.lineNumberColor);
+						ImGui::BeginTooltip();
+						ImGui::TextUnformatted(marker.lineNumberTooltip.c_str());
+						ImGui::EndTooltip();
+						ImGui::PopStyleColor();
+					}
+				}
+			}
 		}
 	}
 }
@@ -1708,22 +1729,21 @@ void TextEditor::handlePossibleScrolling() {
 
 	// scroll to specified line (if required)
 	if (scrollToLineNumber != invalidLine) {
-		scrollToLineNumber = std::min(scrollToLineNumber, document.size());
-		auto row = docPos2VisPos(DocPos(scrollToLineNumber, 0)).row;
-		auto visibleRows = lastVisibleRow - firstVisibleRow;
+		auto lineNo = static_cast<float>(std::min(scrollToLineNumber, document.size()));
+		auto visibleRows = static_cast<float>(lastVisibleRow - firstVisibleRow);
 		scrollX = 0.0f;
 
 		switch (scrollToAlignment) {
 			case Scroll::alignTop:
-				scrollY = static_cast<float>(row * glyphSize.y);
+				scrollY = static_cast<float>(docPos2VisPos(DocPos(scrollToLineNumber, 0)).row * glyphSize.y);
 				break;
 
 			case Scroll::alignMiddle:
-				scrollY = std::max(0.0f, static_cast<float>(scrollToLineNumber - visibleRows / 2) * glyphSize.y);
+				scrollY = std::max(0.0f, (lineNo - visibleRows / 2.0f) * glyphSize.y);
 				break;
 
 			case Scroll::alignBottom:
-				scrollY = std::max(0.0f, static_cast<float>(scrollToLineNumber - (visibleRows - 1)) * glyphSize.y);
+				scrollY = std::max(0.0f, (lineNo - (visibleRows - 1.0f)) * glyphSize.y);
 				break;
 		}
 
@@ -4335,13 +4355,16 @@ void TextEditor::Bracketeer::update(Config& config, Document& document) {
 	// see if the configuration changed
 	bool configChanged =
 		showMatchingBrackets != config.showMatchingBrackets ||
+		lineFolding || config.lineFolding ||
 		language != config.language;
 
 	showMatchingBrackets = config.showMatchingBrackets;
+	lineFolding = config.lineFolding;
 	language = config.language;
 
-	if (configChanged && !showMatchingBrackets) {
-		// if configuration changed to not showing matching brackets, just clear the bracket pair list
+	if (configChanged && !showMatchingBrackets && !lineFolding) {
+		// if configuration changed to not showing matching brackets and/or not line folding
+		// just clear the bracket pair list
 		clear();
 
 	} else if (configChanged || document.isUpdated()) {

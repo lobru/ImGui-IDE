@@ -1235,6 +1235,7 @@ protected:
 
 	private:
 		bool showMatchingBrackets = false;
+		bool lineFolding = false;
 		const Language* language;
 		bool updated = false;
 	} bracketeer;
@@ -1448,10 +1449,11 @@ protected:
 	void render(const char* title, const ImVec2& size, bool border);
 	void renderActiveBracketBackground();
 	void renderSelections();
-	void renderMarkers();
+	void renderTextMarkers();
 	void renderMatchingBracketLines();
 	void renderText();
 	void renderCursors();
+	void renderLineNumberMarkers();
 	void renderLineNumbers();
 	void renderDecorations();
 	void renderFoldIndicators();
