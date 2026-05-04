@@ -118,11 +118,11 @@ public:
 	inline bool IsShowScrollbarMiniMapEnabled() const { return config.showScrollbarMiniMap; }
 	inline void SetShowPanScrollIndicatorEnabled(bool value) { config.showPanScrollIndicator = value; }
 	inline bool IsShowPanScrollIndicatorEnabled() const { return config.showPanScrollIndicator; }
-	inline void SetShowMatchingBrackets(bool value) { config.showMatchingBrackets = value; }
+	inline void SetShowMatchingBrackets(bool value) { config.showMatchingBrackets = value; if (!value) { config.lineFolding = false; } }
 	inline bool IsShowingMatchingBrackets() const { return config.showMatchingBrackets; }
 	inline void SetCompletePairedGlyphs(bool value) { config.completePairedGlyphs = value; }
 	inline bool IsCompletingPairedGlyphs() const { return config.completePairedGlyphs; }
-	inline void SetLineFoldingEnabled(bool value) { config.lineFolding = value; }
+	inline void SetLineFoldingEnabled(bool value) { config.lineFolding = value; if (value) { config.showMatchingBrackets = true; } }
 	inline bool IsLineFoldingEnabled() const { return config.lineFolding; }
 	inline void SetOverwriteEnabled(bool value) { config.overwrite = value; }
 	inline bool IsOverwriteEnabled() const { return config.overwrite; }
@@ -1235,7 +1235,6 @@ protected:
 
 	private:
 		bool showMatchingBrackets = false;
-		bool lineFolding = false;
 		const Language* language;
 		bool updated = false;
 	} bracketeer;
@@ -1539,10 +1538,10 @@ protected:
 	void moveDown(size_t rows, bool select);
 	void moveLeft(bool select, bool wordMode);
 	void moveRight(bool select, bool wordMode);
-	void moveToTop(bool select);
-	void moveToBottom(bool select);
-	void moveToStartOfLine(bool select);
-	void moveToEndOfLine(bool select);
+	inline void moveToTop(bool select) { moveTo(document.getTop(), select); }
+	inline void moveToBottom(bool select) { moveTo(document.getBottom(), select); }
+	inline void moveToStartOfLine(bool select) { moveTo(document.getStartOfLine(cursors.getCurrent().getInteractiveEnd()), select); }
+	inline void moveToEndOfLine(bool select) { moveTo(document.getEndOfLine(cursors.getCurrent().getInteractiveEnd()), select); }
 	void moveTo(DocPos coordinate, bool select);
 
 	// add/delete characters

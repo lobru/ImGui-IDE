@@ -1897,65 +1897,12 @@ void TextEditor::moveRight(bool select, bool wordMode) {
 
 
 //
-//	TextEditor::moveToTop
-//
-
-void TextEditor::moveToTop(bool select) {
-	cursors.clearAdditional();
-	cursors.updateCurrentCursor(document.getTop(), select);
-	makeCursorVisible();
-	navigatingVertically = false;
-}
-
-
-//
-//	TextEditor::moveToBottom
-//
-
-void TextEditor::moveToBottom(bool select) {
-	cursors.clearAdditional();
-	cursors.updateCurrentCursor(document.getBottom(), select);
-	makeCursorVisible();
-	navigatingVertically = false;
-}
-
-
-//
-//	TextEditor::moveToStartOfLine
-//
-
-void TextEditor::moveToStartOfLine(bool select) {
-	cursors.clearAdditional();
-	cursors.updateCurrentCursor(document.getStartOfLine(cursors.getCurrent().getInteractiveEnd()), select);
-	makeCursorVisible();
-	navigatingVertically = false;
-}
-
-
-//
-//	TextEditor::moveToEndOfLine
-//
-
-void TextEditor::moveToEndOfLine(bool select) {
-	cursors.clearAdditional();
-	cursors.updateCurrentCursor(document.getEndOfLine(cursors.getCurrent().getInteractiveEnd()), select);
-	makeCursorVisible();
-	navigatingVertically = false;
-}
-
-
-//
 //	TextEditor::moveTo
 //
 
 void TextEditor::moveTo(DocPos coordinate, bool select) {
 	cursors.clearAdditional();
 	cursors.updateCurrentCursor(coordinate, select);
-
-	if (config.lineFolding) {
-		lineFold.unfoldAroundLine(document, coordinate.line);
-	}
-
 	makeCursorVisible();
 	navigatingVertically = false;
 }
@@ -4355,19 +4302,31 @@ void TextEditor::Bracketeer::update(Config& config, Document& document) {
 	// see if the configuration changed
 	bool configChanged =
 		showMatchingBrackets != config.showMatchingBrackets ||
-		lineFolding || config.lineFolding ||
 		language != config.language;
 
 	showMatchingBrackets = config.showMatchingBrackets;
-	lineFolding = config.lineFolding;
 	language = config.language;
 
-	if (configChanged && !showMatchingBrackets && !lineFolding) {
-		// if configuration changed to not showing matching brackets and/or not line folding
-		// just clear the bracket pair list
+	if (configChanged && !showMatchingBrackets) {
+		// if configuration changed, clear the bracket pair list
 		clear();
 
-	} else if (configChanged || document.isUpdated()) {
+		// and reset glyph colors
+		for (size_t line = 0; line < document.size(); line++) {
+			for (size_t index = 0; index < document[line].size(); index++) {
+				auto& glyph = document[line][index];
+
+				if (glyph.color == Color::matchingBracketLevel1 ||
+					glyph.color == Color::matchingBracketLevel2 ||
+					glyph.color == Color::matchingBracketLevel3 ||
+					glyph.color == Color::matchingBracketError) {
+
+					glyph.color = Color::punctuation;
+				}
+			}
+		}
+
+	} else if (showMatchingBrackets && (configChanged || document.isUpdated())) {
 		// if configuration or document changed, recalculate bracket pair list
 		static const Color bracketColors[] = {
 			Color::matchingBracketLevel1,
@@ -7199,7 +7158,9 @@ bool TextEditor::LineFold::update(const Config& config, Document& document, cons
 
 	// see if configuration changed
 	if (lineFolding != config.lineFolding) {
-		if (lineFolding) {
+		lineFolding = config.lineFolding;
+
+		if (!lineFolding) {
 			// line folding is turned off, clear list and reset all lines
 			clear();
 
@@ -7208,7 +7169,6 @@ bool TextEditor::LineFold::update(const Config& config, Document& document, cons
 			}
 		}
 
-		lineFolding = config.lineFolding;
 		updated = true;
 	}
 
