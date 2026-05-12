@@ -136,8 +136,8 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border) {
 		auto drawList = ImGui::GetWindowDrawList();
 
 		drawList->PushClipRect(
-			ImVec2(textLeftOffset, drawList->GetClipRectMin().y),
-			ImVec2(textRightOffset, drawList->GetClipRectMax().y),
+			ImVec2(cursorScreenPos.x + textLeftOffset, drawList->GetClipRectMin().y),
+			ImVec2(cursorScreenPos.x + textRightOffset, drawList->GetClipRectMax().y),
 			false);
 
 		// render parts in the text area
