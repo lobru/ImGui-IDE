@@ -202,7 +202,7 @@ See GImGui documentation in imgui.cpp for more details.
 
 - Delete Text:
 	- Backspace key deletes character to the left of cursor or deletes selection(s).
-	- Delete keydeletes character to the right of cursor or deletes selection(s).
+	- Delete key deletes character to the right of cursor or deletes selection(s).
 	- Ctrl-Shift-K deletes all selected lines.
 
 - Text Manipulation:
