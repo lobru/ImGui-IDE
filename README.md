@@ -91,7 +91,6 @@ features are however included.
 - Provides auto completion for paired glyphs (\[, \{, \(, \", \') (can be turned on and off).
 - If auto complete is turned on, accidentally typed closing glyphs are ignored.
 - If auto complete is turned on, selections can be surrounded by paired glyphs.
-- Supports blinking cursor (can be turned on/off using Dear ImGui's global io.ConfigInputTextCursorBlink flag).
 - Supports bracket matching and coloring similar to Visual Studio Code (can be turned on and off).
 - Supports multiple cursors and multiple selections.
 - Provides auto indent with simplified implementation (can be turned on and off).
@@ -101,6 +100,8 @@ features are however included.
 - Tabs to Space (and visa versa) are examples of line filtering.
 - Has API to strip trailing whitespaces.
 - Provides whitespace indicators for tabs and spaces (can be turned on and off individually or collectively).
+- Supports blinking caret(s)/cursor(s) (can be turned on/off using Dear ImGui's global io.ConfigInputTextCursorBlink flag).
+- Supports caret(s)/cursor(s) hiding through API (default is that they are visible even in readonly mode).
 - No longer uses regular expressions for colorizing text (see below).
 - Provides an example Language Server Protocol (LSP) bridge (see [example](docs/lsp.md)).
 - Provides an optional companion widget to show differences between versions of text (see below).
