@@ -148,7 +148,7 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border) {
 		renderText();
 		renderCursors();
 
-		// end to clipping
+		// end clipping
 		drawList->PopClipRect();
 
 		// render other parts
@@ -909,7 +909,14 @@ void TextEditor::updateState() {
 	bracketeer.update(config, document);
 	lineFold.update(config, document, bracketeer);
 	cursors.update(document);
-	typeSetter.update(config, document, lineFold);
+
+	auto previousFirstLine = visPos2DocPos(VisPos(firstVisibleRow, 0)).line;
+
+	if (typeSetter.update(config, document, lineFold)) {
+		// see if we can scroll to preserve the first visible line
+		scrollToLine(previousFirstLine, Scroll::alignTop);
+	}
+
 	miniMap.update(config, document, typeSetter);
 
 	// handle possible delayed change callback
@@ -1189,9 +1196,9 @@ void TextEditor::handleMouseInteractions() {
 		io.WantCaptureMouse = true;
 
 		if (miniMapIsScrollbar) {
-			auto pixelOffset = absoluteMousePos.y - miniMapScrollStart;
-			auto offset = pixelOffset * totalSize.y / textSize.y;
-			auto scrollY = miniMapScrollY + offset;
+			auto localOffset = absoluteMousePos.y - miniMapScrollStart;
+			auto documentOffset = localOffset * totalSize.y / textSize.y;
+			auto scrollY = miniMapScrollY + documentOffset;
 			scrollY = std::clamp(scrollY, 0.0f, totalSize.y - textSize.y);
 			ImGui::SetScrollY(scrollY);
 
@@ -1757,21 +1764,21 @@ void TextEditor::handlePossibleScrolling() {
 
 	// scroll to specified line (if required)
 	if (scrollToLineNumber != invalidLine) {
-		auto lineNo = static_cast<float>(std::min(scrollToLineNumber, document.size()));
+		auto row = static_cast<float>(docPos2VisPos(DocPos(scrollToLineNumber, 0)).row);
 		auto visibleRows = static_cast<float>(lastVisibleRow - firstVisibleRow);
 		scrollX = 0.0f;
 
 		switch (scrollToAlignment) {
 			case Scroll::alignTop:
-				scrollY = static_cast<float>(docPos2VisPos(DocPos(scrollToLineNumber, 0)).row * glyphSize.y);
+				scrollY = row * glyphSize.y;
 				break;
 
 			case Scroll::alignMiddle:
-				scrollY = std::max(0.0f, (lineNo - visibleRows / 2.0f) * glyphSize.y);
+				scrollY = std::max(0.0f, (row - visibleRows / 2.0f) * glyphSize.y);
 				break;
 
 			case Scroll::alignBottom:
-				scrollY = std::max(0.0f, (lineNo - (visibleRows - 1.0f)) * glyphSize.y);
+				scrollY = std::max(0.0f, (row - (visibleRows - 1.0f)) * glyphSize.y);
 				break;
 		}
 
@@ -7605,6 +7612,10 @@ TextEditor::VisPos TextEditor::TypeSetter::docPos2VisPos(const Document& documen
 //
 
 TextEditor::DocPos TextEditor::TypeSetter::visPos2DocPos(const Document& document, VisPos pos) const {
+	if (pos.row >= size()) {
+		return DocPos(0, 0);
+	}
+
 	auto& row = at(pos.row);
 	auto& line = document[row.line];
 
@@ -7740,7 +7751,10 @@ void TextEditor::TypeSetter::screenPos2DocPos(const Document& document, ImVec2 s
 //
 
 TextEditor::VisPos TextEditor::TypeSetter::normalizePos(VisPos pos) const {
-	if (pos.row >= totalRows) {
+	if (totalRows == 0) {
+		return VisPos(0, 0);
+
+	} else if (pos.row >= totalRows) {
 		auto lastRow = totalRows - 1;
 		return VisPos(lastRow, at(lastRow).columns);
 
