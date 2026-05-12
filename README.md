@@ -301,12 +301,27 @@ Below are two screenshots of its use in both modes. Have a look at the code in t
 ## Extras
 
 This repository contains some optional companion classes for a simple autocomplete
-feature, a bridge to language servers and on-screen notification. Details on simple
+feature, a bridge to language servers and on-screen notifications. Details on simple
 autocomplete can be found [here](docs/autocomplete.md) and details on the language
 server bridge are [here](docs/lsp.md). Details of the "toast" notification system
 are [here](extras/Notification.h.) The source code for these components are in the
 [extras folder](extras/) and the [example application](example/) shows how
 to use them.
+
+## External Examples
+
+- [Pascal Thomet](https://github.com/pthom) has integrated this editor in his
+[Dear ImGui Bundle](https://github.com/pthom/imgui_bundle) and he has a very
+nice online [web-based demonstration](https://imgui-bundle.pages.dev/explorer/).
+You can see the editor [here](https://imgui-bundle.pages.dev/explorer/demo_text_edit)
+and source code is available
+[here](https://github.com/pthom/imgui_bundle/blob/main/bindings/imgui_bundle/demos_cpp/demo_text_edit.cpp).
+
+- [Yan Pujante](https://github.com/ypujante) has integrated this editor in his
+[WebGPU Shader Toy](https://pongasoft.github.io/webgpu-shader-toy/) and you can
+find the source code [here](https://codeberg.org/pongasoft/webgpu-shader-toy).
+This is another fine example on how far web technology has come and how easy
+it is to use this editor on a web page.
 
 ## Issues
 
