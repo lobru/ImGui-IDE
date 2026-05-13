@@ -108,6 +108,7 @@ Editor::Editor() {
 	filename = "untitled.cpp";
 
 	setLanguageByExtention(filename);
+	editor.SetShowMiniMapEnabled(true);
 
 	// configure line breaker
 	lineBreakConfig.lb2 = false;
