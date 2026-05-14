@@ -200,7 +200,7 @@ See GImGui documentation in imgui.cpp for more details.
 	- Ctrl-Enter adds line below.
 	- Ctrl-Shift-Enter adds line above.
 
-- Delete Text:
+	- Delete Text:
 	- Backspace key deletes character to the left of cursor or deletes selection(s).
 	- Delete key deletes character to the right of cursor or deletes selection(s).
 	- Ctrl-Shift-K deletes all selected lines.
@@ -209,7 +209,7 @@ See GImGui documentation in imgui.cpp for more details.
 	- Ctrl-] indents current line or current lines.
 	- Ctrl-[ de-indents current line or current lines.
 	- Tab with selection indents current line or current lines.
-	- Shift-Tab with selection de-indents current line or current lines.
+	- Shift-Tab de-indents current line or current lines.
 	- Alt-UpArrow moves current or all selected lines up.
 	- Alt-DownArrow moves current or all selected lines down.
 	- Ctrl-/ toggles line comments for current or selected lines if language with single line comments is specified.
