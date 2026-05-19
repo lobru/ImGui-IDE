@@ -1130,7 +1130,8 @@ void TextEditor::handleMouseInteractions() {
 	auto mousePos = ImGui::GetMousePos() - cursorScreenPos;
 	auto absoluteMousePos = ImGui::GetMousePos() - ImGui::GetWindowPos();
 	auto overLineNumbers = config.showLineNumbers && (absoluteMousePos.x > lineNumberLeftOffset) && (absoluteMousePos.x < lineNumberRightOffset);
-	auto overText = mousePos.x - ImGui::GetScrollX() > textLeftOffset && mousePos.x - ImGui::GetScrollX() < textRightOffset;
+	auto overText = mousePos.x - ImGui::GetScrollX() > textLeftOffset && mousePos.x - ImGui::GetScrollX() < textRightOffset
+		&& mousePos.y - ImGui::GetScrollY() >= 0 && mousePos.y - ImGui::GetScrollY() < textSize.y;
 	auto overMiniMap = config.showMiniMap && absoluteMousePos.x > miniMapOffset;
 
 	DocPos glyphPos;
