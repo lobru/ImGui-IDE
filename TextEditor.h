@@ -1672,6 +1672,7 @@ protected:
 	DocPos completePairLocation;
 	bool panning = false;
 	bool scrolling = false;
+	bool selectingText = false;
 	ImVec2 scrollStart;
 	std::function<void()> delayedChangeCallback;
 	std::chrono::milliseconds delayedChangeDelay;
