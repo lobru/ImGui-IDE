@@ -87,7 +87,7 @@ features are however included.
 - Has API to attach user data to select lines or all lines (see [example](docs/userData.md)).
 - Has API to decorate each line (useful for debuggers and IDEs) (see [example](docs/lineDecorator.md)).
 - Provides optional and customizable right click (control + click on MacOS) context menus for line numbers or text lines (see [example](docs/contextMenus.md))
-- Provides a glyph hover-over help system (see [example](doc/hover.md)).
+- Provides a glyph hover-over help system (see [example](docs/hover.md)).
 - Provides auto completion for paired glyphs (\[, \{, \(, \", \') (can be turned on and off).
 - If auto complete is turned on, accidentally typed closing glyphs are ignored.
 - If auto complete is turned on, selections can be surrounded by paired glyphs.
@@ -304,7 +304,7 @@ This repository contains some optional companion classes for a simple autocomple
 feature, a bridge to language servers and on-screen notifications. Details on simple
 autocomplete can be found [here](docs/autocomplete.md) and details on the language
 server bridge are [here](docs/lsp.md). Details of the "toast" notification system
-are [here](extras/Notification.h.) The source code for these components are in the
+are [here](extras/Notifications.h). The source code for these components are in the
 [extras folder](extras/) and the [example application](example/) shows how
 to use them.
 
@@ -328,7 +328,7 @@ it is to use this editor on a web page.
 If you are interested in using this Text Editor, steal parts of the code, make
 suggestions for improvements or contribute fixes/enhancements, be my guest as this
 repository is released under the MIT license. For people that want to contribute,
-[Contributing Guidelines](CONTRIBUTING.md) and a [Code of Conduct](CODE_OF_CONDUCT.md)
+[Contributing Guidelines](CONTRIBUTING) and a [Code of Conduct](CODE_OF_CONDUCT.md)
 are available. If you find any problems or want to make a suggestion for improvement, please
 [raise an issue on this repository](https://github.com/goossens/ImGuiColorTextEdit/issues).
 
