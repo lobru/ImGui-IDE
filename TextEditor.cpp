@@ -1130,7 +1130,8 @@ void TextEditor::handleMouseInteractions() {
 	auto mousePos = ImGui::GetMousePos() - cursorScreenPos;
 	auto absoluteMousePos = ImGui::GetMousePos() - ImGui::GetWindowPos();
 	auto overLineNumbers = config.showLineNumbers && (absoluteMousePos.x > lineNumberLeftOffset) && (absoluteMousePos.x < lineNumberRightOffset);
-	auto overText = mousePos.x - ImGui::GetScrollX() > textLeftOffset && mousePos.x - ImGui::GetScrollX() < textRightOffset;
+	auto overText = mousePos.x - ImGui::GetScrollX() > textLeftOffset && mousePos.x - ImGui::GetScrollX() < textRightOffset
+		&& mousePos.y - ImGui::GetScrollY() >= 0 && mousePos.y - ImGui::GetScrollY() < textSize.y;
 	auto overMiniMap = config.showMiniMap && absoluteMousePos.x > miniMapOffset;
 
 	DocPos glyphPos;
@@ -1201,14 +1202,14 @@ void TextEditor::handleMouseInteractions() {
 			scrollY = std::clamp(scrollY, 0.0f, totalSize.y - textSize.y);
 			ImGui::SetScrollY(scrollY);
 
-		} else if (overLineNumbers) {
+		} else if (selectingText && overLineNumbers) {
 			auto& cursor = cursors.getCurrent();
 			auto start = DocPos(cursorPos.line, 0);
 			auto end = normalizePos(DocPos(cursorPos.line + 1, 0));
 			cursor.update(cursor.getInteractiveEnd() < cursor.getInteractiveStart() ? start : end);
 			makeCursorVisible();
 
-		} else if (overText) {
+		} else if (selectingText && overText) {
 			cursors.updateCurrentCursor(cursorPos);
 			makeCursorVisible();
 		}
@@ -1216,6 +1217,10 @@ void TextEditor::handleMouseInteractions() {
 	// end minimap scroll (if required)
 	} else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && miniMapIsScrollbar) {
 		miniMapIsScrollbar = false;
+		selectingText = false;
+
+	} else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+		selectingText = false;
 
 	// ignore other interactions when the editor is not hovered
 	} else if (ImGui::IsWindowHovered()) {
@@ -1251,6 +1256,9 @@ void TextEditor::handleMouseInteractions() {
 			auto now = static_cast<float>(ImGui::GetTime());
 			auto tripleClick = !doubleClick && lastClickTime != -1.0f && (now - lastClickTime) < io.MouseDoubleClickTime;
 			lastClickTime = tripleClick ? -1.0f : now;
+
+			// remember whether this click started a text-selection drag
+			selectingText = overText || overLineNumbers;
 
 			if (tripleClick) {
 				// left mouse button triple click
