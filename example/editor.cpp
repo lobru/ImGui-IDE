@@ -414,6 +414,12 @@ void Editor::renderMenuBar() {
 				ImGui::EndMenu();
 			}
 
+			if (ImGui::BeginMenu("MiniMap Width")) {
+				float width = editor.GetMiniMapWidth();
+				if (ImGui::SliderFloat("##miniMapWidth", &width, 50.0f, 200.0f)) { editor.SetMiniMapWidth(width); }
+				ImGui::EndMenu();
+			}
+
 			if (ImGui::BeginMenu("Color Palette")) {
 				if (ImGui::MenuItem("Dark")) { setDarkPalette(); }
 				if (ImGui::MenuItem("Light")) { setLightPalette(); }
