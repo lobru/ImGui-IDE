@@ -15,9 +15,7 @@
 #define WIN32_LEAN_AND_MEAN
 #undef APIENTRY
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <string>
 
 #include <d3d11.h>
 #include <tchar.h>
@@ -42,6 +40,7 @@ static UINT resizeWidth = 0;
 static UINT resizeHeight = 0;
 static ID3D11RenderTargetView* mainRenderTargetView = nullptr;
 
+
 //
 //	forward declarations
 //
@@ -52,12 +51,12 @@ void CreateRenderTarget();
 void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+
 //
 //	example
 //
 
-int example()
-{
+int example() {
 	// make process DPI aware and obtain main monitor scale
 	ImGui_ImplWin32_EnableDpiAwareness();
 	float mainScale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
@@ -109,7 +108,12 @@ int example()
 
 	// generate debug information
 	editor.setDebugInformation([&]() {
-		return std::string("Backend: DirectX11\n");
+		std::string information = "Backend: DirectX11\n";
+		RECT rect;
+		::GetWindowRect(hwnd, &rect);
+		information += std::format("GetWindowRect: {}, {}\n", rect.right - rect.left, rect.bottom - rect.top);
+		information += std::format("GetDpiScaleForMonitor: {}\n", mainScale);
+		return information;
 	});
 
 	while (!editor.isDone()) {
@@ -173,13 +177,13 @@ int example()
 	return 0;
 }
 
+
 //
 // Helper functions
 //
 
 bool CreateDeviceD3D(HWND hWnd) {
-	// Setup swap chain
-	// This is a basic setup. Optimally could use e.g. DXGI_SWAP_EFFECT_FLIP_DISCARD and handle fullscreen mode differently. See #8979 for suggestions.
+	// setup swap chain
 	DXGI_SWAP_CHAIN_DESC sd;
 	ZeroMemory(&sd, sizeof(sd));
 	sd.BufferCount = 2;
@@ -197,7 +201,6 @@ bool CreateDeviceD3D(HWND hWnd) {
 	sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
 	UINT createDeviceFlags = 0;
-	//createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 	D3D_FEATURE_LEVEL featureLevel;
 	const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
 	HRESULT res = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &swapChain, &d3dDevice, &featureLevel, &d3dDeviceContext);
@@ -215,12 +218,14 @@ bool CreateDeviceD3D(HWND hWnd) {
 	return true;
 }
 
+
 void CleanupDeviceD3D() {
 	CleanupRenderTarget();
 	if (swapChain) { swapChain->Release(); swapChain = nullptr; }
 	if (d3dDeviceContext) { d3dDeviceContext->Release(); d3dDeviceContext = nullptr; }
 	if (d3dDevice) { d3dDevice->Release(); d3dDevice = nullptr; }
 }
+
 
 void CreateRenderTarget() {
 	ID3D11Texture2D* pBackBuffer;
@@ -229,12 +234,15 @@ void CreateRenderTarget() {
 	pBackBuffer->Release();
 }
 
+
 void CleanupRenderTarget() {
 	if (mainRenderTargetView) { mainRenderTargetView->Release(); mainRenderTargetView = nullptr; }
 }
 
+
 // forward declare message handler from imgui_impl_win32.cpp
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 
 //
 //	Win32 message handler

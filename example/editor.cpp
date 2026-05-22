@@ -864,7 +864,7 @@ void Editor::renderDebugInformation() {
 		}
 
 		auto io = ImGui::GetIO();
-		information += "Dear ImGui:\n";
+		information += "\n";
 		information += std::format("io.DisplaySize: {}, {}\n", io.DisplaySize.x, io.DisplaySize.y);
 		information += std::format("io.DisplayFramebufferScale: {}, {}\n", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
 		information += std::format("GetLineHeight: {}\n", editor.GetLineHeight());

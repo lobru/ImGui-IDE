@@ -13,7 +13,7 @@
 //
 
 #if D3D11
-#include "d3d11.h"
+#include "wind3d11.h"
 
 #else
 #include "sdl3gpu.h"
