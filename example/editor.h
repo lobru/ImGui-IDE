@@ -46,7 +46,10 @@ public:
 	// render the editor
 	void render();
 
-	private:
+	// debugging support
+	inline void setDebugInformation(std::function<std::string()> callback) { getBackendDebugInformation = callback; }
+
+private:
 	// private functions
 	void renderMenuBar();
 	void renderStatusBar();
@@ -64,6 +67,8 @@ public:
 	void renderConfirmClose();
 	void renderConfirmQuit();
 	void renderConfirmError();
+
+	void renderDebugInformation();
 
 	inline bool isDirty() const { return editor.GetUndoIndex() != version; }
 	inline bool isSavable() const { return isDirty() && filename != "untitled"; }
@@ -117,10 +122,13 @@ public:
 	bool showLineMarkers = false;
 	bool showLineDecorator = false;
 	bool showContextMenus = false;
+	bool showDebugInformation = false;
 
 	TrieAutoComplete trieAutoComplete;
 	LspBridge lsp;
 	static constexpr int lspOptions = LspBridge::autocomplete | LspBridge::showHoverHelp;
+
+	std::function<std::string()> getBackendDebugInformation;
 
 	// notification system
 	Notifications notifications;

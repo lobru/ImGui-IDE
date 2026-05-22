@@ -282,6 +282,11 @@ void Editor::render() {
 	ImGui::End();
 	ImGui::PopStyleVar();
 
+	// render debug information as a notification (if required)
+	if (showDebugInformation) {
+		renderDebugInformation();
+	}
+
 	// render notifications
 	auto mainWindowSize = ImGui::GetMainViewport()->Size;
 	auto mainWindowPos = ImGui::GetMainViewport()->Pos;
@@ -433,6 +438,7 @@ void Editor::renderMenuBar() {
 			flag = editor.IsShowScrollbarMiniMapEnabled(); if (ImGui::MenuItem("Show Scrollbar Mini Map", nullptr, &flag)) { editor.SetShowScrollbarMiniMapEnabled(flag); };
 			flag = editor.IsShowPanScrollIndicatorEnabled(); if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag)) { editor.SetShowPanScrollIndicatorEnabled(flag); };
 			flag = editor.IsMiddleMousePanMode(); if (ImGui::MenuItem("Middle Mouse Pan Mode", nullptr, &flag)) { if (flag) editor.SetMiddleMousePanMode(); else editor.SetMiddleMouseScrollMode(); };
+			ImGui::MenuItem("Unicode Line Break Algorithm", nullptr, &lineBreakConfig.useUnicodeAnnex14);
 			ImGui::EndMenu();
 		}
 
@@ -443,7 +449,8 @@ void Editor::renderMenuBar() {
 			if (ImGui::MenuItem("Show Line Markers", nullptr, &showLineMarkers)) { toggleLineMarkers(); }
 			if (ImGui::MenuItem("Show Line Decorator", nullptr, &showLineDecorator)) { toggleLineDecorator(); }
 			if (ImGui::MenuItem("Show Context Menus", nullptr, &showContextMenus)) { toggleContextMenus(); }
-			if (ImGui::MenuItem("Unicode Line Break Algorithm", nullptr, &lineBreakConfig.useUnicodeAnnex14)) { toggleLineBreak(); }
+			ImGui::Separator();
+			ImGui::MenuItem("Show Debug Information", nullptr, &showDebugInformation);
 			ImGui::EndMenu();
 		}
 
@@ -834,6 +841,42 @@ void Editor::renderConfirmError() {
 		}
 
 		ImGui::EndPopup();
+	}
+}
+
+
+//
+//	renderDebugInformation
+//
+
+void Editor::renderDebugInformation() {
+	if (showDebugInformation) {
+		std::string information;
+
+		if (getBackendDebugInformation) {
+			information = getBackendDebugInformation();
+		}
+
+		auto io = ImGui::GetIO();
+		information += "Dear ImGui:\n";
+		information += std::format("io.DisplaySize: {}, {}\n", io.DisplaySize.x, io.DisplaySize.y);
+		information += std::format("io.DisplayFramebufferScale: {}, {}\n", io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+		information += std::format("GetLineHeight: {}\n", editor.GetLineHeight());
+		information += std::format("GetGlyphWidth: {}", editor.GetGlyphWidth());
+
+		ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+		ImGuiWindowFlags flags =
+			ImGuiWindowFlags_AlwaysAutoResize |
+			ImGuiWindowFlags_NoDecoration |
+			ImGuiWindowFlags_NoNav |
+			ImGuiWindowFlags_NoBringToFrontOnFocus |
+			ImGuiWindowFlags_NoFocusOnAppearing;
+
+		ImGui::Begin("Debug Information", nullptr, flags);
+		ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+		ImGui::TextUnformatted(information.c_str());
+		ImGui::End();
 	}
 }
 

@@ -60,12 +60,12 @@ int example()
 {
 	// make process DPI aware and obtain main monitor scale
 	ImGui_ImplWin32_EnableDpiAwareness();
-	float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
+	float mainScale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
 
 	// create application window
 	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
 	::RegisterClassExW(&wc);
-	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"TextEditor Example", WS_OVERLAPPEDWINDOW, 100, 100, (int)(1280 * main_scale), (int)(800 * main_scale), nullptr, nullptr, wc.hInstance, nullptr);
+	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"TextEditor Example", WS_OVERLAPPEDWINDOW, 100, 100, (int)(1280 * mainScale), (int)(800 * mainScale), nullptr, nullptr, wc.hInstance, nullptr);
 
 	// initialize Direct3D
 	if (!CreateDeviceD3D(hwnd)) {
@@ -87,8 +87,8 @@ int example()
 
 	// setup scaling
 	ImGuiStyle& style = ImGui::GetStyle();
-	style.ScaleAllSizes(main_scale);
-	style.FontScaleDpi = main_scale;
+	style.ScaleAllSizes(mainScale);
+	style.FontScaleDpi = mainScale;
 
 	// setup Platform/Renderer backends
 	ImGui_ImplWin32_Init(hwnd);
@@ -107,6 +107,11 @@ int example()
 	Editor editor;
 	MSG msg;
 
+	// generate debug information
+	editor.setDebugInformation([&]() {
+		return std::string("Backend: DirectX11\n");
+	});
+
 	while (!editor.isDone()) {
 		// poll and handle messages (inputs, window resize, etc.)
 		// See the WndProc() function below for our to dispatch events to the Win32 backend.
@@ -119,7 +124,7 @@ int example()
 			}
 		}
 
-		// Handle window being minimized or screen locked
+		// handle window being minimized or screen locked
 		if (swapChainOccluded && swapChain->Present(0, DXGI_PRESENT_TEST) == DXGI_STATUS_OCCLUDED) {
 			::Sleep(10);
 			continue;
@@ -127,7 +132,7 @@ int example()
 
 		swapChainOccluded = false;
 
-		// Handle window resize (we don't resize directly in the WM_SIZE handler)
+		// handle window resize (we don't resize directly in the WM_SIZE handler)
 		if (resizeWidth != 0 && resizeHeight != 0) {
 			CleanupRenderTarget();
 			swapChain->ResizeBuffers(0, resizeWidth, resizeHeight, DXGI_FORMAT_UNKNOWN, 0);

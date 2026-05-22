@@ -12,9 +12,8 @@
 //	Include files
 //
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <format>
+#include <string>
 
 #include <SDL3/SDL.h>
 
@@ -33,29 +32,40 @@
 int example() {
 	// setup SDL
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
-		printf("Error: SDL_Init(): %s\n", SDL_GetError());
+		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Error: SDL_Init(): %s\n", SDL_GetError());
 		return -1;
 	}
 
 	// create SDL window graphics context
-	SDL_Window* window = SDL_CreateWindow("TextEditor Example", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+	SDL_WindowFlags windowFlags =
+		SDL_WINDOW_RESIZABLE |
+		SDL_WINDOW_HIGH_PIXEL_DENSITY;
+
+    float mainScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+	SDL_Window* window = SDL_CreateWindow("TextEditor Example", 1280 * mainScale, 720 * mainScale, windowFlags);
 
 	if (window == nullptr) {
-		printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
+		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Error: SDL_CreateWindow(): %s\n", SDL_GetError());
 		return -1;
 	}
 
 	// create GPU device
-	SDL_GPUDevice* gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXBC | SDL_GPU_SHADERFORMAT_METALLIB, true, nullptr);
+	SDL_GPUShaderFormat formatFlags =
+		SDL_GPU_SHADERFORMAT_SPIRV |
+		SDL_GPU_SHADERFORMAT_DXBC |
+		SDL_GPU_SHADERFORMAT_MSL |
+		SDL_GPU_SHADERFORMAT_METALLIB;
+
+	SDL_GPUDevice* gpu_device = SDL_CreateGPUDevice(formatFlags, true, nullptr);
 
 	if (gpu_device == nullptr) {
-		printf("Error: SDL_CreateGPUDevice(): %s\n", SDL_GetError());
+		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Error: SDL_CreateGPUDevice(): %s\n", SDL_GetError());
 		return -1;
 	}
 
 	// claim window for GPU device
 	if (!SDL_ClaimWindowForGPUDevice(gpu_device, window)) {
-		printf("Error: SDL_ClaimWindowForGPUDevice(): %s\n", SDL_GetError());
+		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Error: SDL_ClaimWindowForGPUDevice(): %s\n", SDL_GetError());
 		return -1;
 	}
 
@@ -66,7 +76,12 @@ int example() {
 	io.IniFilename = nullptr;
 	ImGui::StyleColorsDark();
 
-	// setup platform/renderer backends
+    // Setup scaling
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.ScaleAllSizes(mainScale);
+    style.FontScaleDpi = mainScale;
+
+	// setup platform/renderer backend
 	ImGui_ImplSDL3_InitForSDLGPU(window);
 	ImGui_ImplSDLGPU3_InitInfo init_info = {};
 	init_info.Device = gpu_device;
@@ -87,6 +102,26 @@ int example() {
 	Editor editor;
 	SDL_Event event;
 
+	// generate debug information
+	editor.setDebugInformation([&]() {
+		std::string information = "Backend: SDL3GPU\n";
+		int w, h;
+
+		SDL_GetWindowSize(window, &w, &h);
+		information += std::format("SDL_GetWindowSize: {}, {}\n", w, h);
+		SDL_GetWindowSizeInPixels(window, &w, &h);
+		information += std::format("SDL_GetWindowSizeInPixels: {}, {}\n", w, h);
+
+		float scale;
+		scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+		information += std::format("SDL_GetDisplayContentScale: {}\n", scale);
+		scale = SDL_GetWindowDisplayScale(window);
+		information += std::format("SDL_GetWindowDisplayScale: {}\n", scale);
+		scale = SDL_GetWindowPixelDensity(window);
+		information += std::format("SDL_GetWindowPixelDensity: {}\n\n", scale);
+		return information;
+	});
+
 	while (!editor.isDone()) {
 		// poll and handle events (inputs, window resize, etc.)
 		while (SDL_PollEvent(&event)) {
@@ -105,7 +140,7 @@ int example() {
 			continue;
 		}
 
-		// start the Dear ImGui frame
+		// start a Dear ImGui frame
 		ImGui_ImplSDLGPU3_NewFrame();
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
