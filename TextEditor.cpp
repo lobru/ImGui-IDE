@@ -1129,9 +1129,18 @@ void TextEditor::handleMouseInteractions() {
 	auto io = ImGui::GetIO();
 	auto mousePos = ImGui::GetMousePos() - cursorScreenPos;
 	auto absoluteMousePos = ImGui::GetMousePos() - ImGui::GetWindowPos();
-	auto overLineNumbers = config.showLineNumbers && (absoluteMousePos.x > lineNumberLeftOffset) && (absoluteMousePos.x < lineNumberRightOffset);
-	auto overText = mousePos.x - ImGui::GetScrollX() > textLeftOffset && mousePos.x - ImGui::GetScrollX() < textRightOffset
-		&& mousePos.y - ImGui::GetScrollY() >= 0 && mousePos.y - ImGui::GetScrollY() < textSize.y;
+
+	auto overLineNumbers =
+		config.showLineNumbers &&
+		(absoluteMousePos.x > lineNumberLeftOffset) &&
+		(absoluteMousePos.x < lineNumberRightOffset);
+
+	auto overText =
+		mousePos.x - ImGui::GetScrollX() > textLeftOffset &&
+		mousePos.x - ImGui::GetScrollX() < textRightOffset &&
+		mousePos.y - ImGui::GetScrollY() >= 0 &&
+		mousePos.y - ImGui::GetScrollY() < textSize.y;
+
 	auto overMiniMap = config.showMiniMap && absoluteMousePos.x > miniMapOffset;
 
 	DocPos glyphPos;
@@ -1215,11 +1224,8 @@ void TextEditor::handleMouseInteractions() {
 		}
 
 	// end minimap scroll (if required)
-	} else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && miniMapIsScrollbar) {
-		miniMapIsScrollbar = false;
-		selectingText = false;
-
 	} else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+		miniMapIsScrollbar = false;
 		selectingText = false;
 
 	// ignore other interactions when the editor is not hovered
@@ -1252,13 +1258,11 @@ void TextEditor::handleMouseInteractions() {
 
 		} else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
 			// handle left mouse button actions
+			selectingText = overText || overLineNumbers;
 			auto doubleClick = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
 			auto now = static_cast<float>(ImGui::GetTime());
 			auto tripleClick = !doubleClick && lastClickTime != -1.0f && (now - lastClickTime) < io.MouseDoubleClickTime;
 			lastClickTime = tripleClick ? -1.0f : now;
-
-			// remember whether this click started a text-selection drag
-			selectingText = overText || overLineNumbers;
 
 			if (tripleClick) {
 				// left mouse button triple click
