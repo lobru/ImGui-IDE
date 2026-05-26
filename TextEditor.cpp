@@ -490,6 +490,11 @@ void TextEditor::renderSelections()
 
 void TextEditor::renderCursors()
 {
+	// Read-only docs don't need a blinking caret. (Picked up from upstream
+	// Pascal Thomet's fix.) Stops the I-beam from showing in diff / history
+	// / "view source" style windows.
+	if (readOnly) return;
+
 	cursorAnimationTimer = std::fmod(cursorAnimationTimer + ImGui::GetIO().DeltaTime, 1.0f);
 
 	if (!ImGui::IsWindowFocused())
@@ -1435,7 +1440,13 @@ void TextEditor::handleMouseInteractions()
 			(absoluteMousePos.x >= decorationOffset) &&
 			(absoluteMousePos.x < textOffset);
 
-		bool overText = mousePos.x - ImGui::GetScrollX() > textOffset;
+		// Symmetric Y bound — without this, the mouse over the horizontal
+		// scrollbar (below the text area but inside the text column) still
+		// passes the X check and we'd swap to the I-beam cursor / start a
+		// drag-select. Ported from upstream Pascal Thomet's fix.
+		bool overText = mousePos.x - ImGui::GetScrollX() > textOffset
+		             && mousePos.y - ImGui::GetScrollY() >= 0
+		             && mousePos.y - ImGui::GetScrollY() < visibleHeight;
 
 		// Map mouse Y to visible line index. GetCursorScreenPos after BeginChild
 		// returns the *content* origin (above the viewport when scrolled), so
@@ -1578,7 +1589,10 @@ void TextEditor::handleMouseInteractions()
 			makeCursorVisible();
 		}
 		// --- Dragging selection with left mouse button -------------------
-		else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !draggingSelection)
+		// Only honour drags that ACTUALLY started on the text or line-number
+		// gutter — otherwise dragging the horizontal scrollbar (which lives
+		// inside the same child window) would happily extend the selection.
+		else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !draggingSelection && selectingText)
 		{
 			io.WantCaptureMouse = true;
 			// If the mouse moved at all while we had a pending click on an
@@ -1604,6 +1618,7 @@ void TextEditor::handleMouseInteractions()
 		if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
 		{
 			columnSelecting = false;
+			selectingText = false;
 			if (pendingClickInSelection && !draggingSelection)
 			{
 				// User clicked inside a selection and didn't drag — treat it
@@ -1654,6 +1669,11 @@ void TextEditor::handleMouseInteractions()
 			{
 				lastClickTime = tripleClick ? -1.0f : now;
 			}
+
+			// Remember whether this click started a text / gutter selection
+			// drag. Drags that originated on the h-scrollbar etc. won't pass
+			// this gate and won't extend the selection.
+			selectingText = overText || overLineNumbers;
 
 
 			// 2) Triple click: select line

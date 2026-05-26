@@ -1560,6 +1560,12 @@ protected:
 	// Column / box selection: Alt+Shift+drag, VSCode/Sublime style.
 	bool        columnSelecting   = false;
 	Coordinate  columnAnchor{};
+
+	// Set on left-mousedown over text / line numbers, cleared on release.
+	// Prevents drags that originated on the horizontal scrollbar (or any
+	// other widget that happens to share the X column with the text) from
+	// extending the selection.
+	bool        selectingText     = false;
 	Coordinate draggedSectionStart;
 	// interaction context
 	float lastClickTime = -1.0f;
