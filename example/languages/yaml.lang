@@ -1,0 +1,7 @@
+name = YAML
+extensions = .yaml, .yml
+case_sensitive = true
+single_line_comment = #
+double_quoted_strings = true
+single_quoted_strings = true
+keywords = true false null yes no on off

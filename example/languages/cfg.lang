@@ -1,0 +1,7 @@
+name = CFG
+extensions = .cfg, .conf, .config
+case_sensitive = false
+single_line_comment = #
+single_line_comment_alt = ;
+double_quoted_strings = true
+keywords = true false yes no on off

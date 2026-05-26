@@ -1,0 +1,30 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "build-debug",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "build.ps1", "-Config", "Debug"]
+    },
+    {
+      "name": "build-release",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "build.ps1", "-Config", "Release"]
+    },
+    {
+      "name": "build-debug-clean",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "build.ps1", "-Config", "Debug", "-Clean"]
+    },
+    {
+      "name": "run-debug",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "build.ps1", "-Config", "Debug", "-Run"]
+    },
+    {
+      "name": "run-release",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "build.ps1", "-Config", "Release", "-Run"]
+    }
+  ]
+}

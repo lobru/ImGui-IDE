@@ -25,6 +25,8 @@
 #include <vector>
 
 #include "imgui.h"
+#include <atomic>
+
 
 
 //
@@ -45,14 +47,19 @@ public:
 	inline void SetTabSize(int value) {
 		// this must be called before text is loaded/edited
 		if (document.isEmpty() && transactions.empty()) {
-			document.setTabSize(std::max(1, std::min(8, value)));
+			if (value > 8) value = 8;
+			if (value < 1) value  =1;
+			document.setTabSize(value);
 		}
 	}
 
 	inline int GetTabSize() const { return document.getTabSize(); }
 	inline void SetInsertSpacesOnTabs(bool value) { document.setInsertSpacesOnTabs(value); }
 	inline bool IsInsertSpacesOnTabs() const { return document.isInsertSpacesOnTabs(); }
-	inline void SetLineSpacing(float value) { lineSpacing = std::max(1.0f, std::min(2.0f, value)); }
+	inline void SetLineSpacing(float value) {
+						if (value > 2.0f) value = 2.0f;
+						if (value < 1.0f) value = 1.0f;
+ lineSpacing =value; }
 	inline float GetLineSpacing() const { return lineSpacing; }
 	inline void SetReadOnlyEnabled(bool value) { readOnly = value; }
 	inline bool IsReadOnlyEnabled() const { return readOnly; }
@@ -79,6 +86,25 @@ public:
 	inline void SetMiddleMousePanMode() { panMode = true; }
 	inline void SetMiddleMouseScrollMode() { panMode = false; }
 	inline bool IsMiddleMousePanMode() const { return panMode; }
+	inline void SetFoldingEnabled(bool enabled) { foldRanges.foldingEnabled = enabled; }
+	inline bool IsFoldingEnabled() const { return foldRanges.foldingEnabled; }
+
+	// Fold control (no-ops when folding is disabled)
+	inline void FoldAll()   { foldRanges.foldAll(document); }
+	inline void UnfoldAll() { foldRanges.unfoldAll(document); }
+	// Toggle / force the innermost fold around the current cursor.
+	inline void ToggleCurrentFold() {
+		int line = cursors.getCurrent().getInteractiveEnd().line;
+		foldRanges.toggleCurrent(line, document, 0);
+	}
+	inline void FoldCurrent()   {
+		int line = cursors.getCurrent().getInteractiveEnd().line;
+		foldRanges.toggleCurrent(line, document, +1);
+	}
+	inline void UnfoldCurrent() {
+		int line = cursors.getCurrent().getInteractiveEnd().line;
+		foldRanges.toggleCurrent(line, document, -1);
+	}
 
 	// access text (using UTF-8 encoded strings)
 	// (see note below on cursor and scroll manipulation after setting new text)
@@ -131,6 +157,7 @@ public:
 	inline void SelectLine(int line) { if (line >= 0 && line < document.lineCount()) selectLine(line); }
 	inline void SelectLines(int start, int end) { if (start >= 0 && end < document.lineCount() && start <= end) selectLines(start, end); }
 	inline void SelectRegion(int startLine, int startColumn, int endLine, int endColumn) { selectRegion(startLine, startColumn, endLine, endColumn); }
+	inline void SelectWord(int line, int column) {selectWord(line, column); }
 	inline void SelectToBrackets(bool includeBrackets=true) { selectToBrackets(includeBrackets); }
 	inline void GrowSelectionsToCurlyBrackets() { growSelectionsToCurlyBrackets(); }
 	inline void ShrinkSelectionsToCurlyBrackets() { shrinkSelectionsToCurlyBrackets(); }
@@ -172,6 +199,7 @@ public:
 	// get the word at a screen position
 	std::string GetWordAtScreenPos(const ImVec2& screenPos) const;
 
+
 	// scrolling support
 	enum class Scroll {
 		alignTop,
@@ -205,10 +233,19 @@ public:
 	// this works on opening the editor as well as later
 
 	// find/replace support
+	inline void GoToFirstOccurrenceOf(const std::string_view& text, bool caseSensitive = true, bool select = false) { goToFirstOccurrenceOf(text, caseSensitive, select); }
+	// Heuristic "Go to Definition": scans all whole-word matches of `text`
+	// and prefers ones that look like a function/type body (line contains
+	// `{` after the match, or for Python, the line ends with `:`). Falls
+	// back to first occurrence if no better match exists.
+	inline void GoToDefinitionOf(const std::string_view& text, bool caseSensitive = true) { goToDefinitionOf(text, caseSensitive); }
+
 	inline void SelectFirstOccurrenceOf(const std::string_view& text, bool caseSensitive=true, bool wholeWord=false) { selectFirstOccurrenceOf(text, caseSensitive, wholeWord); }
 	inline void SelectNextOccurrenceOf(const std::string_view& text, bool caseSensitive=true, bool wholeWord=false) { selectNextOccurrenceOf(text, caseSensitive, wholeWord); }
 	inline void SelectAllOccurrencesOf(const std::string_view& text, bool caseSensitive=true, bool wholeWord=false) { selectAllOccurrencesOf(text, caseSensitive, wholeWord); }
 	inline void ReplaceTextInCurrentCursor(const std::string_view& text) { if (!readOnly) replaceTextInCurrentCursor(text); }
+
+
 	inline void ReplaceTextInAllCursors(const std::string_view& text) { if (!readOnly) replaceTextInAllCursors(text); }
 
 	inline void OpenFindReplaceWindow() { openFindReplace(); }
@@ -285,6 +322,8 @@ public:
 		float height;
 		ImVec2 glyphSize;
 		void* userData;
+		const TextEditor* editor;
+		int realLine;
 	};
 
 	// positive width is number of pixels, negative with is number of glyphs
@@ -313,6 +352,8 @@ public:
 	inline void MoveUpLines() { if (!readOnly) moveUpLines(); }
 	inline void MoveDownLines() { if (!readOnly) moveDownLines(); }
 	inline void ToggleComments() { if (!readOnly && language) toggleComments(); }
+
+	inline void ToggleCommentsShift() { if (!readOnly && language) toggleCommentsShift(); }
 	inline void FilterSelections(std::function<std::string(std::string_view)> filter) { if (!readOnly) filterSelections(filter); }
 	inline void SelectionToLowerCase() { if (!readOnly) selectionToLowerCase(); }
 	inline void SelectionToUpperCase() { if (!readOnly) selectionToUpperCase(); }
@@ -450,6 +491,10 @@ public:
 		std::unordered_set<std::string> declarations;
 		std::unordered_set<std::string> identifiers;
 
+		// File extensions this language applies to (lowercase, leading dot, e.g. ".html").
+		// Populated by FromFile when an `extensions=` line is present.
+		std::vector<std::string> extensions;
+
 		// function to determine if specified character in considered punctuation
 		std::function<bool(ImWchar)> isPunctuation;
 
@@ -476,6 +521,16 @@ public:
 		static const Language* Json();
 		static const Language* Markdown();
 		static const Language* Sql();
+
+		// Load a language definition from a simple key=value text file. Lines are
+		//   key = value
+		// Recognised keys: name, case_sensitive (true/false), preprocess,
+		//   single_line_comment, single_line_comment_alt, comment_start, comment_end,
+		//   single_quoted_strings (true/false), double_quoted_strings (true/false),
+		//   string_escape (single char), keywords (comma/space separated),
+		//   declarations, identifiers.
+		// Lines starting with `#` or `;` are comments.
+		static const Language* FromFile(const std::string& path);
 	};
 
 	inline void SetLanguage(const Language* l) { language = l; languageChanged = true; }
@@ -586,6 +641,11 @@ public:
 		// insert word (UTF-8 encoded) into tree
 		void insert(const std::string_view& word);
 
+		// Returns true if the exact word is stored in the trie. Used to gate
+		// "Go to definition / Select All Occurrences" so they only show for
+		// known identifiers/keywords/declarations, not random text.
+		bool contains(const std::string_view& word) const;
+
 		// populate list of suggestions based on provided search term (which is UTF-8 encoded)
 		// limit is maximum number of suggestions returned after they are sorted by relevance
 		// maxSkippedLetters is a the largest number of letters that can be skipped to find the next match
@@ -649,6 +709,23 @@ public:
 		static constexpr ImWchar closeSquareBracket = ']';
 		static constexpr ImWchar openParenthesis = '(';
 		static constexpr ImWchar closeParenthesis = ')';
+
+		static inline bool isUpperToLower(ImWchar left, ImWchar right) {
+			return
+				isUpper(left) && isLower(right);
+		}
+
+
+		static inline bool isLowerToUpper(ImWchar left, ImWchar right) {
+			return
+				isUpper(right) && isLower(left);
+		}
+
+
+		static inline bool isSeparator(ImWchar ch) {
+			return ch == '_';
+		}
+
 
 		static inline bool isPairOpener(ImWchar ch) {
 			return
@@ -879,7 +956,6 @@ protected:
 		inOtherString,
 		inOtherStringAlt
 	};
-
 	// a single line in a document
 	class Line : public std::vector<Glyph> {
 	public:
@@ -894,6 +970,11 @@ protected:
 
 		// do we need to (re)colorize this line
 		bool colorize = true;
+
+		// do we need to draw this line
+		bool visible = true;
+
+		int foldLevel = 0;
 
 		// user data associated with this line
 		void* userData = nullptr;
@@ -927,6 +1008,11 @@ protected:
 		inline State getLineState(int line) const { return at(line).state; }
 		Color getColor(Coordinate location) const;
 
+		inline bool getLineVisibility(int line)	const {return at(line).visible; }
+
+		inline int getLineFoldLevel(int line)	const { return at(line).foldLevel; }
+
+
 		// see if document is empty
 		inline bool isEmpty() const { return size() == 1 && at(0).size() == 0; }
 
@@ -947,7 +1033,7 @@ protected:
 		Coordinate getUp(Coordinate from, int lines=1) const;
 		Coordinate getDown(Coordinate from, int lines=1) const;
 		Coordinate getLeft(Coordinate from, bool wordMode=false) const;
-		Coordinate getRight(Coordinate from, bool wordMode=false) const;
+		Coordinate getRight(Coordinate from, int wordMode=0) const;
 		Coordinate getTop() const;
 		Coordinate getBottom() const;
 		Coordinate getStartOfLine(Coordinate from) const;
@@ -957,6 +1043,9 @@ protected:
 		// search in document
 		Coordinate findWordStart(Coordinate from, bool wordOnly=false) const;
 		Coordinate findWordEnd(Coordinate from, bool wordOnly=false) const;
+		// Subword (camelCase / snake_case) navigation
+		Coordinate findSubWordLeft(Coordinate from) const;
+		Coordinate findSubWordRight(Coordinate from) const;
 		bool findText(Coordinate from, const std::string_view& text, bool caseSensitive, bool wholeWord, Coordinate& start, Coordinate& end) const;
 
 		// see if document was updated this frame (can only be called once)
@@ -984,12 +1073,17 @@ protected:
 		Coordinate normalizeCoordinate(Coordinate coordinate) const;
 		void normalizeCoordinate(float line, float column, Coordinate& glyphCoordinate, Coordinate& cursorCoordinate) const;
 
+		void setUpdated(bool Updated = true) { updated = Updated; }
+		bool isUpdated() const { return updated; }
+
+		inline void setLanguage(const Language* l) { language = l; }
+		inline const Language* getLanguage() const { return language; }
 	private:
 		int tabSize = 4;
 		bool insertSpacesOnTabs = false;
 		int maxColumn = 0;
 		bool updated = false;
-
+		const Language* language = nullptr;
 		std::function<void*(int)> insertor;
 		std::function<void(int, void*)> deletor;
 
@@ -998,6 +1092,84 @@ protected:
 		void deleteLines(int start, int end);
 		void clearDocument();
 	} document;
+	enum FoldType {
+		Braces,
+		IfDef,
+		Indent,
+		Comment,
+		Region,
+		PragmaRegion
+	};
+	struct FoldRange {
+		Coordinate start;
+		Coordinate end;
+		FoldType type;
+		bool folded = false;
+
+		FoldRange() = default;
+		FoldRange(const Coordinate& s, const Coordinate& e, FoldType t, bool f = false)
+			: start(s), end(e), type(t), folded(f) {
+			if (end.line < start.line || (end.line == start.line && end.column < start.column)) {
+				std::swap(start, end);
+			}
+		}
+
+		bool operator<(const FoldRange& other) const {
+			return start.line < other.start.line || (start.line == other.start.line && start.column < other.start.column);
+		}
+
+		bool operator==(const FoldRange& other) const {
+			return start.line == other.start.line && end.line == other.end.line && type == other.type;
+		}
+	};
+
+
+	// All foldable ranges
+	class Folder : public std::vector<FoldRange>
+	{
+	public:
+		// Global folding flag
+		bool foldingEnabled = true;
+
+		// Folding API
+		void rebuildFoldRanges(Document& document);
+		void updateVisibility(Document& document);
+		void toggleFold(int line, Document& document);
+
+		// Unfold every fold that hides `line`, so the line becomes visible.
+		// Returns true if anything was changed.
+		bool unfoldContaining(int line, Document& document);
+
+		// Bulk fold / unfold operations
+		void foldAll(Document& document);
+		void unfoldAll(Document& document);
+
+		// Toggle the innermost fold whose range covers `line` (cursor's line).
+		// `forceFolded` = +1 means force fold, -1 means force unfold, 0 means toggle.
+		// Returns true if anything was changed.
+		bool toggleCurrent(int line, Document& document, int forceFolded = 0);
+
+		inline bool isLineFolded(int line) const {
+			for (const auto& fr : *this) {
+				if (fr.folded &&
+					fr.start.line < line && fr.end.line >= line) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		inline void sortFoldRanges() {
+			std::sort(begin(), end());
+			auto last = std::unique(begin(), end());
+			erase(last, end());
+		}
+
+	private:
+		std::unordered_set<int> foldedStartLines;   // remember which folds the user has folded
+	} foldRanges;
+
+
 
 	// single action to be performed on the document as part of a larger transaction
 	class Action {
@@ -1158,6 +1330,7 @@ protected:
 
 	private:
 		// properties
+
 		bool configured = false;
 		bool active = false;
 		bool requestActivation = false;
@@ -1192,6 +1365,7 @@ protected:
 	void renderDecorations();
 	void renderScrollbarMiniMap();
 	void renderPanScrollIndicator();
+
 	void renderFindReplace(ImVec2 pos, float width);
 
 	// keyboard and mouse interactions
@@ -1201,6 +1375,9 @@ protected:
 	// manipulate selections/cursors
 	void selectAll();
 	void selectLine(int line);
+
+	void selectWord(int line, int column);
+
 	void selectLines(int startLine, int endLine);
 	void selectRegion(int startLine, int startColumn, int endLine, int endColumn);
 	void selectToBrackets(bool includeBrackets);
@@ -1223,6 +1400,8 @@ protected:
 	void scrollToLine(int line, Scroll alignment);
 
 	// find/replace support
+	void goToFirstOccurrenceOf(const std::string_view& text, bool caseSensitive = true, bool select = false);
+	void goToDefinitionOf(const std::string_view& text, bool caseSensitive = true);
 	void selectFirstOccurrenceOf(const std::string_view& text, bool caseSensitive, bool wholeWord);
 	void selectNextOccurrenceOf(const std::string_view& text, bool caseSensitive, bool wholeWord);
 	void selectAllOccurrencesOf(const std::string_view& text, bool caseSensitive, bool wholeWord);
@@ -1248,8 +1427,8 @@ protected:
 	// cursor/selection functions
 	void moveUp(int lines, bool select);
 	void moveDown(int lines, bool select);
-	void moveLeft(bool select, bool wordMode);
-	void moveRight(bool select, bool wordMode);
+	void moveLeft(bool select, bool wordMode, bool subWord = false);
+	void moveRight(bool select, bool wordMode, bool subWord = false);
 	void moveToTop(bool select);
 	void moveToBottom(bool select);
 	void moveToStartOfLine(bool select);
@@ -1272,6 +1451,8 @@ protected:
 	void moveUpLines();
 	void moveDownLines();
 	void toggleComments();
+
+	void toggleCommentsShift();
 
 	// transform selections (filter function should accept and return UTF-8 encoded strings)
 	void filterSelections(std::function<std::string(std::string_view)> filter);
@@ -1338,6 +1519,8 @@ protected:
 
 	std::function<void(int line)> lineNumberContextMenuCallback;
 	std::function<void(int line, int column)> textContextMenuCallback;
+
+
 	int contextMenuLine = 0;
 	int contextMenuColumn = 0;
 
@@ -1354,12 +1537,30 @@ protected:
 	bool findReplaceVisible = false;
 	bool focusOnEditor = true;
 	bool focusOnFind = false;
+	bool focusOnReplace= false;
 	bool findCancelledAutocomplete = false;
 	std::string findText;
 	std::string replaceText;
 	bool caseSensitiveFind = false;
 	bool wholeWordFind = false;
+	// Click-and-drag-of-selected-text state. When the user mouses down on an
+	// existing selection we remember the text + its source range; on release
+	// we either move it (default) or copy it (Ctrl held) to the drop point.
+	std::string draggedText;
+	bool        draggingSelection = false;
+	Coordinate  dragSelectionStart{};
+	Coordinate  dragSelectionEnd{};
 
+	// If the user mouses down inside an existing selection we hold off on
+	// updating the cursor — that way the click can become either a drag or
+	// (on release without movement) a normal click-to-deselect.
+	bool        pendingClickInSelection = false;
+	Coordinate  pendingClickCoord{};
+
+	// Column / box selection: Alt+Shift+drag, VSCode/Sublime style.
+	bool        columnSelecting   = false;
+	Coordinate  columnAnchor{};
+	Coordinate draggedSectionStart;
 	// interaction context
 	float lastClickTime = -1.0f;
 	ImWchar completePairCloser = 0;
@@ -1384,4 +1585,51 @@ protected:
 
 	// language support
 	const Language* language = nullptr;
+	public:
+	int screenYToDocumentLine(float y) const;
+	const FoldRange* GetFoldRangeStartingAt(int line);
+	int getVisualLineCount() const {
+		// Number of visible (non-folded) lines. Used to size the scrollable
+		// content area and to clamp visual indices.
+		int n = 0;
+		for (int i = 0; i < document.lineCount(); ++i) {
+			if (document[i].visible) ++n;
+		}
+		return n;
+	}
+
+	int visualIndexToLine(int visualIndex) const {
+		if (visualIndex < 0)
+			visualIndex = 0;
+
+		int current = 0;
+		int lastVisible = 0;
+		for (int i = 0; i < document.lineCount(); ++i) {
+			if (!document[i].visible)
+				continue;
+			if (current == visualIndex)
+				return i;
+			lastVisible = i;
+			++current;
+		}
+		// clamp to last *visible* line if visualIndex is past the end
+		return lastVisible;
+	}
+
+	int lineToVisualIndex(int line) const {
+		if (line < 0) return 0;
+		int current = 0;
+		int lastVisibleBeforeTarget = 0;
+		for (int i = 0; i < document.lineCount(); ++i) {
+			if (i > line) break;                // past target — `line` was hidden
+			if (!document[i].visible) continue;
+			if (i == line) return current;
+			lastVisibleBeforeTarget = current;
+			++current;
+		}
+		// `line` is hidden (folded). Snap to the VI of the nearest visible line
+		// at-or-before it so makeCursorVisible doesn't try to scroll past EOF.
+		return lastVisibleBeforeTarget;
+	}
+
 };

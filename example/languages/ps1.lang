@@ -1,0 +1,12 @@
+name = PowerShell
+extensions = .ps1, .psm1, .psd1
+case_sensitive = false
+single_line_comment = #
+comment_start = <#
+comment_end = #>
+double_quoted_strings = true
+single_quoted_strings = true
+string_escape = `
+keywords = begin break catch class continue data define do dynamicparam else elseif end enum exit filter finally for foreach from function hidden if in inlinescript param process return static switch throw trap try until using var while workflow parallel sequence
+declarations = true false null
+identifiers = Get-Item Set-Item New-Item Remove-Item Copy-Item Move-Item Rename-Item Get-ChildItem Get-Content Set-Content Add-Content Out-File Write-Host Write-Output Write-Error Write-Warning Write-Verbose Write-Debug Select-Object Where-Object ForEach-Object Sort-Object Group-Object Measure-Object Get-Process Start-Process Stop-Process Get-Service Start-Service Stop-Service Invoke-Command Invoke-Expression Test-Path Join-Path Split-Path Resolve-Path Get-Location Set-Location Push-Location Pop-Location ConvertTo-Json ConvertFrom-Json Read-Host

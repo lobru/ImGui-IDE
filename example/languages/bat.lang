@@ -1,0 +1,8 @@
+name = BAT
+extensions = .bat, .cmd
+case_sensitive = false
+single_line_comment = REM
+single_line_comment_alt = ::
+double_quoted_strings = true
+keywords = if else for in do call goto exit set setlocal endlocal echo pause shift exit_b not exist defined errorlevel cls cd chdir md mkdir rd rmdir del erase copy move ren rename type find findstr where pushd popd start title color help ver cmd
+declarations = path comspec systemroot windir userprofile temp tmp appdata localappdata programfiles programdata

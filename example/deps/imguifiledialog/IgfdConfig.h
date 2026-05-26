@@ -24,3 +24,9 @@
 
 #define okCancelButtonAlignement 1.0f
 #define invertOkAndCancelButtons true
+
+// Enable the Places (bookmarks) feature and show its pane by default.
+// We populate it with the system drives and a persistent Favourites group
+// loaded from .claude/favorites.txt.
+#define USE_PLACES_FEATURE
+#define PLACES_PANE_DEFAULT_SHOWN true

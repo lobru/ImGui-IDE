@@ -1,0 +1,10 @@
+name = XML
+extensions = .xml, .csproj, .vcxproj, .vbproj, .fsproj, .props, .targets, .uproject, .uplugin, .config, .nuspec
+case_sensitive = false
+comment_start = <!--
+comment_end = -->
+single_quoted_strings = true
+double_quoted_strings = true
+# Common element + attribute names from .NET / VS project files
+keywords = xml version encoding standalone xmlns Project Sdk PropertyGroup ItemGroup Target Import Include Exclude Remove Update Condition Reference PackageReference ProjectReference Compile Content None EmbeddedResource ApplicationDefinition Page Resource OutputType OutputPath AssemblyName TargetFramework TargetFrameworks RootNamespace LangVersion Nullable ImplicitUsings GenerateDocumentationFile NoWarn TreatWarningsAsErrors WarningsAsErrors Configuration Platform AnyCPU Debug Release true false
+declarations = Choose When Otherwise UsingTask CustomBuild ClCompile ClInclude Link AdditionalIncludeDirectories AdditionalLibraryDirectories AdditionalDependencies PreprocessorDefinitions

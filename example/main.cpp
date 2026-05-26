@@ -12,12 +12,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <string>
+#include "imgui.h"
+
+#if STANDALONE
 
 #include <SDL3/SDL.h>
 
-#include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
+
+
 
 #include "editor.h"
 #include "dejavu.h"
@@ -34,23 +40,21 @@ int main(int, char**) {
 		return -1;
 	}
 
-	// create SDL window graphics context
-	SDL_Window* window = SDL_CreateWindow("TextEditor Example", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-
-	if (window == nullptr) {
+	SDL_Window* window = SDL_CreateWindow("TextEditor Example", 1280, 720,
+		SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY );
+	if (!window) {
 		printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
 		return -1;
 	}
 
-	// create GPU device
-	SDL_GPUDevice* gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB, true, nullptr);
-
-	if (gpu_device == nullptr) {
+	SDL_GPUDevice* gpu_device = SDL_CreateGPUDevice(
+		SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
+		true, nullptr);
+	if (!gpu_device) {
 		printf("Error: SDL_CreateGPUDevice(): %s\n", SDL_GetError());
 		return -1;
 	}
 
-	// claim window for GPU device
 	if (!SDL_ClaimWindowForGPUDevice(gpu_device, window)) {
 		printf("Error: SDL_ClaimWindowForGPUDevice(): %s\n", SDL_GetError());
 		return -1;
@@ -60,7 +64,13 @@ int main(int, char**) {
 	IMGUI_CHECKVERSION();
 	ImGui::CreateContext();
 	auto& io = ImGui::GetIO();
-	io.IniFilename = nullptr;
+	// Persist window layout, docking, viewport positions between runs.
+	// imgui writes here automatically on a debounced timer (IniSavingRate).
+	// Stored in the same absolute config dir as the favourites blob so
+	// settings survive across launches regardless of cwd.
+	static std::string iniPath = (Editor::userConfigDir() / "imgui.ini").string();
+	io.IniFilename = iniPath.c_str();
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_ViewportsEnable;
 	ImGui::StyleColorsDark();
 
 	// setup platform/renderer backends
@@ -88,7 +98,14 @@ int main(int, char**) {
 		// poll and handle events (inputs, window resize, etc.)
 		while (SDL_PollEvent(&event)) {
 			ImGui_ImplSDL3_ProcessEvent(&event);
-
+			if (event.type == SDL_EVENT_DROP_FILE) {
+				// SDL3: event.drop.data is owned by SDL and lives until the next
+				// SDL_EVENT_DROP_COMPLETE — copy it before using.
+				const char* dropped_filedir = event.drop.data;
+				if (dropped_filedir) {
+					editor.openFile(std::string(dropped_filedir));
+				}
+			}
 			if (event.type == SDL_EVENT_QUIT) {
 				editor.tryToQuit();
 
@@ -140,6 +157,12 @@ int main(int, char**) {
 
 		// submit the command buffer
 		SDL_SubmitGPUCommandBuffer(command_buffer);
+
+		// render and present additional platform windows (multi-viewport)
+		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+			ImGui::UpdatePlatformWindows();
+			ImGui::RenderPlatformWindowsDefault();
+		}
 	}
 
 	// cleanup
@@ -152,5 +175,8 @@ int main(int, char**) {
 	SDL_DestroyGPUDevice(gpu_device);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
+
+
 	return 0;
 }
+#endif

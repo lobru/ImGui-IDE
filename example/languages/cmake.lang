@@ -1,0 +1,10 @@
+name = CMake
+extensions = .cmake
+case_sensitive = false
+single_line_comment = #
+single_quoted_strings = true
+double_quoted_strings = true
+string_escape = \
+keywords = if elseif else endif foreach endforeach while endwhile function endfunction macro endmacro break continue return set unset list math string file include find_package find_path find_library find_program try_compile try_run option mark_as_advanced cmake_minimum_required cmake_policy project add_definitions add_subdirectory add_executable add_library add_custom_command add_custom_target add_dependencies install target_link_libraries target_include_directories target_compile_definitions target_compile_options target_compile_features target_sources target_link_options target_link_directories link_directories link_libraries include_directories source_group configure_file get_filename_component get_property set_property set_target_properties get_target_property message export import enable_testing add_test ctest_start fetchcontent_declare fetchcontent_makeavailable fetchcontent_populate
+declarations = ON OFF TRUE FALSE YES NO STATIC SHARED INTERFACE OBJECT MODULE PUBLIC PRIVATE INTERFACE REQUIRED OPTIONAL EXACT QUIET CONFIG NO_MODULE BEFORE AFTER PROPERTIES NAMES PATHS HINTS DOC NO_DEFAULT_PATH NO_PACKAGE_REGISTRY NO_SYSTEM_ENVIRONMENT_PATH NO_CMAKE_PATH NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH
+identifiers = CMAKE_SOURCE_DIR CMAKE_BINARY_DIR CMAKE_CURRENT_SOURCE_DIR CMAKE_CURRENT_BINARY_DIR CMAKE_CXX_STANDARD CMAKE_CXX_STANDARD_REQUIRED CMAKE_CXX_EXTENSIONS CMAKE_BUILD_TYPE CMAKE_INSTALL_PREFIX PROJECT_NAME PROJECT_SOURCE_DIR PROJECT_BINARY_DIR PROJECT_VERSION

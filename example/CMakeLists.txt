@@ -13,17 +13,51 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_subdirectory(deps)
 
-add_executable(example
+# ── TextEditor library target ────────────────────────────────────────────
+# Built as a SHARED (DLL/.so) library when -DTEXTEDITOR_BUILD_SHARED=ON,
+# otherwise as a STATIC library that's linked directly into `example`.
+option(TEXTEDITOR_BUILD_SHARED "Build TextEditor as a shared library (DLL)" OFF)
+
+set(TEXTEDITOR_LIB_TYPE STATIC)
+if(TEXTEDITOR_BUILD_SHARED)
+	set(TEXTEDITOR_LIB_TYPE SHARED)
+endif()
+
+add_library(TextEditorLib ${TEXTEDITOR_LIB_TYPE}
 	../TextEditor.cpp
 	../TextEditor.h
 	../TextDiff.cpp
 	../TextDiff.h
-	../dtl.h
+	../dtl.h)
+
+target_include_directories(TextEditorLib PUBLIC ..)
+target_link_libraries(TextEditorLib PUBLIC imguifd)
+
+if(TEXTEDITOR_BUILD_SHARED)
+	# Easy mode: export everything; tighten later with TEXTEDITOR_API
+	# macros if there's a need to keep symbol surface small.
+	set_target_properties(TextEditorLib PROPERTIES
+		WINDOWS_EXPORT_ALL_SYMBOLS ON
+		CXX_VISIBILITY_PRESET hidden
+		VISIBILITY_INLINES_HIDDEN ON)
+	target_compile_definitions(TextEditorLib PUBLIC TEXTEDITOR_SHARED=1)
+endif()
+
+# Warnings policy applies to TextEditorLib too — it's the same codebase.
+target_compile_options(TextEditorLib PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
+# ── Example executable ───────────────────────────────────────────────────
+add_executable(example
 	editor.cpp
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example SDL3::SDL3 SDL3_Headers imguifd)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd)
+
+# The example executable owns main(); the editor library doesn't.
+target_compile_definitions(example PRIVATE STANDALONE=1)
 
 target_compile_options(example PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
