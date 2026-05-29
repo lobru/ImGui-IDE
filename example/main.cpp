@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <vector>
 #include "imgui.h"
 
 #if STANDALONE
@@ -33,7 +34,42 @@
 //	main
 //
 
-int main(int, char**) {
+int main(int argc, char** argv) {
+	// Parse --project <dir> and positional args. Positionals are sorted into
+	// (a) project root (last folder OR project file we see — supports shell
+	// context-menu integration: right-click a .sln in Explorer → opens here)
+	// and (b) plain files to open as documents.
+	std::string projectArg;
+	std::vector<std::string> filesArg;
+	auto isProjectFile = [](const std::string& p) {
+		auto ext = std::filesystem::path(p).extension().string();
+		std::transform(ext.begin(), ext.end(), ext.begin(),
+			[](unsigned char c){ return (char) std::tolower(c); });
+		return ext == ".sln" || ext == ".csproj" || ext == ".vcxproj"
+			|| ext == ".uproject" || ext == ".uplugin"
+			|| std::filesystem::path(p).filename() == "CMakeLists.txt";
+	};
+	for (int i = 1; i < argc; ++i) {
+		std::string a = argv[i];
+		if (a == "--project" && i + 1 < argc) {
+			projectArg = argv[++i];
+			continue;
+		}
+		if (a.rfind("--", 0) == 0) continue;   // unknown flag
+		std::error_code ec;
+		auto absPath = std::filesystem::absolute(a, ec);
+		std::string p = ec ? a : absPath.string();
+		if (std::filesystem::is_directory(p, ec)) {
+			// Folder → treat as project root.
+			projectArg = p;
+		} else if (isProjectFile(p)) {
+			// Project file → set its parent as root AND open the file as a doc.
+			projectArg = std::filesystem::path(p).parent_path().string();
+			filesArg.push_back(p);
+		} else {
+			filesArg.push_back(p);
+		}
+	}
 	// setup SDL
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		printf("Error: SDL_Init(): %s\n", SDL_GetError());
@@ -70,8 +106,19 @@ int main(int, char**) {
 	// settings survive across launches regardless of cwd.
 	static std::string iniPath = (Editor::userConfigDir() / "imgui.ini").string();
 	io.IniFilename = iniPath.c_str();
+	// Docking + multi-viewport on, set once at init (toggling ViewportsEnable
+	// per-frame leaves viewport state inconsistent). Windows only leave the
+	// main window when the user drags them out or uses the pop-out hotkeys.
 	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_ViewportsEnable;
 	ImGui::StyleColorsDark();
+
+	// A little extra breathing room so content (and full-width inputs that
+	// stretch to -FLT_MIN) doesn't sit flush against the vertical scrollbar.
+	{
+		ImGuiStyle& style = ImGui::GetStyle();
+		style.WindowPadding.x = 12.0f;   // default 8 — adds a right-edge gap to the scrollbar
+		style.ScrollbarSize   = 15.0f;   // slightly chunkier, easier to grab
+	}
 
 	// setup platform/renderer backends
 	ImGui_ImplSDL3_InitForSDLGPU(window);
@@ -91,10 +138,16 @@ int main(int, char**) {
 	io.Fonts->AddFontFromMemoryCompressedTTF((void*) &dejavu, dejavuSize, 15.0f, &config);
 
 	// main loop
+	// Tell Editor to skip the demo doc when launched with files / project.
+	Editor::sSkipDemo = (!projectArg.empty() || !filesArg.empty());
 	Editor editor;
+	if (!projectArg.empty()) editor.setProjectRoot(projectArg);
+	for (auto& p : filesArg) editor.openFile(p);
 	SDL_Event event;
 
 	while (!editor.isDone()) {
+		Uint64 frameStartNs = SDL_GetTicksNS();
+
 		// poll and handle events (inputs, window resize, etc.)
 		while (SDL_PollEvent(&event)) {
 			ImGui_ImplSDL3_ProcessEvent(&event);
@@ -162,6 +215,29 @@ int main(int, char**) {
 		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
 			ImGui::UpdatePlatformWindows();
 			ImGui::RenderPlatformWindowsDefault();
+		}
+
+		// Frame pacing. Pick the active target FPS: the user's cap, or a low
+		// idle rate when the editor is in the background. Sleep off the
+		// remainder of the frame budget. 0 = unlimited and skips the sleep.
+		//
+		// Focus check must consider ALL of the app's windows, not just the main
+		// one: with multi-viewport, a popped-out document lives in its own OS
+		// window, so the main window loses INPUT_FOCUS even though the app is
+		// active. Checking only the main window made the idle throttle drop us
+		// to 10 FPS the moment a tab was popped out (the "multiviewport tanks
+		// FPS" cliff). SDL_GetKeyboardFocus() returns a non-null window when ANY
+		// of our windows (main or viewport) has focus, and null only when a
+		// different application is focused.
+		int targetFps = editor.fpsLimit();
+		bool focused = (SDL_GetKeyboardFocus() != nullptr);
+		if (editor.idleThrottle() && !focused) {
+			targetFps = (targetFps == 0) ? 10 : (targetFps < 10 ? targetFps : 10);
+		}
+		if (targetFps > 0) {
+			Uint64 budgetNs = 1000000000ull / (Uint64) targetFps;
+			Uint64 elapsedNs = SDL_GetTicksNS() - frameStartNs;
+			if (elapsedNs < budgetNs) SDL_DelayNS(budgetNs - elapsedNs);
 		}
 	}
 

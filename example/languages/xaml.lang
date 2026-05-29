@@ -1,0 +1,9 @@
+name = XAML
+extensions = .xaml
+case_sensitive = true
+comment_start = <!--
+comment_end = -->
+single_quoted_strings = true
+double_quoted_strings = true
+keywords = Window Page UserControl Application ResourceDictionary StackPanel Grid Canvas DockPanel WrapPanel UniformGrid Border ScrollViewer GroupBox TabControl TabItem Button ToggleButton CheckBox RadioButton ComboBox ComboBoxItem ListBox ListBoxItem ListView ListViewItem TreeView TreeViewItem DataGrid DataGridColumn DataGridTextColumn Menu MenuItem ContextMenu ToolBar StatusBar Image TextBlock TextBox PasswordBox RichTextBox Label Slider ProgressBar ScrollBar Separator Expander GridSplitter Calendar DatePicker Popup ToolTip Style Setter Trigger DataTrigger EventTrigger ControlTemplate DataTemplate ItemsPanelTemplate Binding Path StaticResource DynamicResource RelativeSource ElementName Source Converter ConverterParameter Mode TwoWay OneWay OneTime OneWayToSource RowDefinition ColumnDefinition Width Height Grid.Row Grid.Column Grid.RowSpan Grid.ColumnSpan HorizontalAlignment VerticalAlignment Margin Padding Background Foreground FontFamily FontSize FontWeight FontStyle Visibility IsEnabled IsChecked IsSelected SelectedItem ItemsSource ItemTemplate
+declarations = x:Class x:Name x:Key x:Type x:Static x:Null x:Reference x:Bind xmlns xmlns:x xmlns:d xmlns:mc d:DesignHeight d:DesignWidth mc:Ignorable

@@ -9,19 +9,40 @@
 //	Include files
 //
 #define _CRT_SECURE_NO_WARNINGS  // for std::getenv used in #include resolution
+#ifdef _WIN32
 #include <Windows.h>
+#include <shellapi.h>   // SHFileOperation for recycle-bin delete
+#include <process.h>    // _popen / _pclose
+#endif
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <process.h>
+#include <sstream>
 #include <thread>
+#include <unordered_set>
 
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+
+// stb_image — define our own static-linkage copy in this translation unit so
+// the image viewer can load PNG/JPG/etc. (ImGuiFileDialog also embeds it, but
+// gates exports inconsistently — easier to just have our own private copy.)
+// Suppress C4505 (unreferenced static functions) — stb_image has many.
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_NO_PSD
+#define STBI_NO_PIC
+#define STBI_NO_PNM
+#define STBI_NO_HDR
+#pragma warning(push)
+#pragma warning(disable: 4505)
+#include "stb/stb_image.h"
+#pragma warning(pop)
 
 #include "editor.h"
 
@@ -29,6 +50,7 @@
 // Forward decls so callers above the definitions (e.g. Editor::tryToQuit)
 // can persist favourites at any quit/teardown path.
 static void saveFileDialogPlaces();
+static void populateFileDialogPlaces();
 
 
 //
@@ -151,6 +173,7 @@ const TextEditor::Language* Editor::languageForPath(const std::string& path)
 	if (ext == ".json" || ext == ".jsonl" || ext == ".uplugin" || ext == ".uproject" || ext == ".gltf")                                                       return TextEditor::Language::Json();
 	if (ext == ".md" || ext == ".markdown")                                   return TextEditor::Language::Markdown();
 	if (ext == ".sql")                                                        return TextEditor::Language::Sql();
+	if (ext == ".ini" || ext == ".cfg" || ext == ".conf")                     return TextEditor::Language::Ini();
 
 	// Runtime-defined languages (HTML, INI, YAML, CFG, BAT, PS1, etc.)
 	auto& byExt = runtimeLanguagesByExt();
@@ -164,17 +187,34 @@ const TextEditor::Language* Editor::languageForPath(const std::string& path)
 //	Editor::Editor
 //
 
+bool Editor::sSkipDemo = false;
+
 Editor::Editor()
 {
 	// Load user-defined language definitions (HTML, INI, YAML, CFG, BAT, PS1).
 	loadRuntimeLanguages();
+	// Load editor-wide preferences (interpreter overrides, build commands, etc.)
+	loadSettings();
+	// If the user picked a custom font in a previous session, load it now into
+	// the atlas so the first render uses it. Empty path = stick with bundled.
+	if (!fontPath.empty()) applyFont();
+
+	// Skip the demo when this is a second-or-later launch (settings file
+	// already exists) OR when main.cpp told us to (via --project or
+	// positional file arguments). On a true first run, fall through to the
+	// demo so the user has something to look at.
+	if (seenFirstRun || sSkipDemo) {
+		auto& t = newTab();
+		(void)t;
+		return;
+	}
 
 	auto& t = newTab();
 	t.originalText = demo;
 	t.editor.SetText(demo);
 	t.editor.SetLanguage(TextEditor::Language::Cpp());
 	t.version = t.editor.GetUndoIndex();
-	t.filename = "demo.cpp";
+	t.filename = "untitled";
 	// Populate the trie up front so context-menu items like
 	// "Go to Definition" can gate themselves on `trie.contains(word)` even
 	// when autocomplete is disabled. Cheap for short docs.
@@ -194,6 +234,12 @@ Editor::TabDocument& Editor::newTab()
 	t->open = true;
 	t->wantFocus = true;
 	t->version = t->editor.GetUndoIndex();
+	// Apply current editor prefs so toggles from Settings persist into new tabs.
+	t->editor.SetAutoIndentEnabled(prefAutoIndent);
+	t->editor.SetCompletePairedGlyphs(prefCompletePairs);
+	t->editor.SetPanInverted(prefInvertPan);
+	t->editor.SetWordWrap(prefWordWrap);
+	t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
 	tabs.push_back(std::move(t));
 	activeTab = tabs.size() - 1;
 	if (autocomplete) setAutocompleteMode(true);
@@ -293,12 +339,19 @@ void Editor::renderScriptOutputWindow()
 {
 	if (!script->visible) return;
 	ImGui::SetNextWindowSize(ImVec2(600, 200), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("Output##scriptRunner", &script->visible))
+	if (ImGui::Begin("Output###outputPanel", &script->visible))
 	{
 		if (ImGui::SmallButton("Clear"))
 		{
 			std::lock_guard<std::mutex> lock(script->mutex);
 			script->output.clear();
+		}
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Copy"))
+		{
+			std::string snap;
+			{ std::lock_guard<std::mutex> lock(script->mutex); snap = script->output; }
+			ImGui::SetClipboardText(snap.c_str());
 		}
 		ImGui::SameLine();
 		if (script->running.load()) ImGui::TextDisabled("(running…)");
@@ -448,6 +501,16 @@ void Editor::runProjectBuild()
 		cmd = interp;
 	}
 
+	// Substitute %CONFIG% with the active build configuration so presets like
+	// "cmake --build . --config %CONFIG%" pick up Debug / Release.
+	{
+		std::string token = "%CONFIG%";
+		for (size_t pos = 0; (pos = cmd.find(token, pos)) != std::string::npos; ) {
+			cmd.replace(pos, token.size(), activeBuildConfig);
+			pos += activeBuildConfig.size();
+		}
+	}
+
 	int gen = ++script->gen;
 	{
 		std::lock_guard<std::mutex> lock(script->mutex);
@@ -506,6 +569,108 @@ void Editor::runProjectBuild()
 }
 
 
+// Walk projectRoot looking for a built executable under the usual build
+// dirs. Returns the newest exe so a fresh `cmake --build` is picked up.
+std::filesystem::path Editor::findBuiltExe() const
+{
+	if (projectRoot.empty()) return {};
+	std::vector<std::filesystem::path> searchRoots = {
+		projectRoot / "out" / "build",
+		projectRoot / "build",
+		projectRoot / "bin",
+		projectRoot / "x64",
+		projectRoot,
+	};
+	std::filesystem::path best;
+	std::filesystem::file_time_type bestTime{};
+	std::error_code ec;
+	for (auto& root : searchRoots) {
+		if (!std::filesystem::exists(root, ec)) continue;
+		for (auto it = std::filesystem::recursive_directory_iterator(
+				root, std::filesystem::directory_options::skip_permission_denied, ec);
+			it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+		{
+			if (ec) { ec.clear(); continue; }
+			if (!it->is_regular_file(ec)) continue;
+			auto ext = it->path().extension().string();
+			std::transform(ext.begin(), ext.end(), ext.begin(),
+				[](unsigned char c){ return (char)std::tolower(c); });
+#ifdef _WIN32
+			if (ext != ".exe") continue;
+#else
+			if (ext == ".so" || ext == ".dylib") continue;
+			// On POSIX, we look for files with no extension that are executable.
+			// (Naive — good enough for common CMake / Ninja output layouts.)
+			if (!ext.empty()) continue;
+#endif
+			auto t = std::filesystem::last_write_time(it->path(), ec);
+			if (ec) { ec.clear(); continue; }
+			if (best.empty() || t > bestTime) { best = it->path(); bestTime = t; }
+		}
+	}
+	return best;
+}
+
+void Editor::runProjectExeOrScript()
+{
+	// Prefer running a built exe when we have a project root with one.
+	// Falls back to the per-doc script interpreter otherwise.
+	if (!projectRoot.empty()) {
+		auto exe = findBuiltExe();
+		if (!exe.empty()) {
+			std::string cmd = "\"" + exe.string() + "\"";
+			int gen = ++script->gen;
+			{
+				std::lock_guard<std::mutex> lock(script->mutex);
+				script->output = "$ " + cmd + "\n";
+				script->visible = true;
+			}
+			script->running = true;
+			auto scriptCtx = script;
+			auto runDir = exe.parent_path();
+			std::thread([scriptCtx, cmd, runDir, gen]() {
+				std::string full;
+#ifdef _WIN32
+				full = "\"< NUL pushd \"" + runDir.string() + "\" && " + cmd + " 2>&1 & popd\"";
+				FILE* pipe = _popen(full.c_str(), "r");
+#else
+				full = "cd \"" + runDir.string() + "\" && < /dev/null " + cmd + " 2>&1";
+				FILE* pipe = popen(full.c_str(), "r");
+#endif
+				if (!pipe) {
+					std::lock_guard<std::mutex> lock(scriptCtx->mutex);
+					if (gen == scriptCtx->gen.load()) scriptCtx->output += "[failed to spawn]\n";
+					scriptCtx->running = false;
+					return;
+				}
+				char buf[4096];
+				while (size_t n = fread(buf, 1, sizeof(buf), pipe)) {
+					std::lock_guard<std::mutex> lock(scriptCtx->mutex);
+					if (gen != scriptCtx->gen.load()) break;
+					scriptCtx->output.append(buf, n);
+					if (scriptCtx->output.size() > (8u << 20)) {
+						scriptCtx->output.append("\n[…truncated after 8 MB…]\n");
+						break;
+					}
+				}
+				int rc =
+#ifdef _WIN32
+					_pclose(pipe);
+#else
+					pclose(pipe);
+#endif
+				std::lock_guard<std::mutex> lock(scriptCtx->mutex);
+				if (gen == scriptCtx->gen.load())
+					scriptCtx->output += "\n[exit " + std::to_string(rc) + "]\n";
+				scriptCtx->running = false;
+			}).detach();
+			return;
+		}
+	}
+	runScriptForDoc();
+}
+
+
 void Editor::runScriptForDoc()
 {
 	if (tabs.empty()) return;
@@ -515,9 +680,16 @@ void Editor::runScriptForDoc()
 	auto ext = std::filesystem::path(t.filename).extension().string();
 	std::transform(ext.begin(), ext.end(), ext.begin(),
 				   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-	const char* interp = interpreterForExt(ext);
-	if (!interp)
-	{
+
+	// Settings interpreter override takes precedence over the built-in
+	// per-extension defaults so the user can swap python -> python3, etc.
+	std::string interpStr;
+	auto over = interpreterOverrides.find(ext);
+	if (over != interpreterOverrides.end()) {
+		interpStr = over->second;
+	} else if (const char* def = interpreterForExt(ext)) {
+		interpStr = def;
+	} else {
 		std::lock_guard<std::mutex> lock(script->mutex);
 		script->output = "[no interpreter mapped for " + ext + "]\n";
 		script->visible = true;
@@ -527,8 +699,8 @@ void Editor::runScriptForDoc()
 	if (isDirty()) saveFile();
 
 	std::string cmd;
-	if (interp[0] != '\0') cmd = std::string(interp) + " \"" + t.filename + "\"";
-	else                   cmd = "\"" + t.filename + "\"";
+	if (!interpStr.empty()) cmd = interpStr + " \"" + t.filename + "\"";
+	else                    cmd = "\"" + t.filename + "\"";
 
 	int gen = ++script->gen;
 	{
@@ -640,6 +812,1848 @@ void Editor::toggleHeaderSource()
 }
 
 
+// ── Navigation panel ─────────────────────────────────────────────────
+//
+// Dockable file-tree view of the project root. Lazy directory iteration:
+// folder children are only enumerated when the user expands the node, so
+// huge project trees don't stall startup.
+
+// Snapshot the currently-open file tabs (skip untitled / dirty) into
+// projectSessions, keyed by the current projectRoot. Idempotent — overwrites
+// the previous snapshot for this root.
+void Editor::saveCurrentProjectSession()
+{
+	if (projectRoot.empty()) return;
+	std::vector<std::string> files;
+	for (auto& up : tabs) {
+		auto& t = *up;
+		if (t.filename == "untitled") continue;
+		files.push_back(t.filename);
+	}
+	std::error_code ec;
+	auto canon = std::filesystem::weakly_canonical(projectRoot, ec);
+	projectSessions[(ec ? projectRoot : canon).string()] = std::move(files);
+}
+
+// Close every non-untitled tab. Dirty tabs are kept so the user doesn't lose
+// unsaved work when switching projects — they'll just remain open in the new
+// project view until the user closes / saves them explicitly.
+void Editor::closeAllProjectTabs()
+{
+	for (size_t i = tabs.size(); i-- > 0; ) {
+		auto& t = *tabs[i];
+		if (t.filename == "untitled") continue;
+		if (isDirtyTab(i)) continue;
+		closeTab(i);
+	}
+}
+
+// Open files from the saved session for `root` (if any).
+void Editor::restoreProjectSession(const std::filesystem::path& root)
+{
+	std::error_code ec;
+	auto canon = std::filesystem::weakly_canonical(root, ec);
+	auto it = projectSessions.find((ec ? root : canon).string());
+	if (it == projectSessions.end()) return;
+	for (auto& f : it->second) {
+		std::error_code fec;
+		if (std::filesystem::exists(f, fec)) openFile(f);
+	}
+}
+
+void Editor::setProjectRoot(const std::filesystem::path& p)
+{
+	std::error_code ec;
+	auto abs = std::filesystem::absolute(p, ec);
+	if (ec || abs.empty()) return;
+	// If we're switching projects, snapshot the outgoing project's open tabs
+	// so reopening that project later restores the workspace.
+	if (!projectRoot.empty()) {
+		auto oldCanon = std::filesystem::weakly_canonical(projectRoot, ec);
+		auto newCanon = std::filesystem::weakly_canonical(abs, ec);
+		if (oldCanon != newCanon) {
+			saveCurrentProjectSession();
+			closeAllProjectTabs();
+		}
+	}
+	projectRoot = abs;
+	navPanelVisible = true;
+	rememberRecentProject(abs.string());
+	restoreProjectSession(abs);
+	// Persist immediately so a crash/quit doesn't lose the session.
+	saveSettings();
+}
+
+void Editor::openProjectFolderPicker()
+{
+	// Re-use the file dialog. Accepting either a folder OR a project file
+	// (.sln/.csproj/.vcxproj/.uproject/CMakeLists.txt). Project files are
+	// resolved to their parent directory below in the dialog-close path.
+	if (auto* vp = ImGui::GetWindowViewport()) dialogViewportId = vp->ID;
+	else dialogViewportId = ImGui::GetMainViewport()->ID;
+	dialogNeedsPlacement = true;
+	IGFD::FileDialogConfig config;
+	config.countSelectionMax = 1;
+	// OptionalFileName lets the user navigate into a folder and just hit
+	// "Open" without selecting any file — that's how you pick a plain folder
+	// as the project root. Without this, the dialog refuses to validate
+	// unless a file is highlighted.
+	config.flags = ImGuiFileDialogFlags_DontShowHiddenFiles
+	             | ImGuiFileDialogFlags_OptionalFileName;
+	populateFileDialogPlaces();
+	// Filter spec is OR-of-extensions plus a "Any folder" pass-through.
+	const char* filter = "Project ({.sln,.csproj,.vcxproj,.uproject,.uplugin}){.sln,.csproj,.vcxproj,.uproject,.uplugin},CMakeLists.txt{CMakeLists.txt},All{.*}";
+	ImGuiFileDialog::Instance()->OpenDialog("project-open", "Open Project (folder or project file)...", filter, config);
+	state = State::openProject;
+}
+
+bool Editor::navIsExcluded(const std::filesystem::path& p) const
+{
+	std::error_code ec;
+	auto key = std::filesystem::weakly_canonical(p, ec);
+	auto it = navExcluded.find((ec ? p : key).string());
+	return it != navExcluded.end() && it->second;
+}
+
+bool Editor::navIsCodeFile(const std::filesystem::path& p) const
+{
+	// "Code-only" filter — same set as the project-wide grep walker, plus a
+	// few project-file extensions so .sln / .csproj show up in the tree.
+	auto ext = p.extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(),
+		[](unsigned char c){ return (char) std::tolower(c); });
+	static const std::unordered_set<std::string> ok = {
+		".c", ".h", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh", ".m", ".mm", ".inl",
+		".cs", ".vb", ".fs", ".fsx",
+		".java", ".kt", ".scala", ".groovy",
+		".py", ".pyw", ".rb", ".php", ".pl",
+		".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+		".go", ".rs", ".swift", ".lua", ".sh", ".ps1", ".psm1",
+		".sql", ".r", ".jl", ".dart",
+		".sln", ".csproj", ".vcxproj", ".uproject", ".uplugin",
+		".cmake", ".cmakelists",
+		".html", ".htm", ".xml", ".xaml", ".json", ".yaml", ".yml", ".toml", ".ini",
+		".md", ".rst", ".tex", ".lang",
+	};
+	return ok.count(ext) != 0
+		|| p.filename() == "CMakeLists.txt"
+		|| p.filename() == "Makefile"
+		|| p.filename() == "Dockerfile"
+		|| p.filename() == "requirements.txt";
+}
+
+// Drag-drop a file or folder onto a target folder. Ctrl held during drop =
+// copy, otherwise move. Refuses to move a folder into itself or its own
+// descendant.
+void Editor::navMoveOrCopy(const std::string& src,
+                           const std::string& destDir, bool copy)
+{
+	std::error_code ec;
+	std::filesystem::path s(src), d(destDir);
+	if (!std::filesystem::exists(d, ec) || !std::filesystem::is_directory(d, ec)) return;
+	auto canonSrc = std::filesystem::weakly_canonical(s, ec);
+	auto canonDst = std::filesystem::weakly_canonical(d, ec);
+	// Block move-into-self / move-into-own-subtree.
+	for (auto p = canonDst; !p.empty(); p = p.parent_path()) {
+		if (p == canonSrc) return;
+		if (p == p.parent_path()) break;
+	}
+	auto target = canonDst / s.filename();
+	if (copy) {
+		std::filesystem::copy(s, target,
+			std::filesystem::copy_options::recursive |
+			std::filesystem::copy_options::overwrite_existing, ec);
+	} else {
+		std::filesystem::rename(s, target, ec);
+	}
+}
+
+
+// Best-effort "send to recycle bin" so right-click → Delete isn't a one-way
+// road. On Windows uses SHFileOperation with FOF_ALLOWUNDO; on POSIX falls
+// back to xdg-trash if available, otherwise plain remove_all.
+void Editor::navDeletePath(const std::string& p)
+{
+#ifdef _WIN32
+	// SHFileOperationA needs a double-NUL-terminated source buffer.
+	std::string buf = p;
+	buf.push_back('\0');
+	buf.push_back('\0');
+	SHFILEOPSTRUCTA op{};
+	op.wFunc  = FO_DELETE;
+	op.pFrom  = buf.c_str();
+	op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+	if (SHFileOperationA(&op) != 0) {
+		// Fall back to permanent delete if recycle bin failed (e.g. network drive).
+		std::error_code dec;
+		std::filesystem::remove_all(p, dec);
+	}
+#else
+	// Try gio trash, then fallback to permanent delete.
+	std::string cmd = "gio trash \"" + p + "\" 2>/dev/null";
+	if (std::system(cmd.c_str()) != 0) {
+		std::error_code dec;
+		std::filesystem::remove_all(p, dec);
+	}
+#endif
+}
+
+void Editor::navOpenPathInExplorer(const std::string& path)
+{
+#ifdef _WIN32
+	// /select, opens Explorer with the file/dir highlighted; for a dir,
+	// passing the dir itself opens it.
+	std::error_code ec;
+	bool isDir = std::filesystem::is_directory(path, ec);
+	std::string cmd;
+	if (isDir) cmd = "explorer \"" + path + "\"";
+	else       cmd = "explorer /select,\"" + path + "\"";
+	std::system(cmd.c_str());
+#else
+	std::string cmd = "xdg-open \"" + path + "\" >/dev/null 2>&1 &";
+	std::system(cmd.c_str());
+#endif
+}
+
+void Editor::navOpenExternally(const std::string& path)
+{
+#ifdef _WIN32
+	ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+	std::string cmd = "xdg-open \"" + path + "\" >/dev/null 2>&1 &";
+	std::system(cmd.c_str());
+#endif
+}
+
+// One tree-node row for a single entry. Encapsulates the context menu, rename
+// inline-edit, click-to-open behaviour, and recurses for directories.
+static void renderDirNode(Editor* self,
+                          const std::filesystem::path& dir,
+                          int depth,
+                          bool showDot,
+                          std::string& contextPath,
+                          std::string& renameTarget,
+                          char* renameBuf,
+                          std::string& pendingDelete);
+
+static void navRenderEntry(Editor* self,
+                           const std::filesystem::directory_entry& e,
+                           int depth,
+                           bool showDot,
+                           std::string& contextPath,
+                           std::string& renameTarget,
+                           char* renameBuf,
+                           std::string& pendingDelete)
+{
+	std::error_code ec;
+	auto name = e.path().filename().string();
+	bool isDir = e.is_directory(ec);
+	auto absPath = e.path().string();
+
+	// In-place rename: replace the row with an InputText.
+	if (renameTarget == absPath) {
+		ImGui::PushID(absPath.c_str());
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		bool commit = ImGui::InputText("##rename", renameBuf, 256,
+			ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+		if (ImGui::IsItemDeactivated()) {
+			// Treat focus loss as cancel unless Enter committed.
+			if (!commit) renameTarget.clear();
+		}
+		if (commit) {
+			std::string newName = renameBuf;
+			if (!newName.empty() && newName != name) {
+				auto target = e.path().parent_path() / newName;
+				std::error_code rec;
+				std::filesystem::rename(e.path(), target, rec);
+			}
+			renameTarget.clear();
+		}
+		ImGui::PopID();
+		return;
+	}
+
+	// Helper — hover tooltip with file type + timestamps. Cheap: only fires
+	// when the user dwells on the row.
+	auto navTooltip = [&](const std::filesystem::directory_entry& ent, bool dir) {
+		if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
+			return;
+		ImGui::BeginTooltip();
+		ImGui::TextUnformatted(ent.path().filename().string().c_str());
+		ImGui::Separator();
+		std::error_code lec;
+		if (dir) {
+			ImGui::TextDisabled("Folder");
+		} else {
+			auto ext = ent.path().extension().string();
+			ImGui::TextDisabled("Type: %s", ext.empty() ? "(none)" : ext.c_str() + 0);
+			auto sz = std::filesystem::file_size(ent.path(), lec);
+			if (!lec) {
+				if (sz < 1024) ImGui::TextDisabled("Size: %llu B", (unsigned long long) sz);
+				else if (sz < 1024ull * 1024)
+					ImGui::TextDisabled("Size: %.1f KB", sz / 1024.0);
+				else if (sz < 1024ull * 1024 * 1024)
+					ImGui::TextDisabled("Size: %.1f MB", sz / (1024.0 * 1024.0));
+				else
+					ImGui::TextDisabled("Size: %.2f GB", sz / (1024.0 * 1024.0 * 1024.0));
+			}
+		}
+		// Modified time is the only one std::filesystem gives us portably.
+		// Created time is Win32-only — gate accordingly.
+#ifdef _WIN32
+		WIN32_FILE_ATTRIBUTE_DATA fad;
+		if (GetFileAttributesExA(ent.path().string().c_str(), GetFileExInfoStandard, &fad)) {
+			auto fmt = [](FILETIME ft) -> std::string {
+				SYSTEMTIME st;
+				FileTimeToSystemTime(&ft, &st);
+				char buf[64];
+				std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d",
+					st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+				return buf;
+			};
+			ImGui::TextDisabled("Created:  %s", fmt(fad.ftCreationTime).c_str());
+			ImGui::TextDisabled("Modified: %s", fmt(fad.ftLastWriteTime).c_str());
+		}
+#else
+		auto mt = std::filesystem::last_write_time(ent.path(), lec);
+		if (!lec) {
+			auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+				mt - decltype(mt)::clock::now() + std::chrono::system_clock::now());
+			std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
+			char buf[64];
+			std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", std::localtime(&cftime));
+			ImGui::TextDisabled("Modified: %s", buf);
+		}
+#endif
+		ImGui::EndTooltip();
+	};
+
+	// Helper — drag source + drag target. Folders accept drops as
+	// move/copy targets; files act as drag sources.
+	auto navDnD = [&](bool dir) {
+		if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+			self->navDragSourceSet(absPath);
+			ImGui::SetDragDropPayload("NAVPATH", absPath.c_str(), absPath.size() + 1);
+			ImGui::TextDisabled("%s", name.c_str());
+			ImGui::EndDragDropSource();
+		}
+		if (dir && ImGui::BeginDragDropTarget()) {
+			if (const auto* payload = ImGui::AcceptDragDropPayload("NAVPATH")) {
+				std::string src((const char*) payload->Data, payload->DataSize - 1);
+				bool copy = ImGui::GetIO().KeyCtrl;
+				self->navMoveOrCopy(src, absPath, copy);
+			}
+			ImGui::EndDragDropTarget();
+		}
+	};
+
+	if (isDir) {
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+		bool open = ImGui::TreeNodeEx(name.c_str(), flags);
+		navTooltip(e, true);
+		navDnD(true);
+		if (ImGui::BeginPopupContextItem()) {
+			contextPath = absPath;
+			ImGui::EndPopup();
+		}
+		if (open) {
+			if (!self->navIsFlat()) {
+				renderDirNode(self, e.path(), depth + 1, showDot,
+					contextPath, renameTarget, renameBuf, pendingDelete);
+			}
+			ImGui::TreePop();
+		}
+	} else {
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf
+			| ImGuiTreeNodeFlags_NoTreePushOnOpen
+			| ImGuiTreeNodeFlags_SpanAvailWidth;
+		ImGui::TreeNodeEx(name.c_str(), flags);
+		navTooltip(e, false);
+		navDnD(false);
+		if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+			self->openFile(absPath);
+		}
+		if (ImGui::BeginPopupContextItem()) {
+			contextPath = absPath;
+			ImGui::EndPopup();
+		}
+	}
+}
+
+static void renderDirNode(Editor* self,
+                          const std::filesystem::path& dir,
+                          int depth,
+                          bool showDot,
+                          std::string& contextPath,
+                          std::string& renameTarget,
+                          char* renameBuf,
+                          std::string& pendingDelete)
+{
+	if (depth > 20) return;
+	std::error_code ec;
+	std::vector<std::filesystem::directory_entry> entries;
+	for (auto& e : std::filesystem::directory_iterator(
+			dir, std::filesystem::directory_options::skip_permission_denied, ec)) {
+		if (ec) break;
+		entries.push_back(e);
+	}
+	std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+		bool aDir = a.is_directory(), bDir = b.is_directory();
+		if (aDir != bDir) return aDir;
+		auto an = a.path().filename().string(), bn = b.path().filename().string();
+		std::transform(an.begin(), an.end(), an.begin(),
+			[](unsigned char c){ return (char)std::tolower(c); });
+		std::transform(bn.begin(), bn.end(), bn.begin(),
+			[](unsigned char c){ return (char)std::tolower(c); });
+		return an < bn;
+	});
+	for (auto& e : entries) {
+		auto name = e.path().filename().string();
+		if (!showDot && !name.empty() && name[0] == '.') continue;
+		bool excluded = self->navIsExcluded(e.path());
+		if (excluded && !self->navIsShowingExcluded()) continue;
+		std::error_code dec;
+		bool isDir = e.is_directory(dec);
+		// Code-only filter: still show folders (you need them to navigate),
+		// but hide non-source files.
+		if (self->navIsCodeOnly() && !isDir && !self->navIsCodeFile(e.path()))
+			continue;
+		navRenderEntry(self, e, depth, showDot,
+			contextPath, renameTarget, renameBuf, pendingDelete);
+	}
+}
+
+void Editor::renderNavigationPanel()
+{
+	if (!navPanelVisible) return;
+	ImGui::SetNextWindowSize(ImVec2(280.0f, 480.0f), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Navigation##projectNav", &navPanelVisible))
+	{
+		auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
+		ImGui::TextDisabled("%s", root.string().c_str());
+		ImGui::SameLine();
+		if (ImGui::SmallButton("...")) { openProjectFolderPicker(); }
+		// Toggle row — defaults are persisted in [editor] of settings.txt.
+		// Hover the icons for what each filter does.
+		ImGui::Checkbox(".dot", &navShowDotFiles);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show dotfiles (.git, .env, etc.)");
+		ImGui::SameLine();
+		ImGui::Checkbox("code", &navCodeOnly);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Code/project files only — hide build artefacts and docs.");
+		ImGui::SameLine();
+		ImGui::Checkbox("excl", &navShowExcluded);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show items you've excluded so you can re-include them.");
+		ImGui::SameLine();
+		ImGui::Checkbox("flat", &navFlatFiles);
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse folder contents — show folders without expanding files.");
+		ImGui::Separator();
+
+		navContextPath.clear();
+		std::error_code ec;
+		if (std::filesystem::is_directory(root, ec)) {
+			renderDirNode(this, root, 0, navShowDotFiles,
+				navContextPath, navRenameTarget, navRenameBuf, navPendingDelete);
+		} else {
+			ImGui::TextDisabled("(no project root set)");
+		}
+
+		// Context-menu popup. BeginPopupContextItem above sets contextPath when
+		// the user right-clicks a tree row; we open the popup here with that
+		// path baked in so menu items act on the correct entry.
+		if (!navContextPath.empty()) {
+			ImGui::OpenPopup("##navCtx");
+		}
+		if (ImGui::BeginPopup("##navCtx")) {
+			// Cache the path on first open so it survives across frames while
+			// the popup is up. (BeginPopupContextItem only fires once.)
+			static std::string ctxPath;
+			if (!navContextPath.empty()) ctxPath = navContextPath;
+			std::error_code cec;
+			bool isDir = std::filesystem::is_directory(ctxPath, cec);
+			ImGui::TextDisabled("%s", std::filesystem::path(ctxPath).filename().string().c_str());
+			ImGui::Separator();
+			if (!isDir && ImGui::MenuItem("Open")) { openFile(ctxPath); }
+			if (ImGui::MenuItem("Open in Explorer")) { navOpenPathInExplorer(ctxPath); }
+			if (ImGui::MenuItem("Copy path")) { ImGui::SetClipboardText(ctxPath.c_str()); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Copy")) { navClipboardPath = ctxPath; navClipboardIsCut = false; }
+			if (ImGui::MenuItem("Cut"))  { navClipboardPath = ctxPath; navClipboardIsCut = true;  }
+			if (ImGui::MenuItem("Paste", nullptr, false,
+				!navClipboardPath.empty() && isDir))
+			{
+				auto src = std::filesystem::path(navClipboardPath);
+				auto dst = std::filesystem::path(ctxPath) / src.filename();
+				std::error_code pec;
+				if (navClipboardIsCut) std::filesystem::rename(src, dst, pec);
+				else std::filesystem::copy(src, dst,
+						std::filesystem::copy_options::recursive |
+						std::filesystem::copy_options::overwrite_existing, pec);
+				if (navClipboardIsCut) navClipboardPath.clear();
+			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Rename")) {
+				navRenameTarget = ctxPath;
+				auto leaf = std::filesystem::path(ctxPath).filename().string();
+				std::snprintf(navRenameBuf, sizeof(navRenameBuf), "%s", leaf.c_str());
+			}
+			if (ImGui::MenuItem("Delete")) {
+				navPendingDelete = ctxPath;
+				ImGui::OpenPopup("##navConfirmDel");
+			}
+			ImGui::Separator();
+			std::error_code wec;
+			auto canon = std::filesystem::weakly_canonical(ctxPath, wec);
+			std::string canonKey = (wec ? std::filesystem::path(ctxPath) : canon).string();
+			bool excluded = navExcluded.count(canonKey) && navExcluded[canonKey];
+			if (!excluded) {
+				if (ImGui::MenuItem("Exclude from view")) navExcluded[canonKey] = true;
+			} else {
+				if (ImGui::MenuItem("Re-include in view")) navExcluded.erase(canonKey);
+			}
+			ImGui::EndPopup();
+		}
+
+		// Confirm delete — destructive, so gate behind a yes/no.
+		// Delete sends to recycle bin on Windows (FOF_ALLOWUNDO) so it's
+		// recoverable. The "Force delete" checkbox bypasses that for the
+		// rare case where the user really wants permanent removal.
+		static bool forceDelete = false;
+		if (!navPendingDelete.empty()) ImGui::OpenPopup("##navConfirmDel");
+		if (ImGui::BeginPopupModal("##navConfirmDel", nullptr,
+			ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::Text("Delete %s?",
+				std::filesystem::path(navPendingDelete).filename().string().c_str());
+#ifdef _WIN32
+			ImGui::TextDisabled(forceDelete
+				? "Permanent — bypasses Recycle Bin."
+				: "Sent to Recycle Bin (recoverable).");
+#else
+			ImGui::TextDisabled(forceDelete
+				? "Permanent — bypasses trash."
+				: "Sent to trash via gio (if available).");
+#endif
+			ImGui::Checkbox("Force delete (skip recycle bin)", &forceDelete);
+			ImGui::Separator();
+			if (ImGui::Button("Delete")) {
+				if (forceDelete) {
+					std::error_code dec;
+					std::filesystem::remove_all(navPendingDelete, dec);
+				} else {
+					navDeletePath(navPendingDelete);
+				}
+				navPendingDelete.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel")) {
+				navPendingDelete.clear();
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+	}
+	ImGui::End();
+}
+
+
+void Editor::navInitDockLayout(unsigned int dockId)
+{
+	// One-time default layout (only when imgui.ini has no saved layout):
+	//   ┌──────┬─────────────────┬────────┐
+	//   │ Nav  │   documents     │  Find  │
+	//   │ left │   (central)     │  Refs  │  ← right
+	//   │      ├─────────────────┤ (right)│
+	//   │      │   Output        │        │  ← Output spans the bottom of center
+	//   └──────┴─────────────────┴────────┘
+	// Documents dock into the central node (centralDockId) so new ones open
+	// as tabs there. Find References → right pane, Output → bottom pane.
+	if (dockLayoutInitialized) return;
+	dockLayoutInitialized = true;
+	if (ImGui::DockBuilderGetNode(dockId) != nullptr) {
+		// A saved layout exists — don't clobber it. Docs still route to the
+		// root's central node via SetNextWindowDockID below.
+		centralDockId = dockId;
+		return;
+	}
+	ImGui::DockBuilderRemoveNode(dockId);
+	ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+	ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetMainViewport()->WorkSize);
+
+	ImGuiID dockMain = dockId;
+	ImGuiID leftId   = 0, rightId = 0, bottomId = 0;
+	ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left,  0.20f, &leftId,   &dockMain);
+	ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.25f, &rightId,  &dockMain);
+	ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down,  0.25f, &bottomId, &dockMain);
+
+	ImGui::DockBuilderDockWindow("Navigation##projectNav", leftId);
+	ImGui::DockBuilderDockWindow("###refsPanel",   rightId);
+	ImGui::DockBuilderDockWindow("###outputPanel", bottomId);
+	centralDockId = dockMain;   // documents go here as tabs
+	ImGui::DockBuilderFinish(dockId);
+}
+
+
+// ── Manual viewport control ──────────────────────────────────────────
+//
+// Multi-viewport is enabled; windows only leave the main OS window when the
+// user drags them out or invokes these. Pop-out undocks the active document
+// and positions it just outside the main viewport (which makes ImGui give it
+// its own OS window next frame). Remerge docks it back into the central node.
+
+void Editor::popOutActiveDoc(int dir)
+{
+	if (tabs.empty()) return;
+	auto label = windowLabelFor(*tabs[activeTab]);
+	ImGui::DockBuilderDockWindow(label.c_str(), 0);   // undock → floating
+	ImGuiViewport* mv = ImGui::GetMainViewport();
+	float w = mv->Size.x * 0.45f;
+	float x = (dir < 0) ? (mv->Pos.x - w - 8.0f)        // just left of main
+	                    : (mv->Pos.x + mv->Size.x + 8.0f); // just right of main
+	ImGui::SetWindowPos(label.c_str(), ImVec2(x, mv->Pos.y), ImGuiCond_Always);
+	ImGui::SetWindowSize(label.c_str(), ImVec2(w, mv->Size.y * 0.9f), ImGuiCond_Always);
+	tabs[activeTab]->wantFocus = true;
+}
+
+void Editor::remergeActiveWindow()
+{
+	if (tabs.empty()) return;
+	auto label = windowLabelFor(*tabs[activeTab]);
+	ImGuiID rootId = ImGui::GetID("MainDockSpace");
+	ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(rootId);
+	ImGuiID target = central ? central->ID
+	               : (centralDockId ? (ImGuiID) centralDockId : rootId);
+	ImGui::DockBuilderDockWindow(label.c_str(), target);
+	ImGui::DockBuilderFinish(rootId);
+	tabs[activeTab]->wantFocus = true;
+}
+
+void Editor::remergeAllWindows()
+{
+	// Rebuild the default docked layout AND explicitly re-dock every open
+	// document into the central node. (SetNextWindowDockID with FirstUseEver
+	// won't move windows that have already been positioned, so we must dock
+	// them here directly.)
+	ImGuiID root = ImGui::GetID("MainDockSpace");
+	ImGui::DockBuilderRemoveNode(root);
+	ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
+	ImGui::DockBuilderSetNodeSize(root, ImGui::GetMainViewport()->WorkSize);
+
+	ImGuiID dockMain = root, leftId = 0, rightId = 0, bottomId = 0;
+	ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left,  0.20f, &leftId,   &dockMain);
+	ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.25f, &rightId,  &dockMain);
+	ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down,  0.25f, &bottomId, &dockMain);
+
+	ImGui::DockBuilderDockWindow("Navigation##projectNav", leftId);
+	ImGui::DockBuilderDockWindow("###refsPanel",   rightId);
+	ImGui::DockBuilderDockWindow("###outputPanel", bottomId);
+	for (auto& up : tabs) {
+		ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), dockMain);
+		up->dockedOnce = true;      // they're now docked where we put them
+	}
+	ImGui::DockBuilderFinish(root);
+
+	centralDockId = dockMain;
+	dockLayoutInitialized = true;   // we just built it; don't let the one-shot re-run
+}
+
+
+// ── Split current tab to the right ────────────────────────────────────
+//
+// Uses ImGui's DockBuilder to split the central dock node horizontally and
+// move the active doc into the new right pane. Builds the split once on
+// command and clears the flag, so subsequent frames don't re-split.
+void Editor::splitActiveTabRight()
+{
+	if (tabs.size() < 2) return;             // need a second tab to split into
+	wantSplitRight = true;
+}
+
+
+// ── Hover hints + Find References (imgui-bundle style) ──────────────
+
+void Editor::renderHoverTooltip(TabDocument& t)
+{
+	// Track mouse idleness over the editor window. When the cursor sits
+	// still on the same word for hoverDelaySec, pop a tooltip with the
+	// symbol info: known/unknown, count of references in the doc, and the
+	// best-effort definition line via the existing scoring heuristic.
+	ImVec2 mp = ImGui::GetMousePos();
+	bool stillOnSameSpot =
+		std::abs(mp.x - hoverPos.x) < 2.0f && std::abs(mp.y - hoverPos.y) < 2.0f;
+	if (!stillOnSameSpot) {
+		hoverPos      = mp;
+		hoverIdleSec  = 0.0f;
+		hoverWord.clear();
+	} else {
+		hoverIdleSec += ImGui::GetIO().DeltaTime;
+	}
+	if (hoverIdleSec < hoverDelaySec) return;
+
+	if (hoverWord.empty()) {
+		hoverWord = t.editor.GetWordAtScreenPos(mp);
+		if (hoverWord.empty()) { hoverIdleSec = 0.0f; return; }
+	}
+
+	if (!t.trie.contains(hoverWord)) return;
+
+	// Count occurrences and find the best-scoring definition line.
+	int refCount = 0;
+	int defLine  = -1;
+	{
+		auto& ed = t.editor;
+		int lines = ed.GetLineCount();
+		// Quick whole-word scan; cheap enough for an interactive tooltip.
+		for (int ln = 0; ln < lines; ++ln) {
+			auto text = ed.GetLineText(ln);
+			size_t pos = 0;
+			while ((pos = text.find(hoverWord, pos)) != std::string::npos) {
+				bool leftOk  = (pos == 0)
+					|| (!std::isalnum(static_cast<unsigned char>(text[pos - 1]))
+						&& text[pos - 1] != '_');
+				size_t end = pos + hoverWord.size();
+				bool rightOk = (end >= text.size())
+					|| (!std::isalnum(static_cast<unsigned char>(text[end]))
+						&& text[end] != '_');
+				if (leftOk && rightOk) {
+					++refCount;
+					if (defLine < 0 && text.find('{', end) != std::string::npos)
+						defLine = ln;
+				}
+				pos = end;
+			}
+		}
+	}
+	ImGui::BeginTooltip();
+	ImGui::Text("%s", hoverWord.c_str());
+	ImGui::Separator();
+	if (defLine >= 0) ImGui::TextDisabled("definition near line %d", defLine + 1);
+	ImGui::TextDisabled("%d reference%s in file", refCount, refCount == 1 ? "" : "s");
+	ImGui::TextDisabled("(right-click → Find References)");
+	ImGui::EndTooltip();
+}
+
+
+// Project-wide Go to Definition. Walks the project tree, grepping each text
+// file for patterns that look like a definition of `word`. First file+line
+// match wins — opens it and scrolls there. Generic across languages; works
+// for C# (class/struct/interface/record/enum/method), C/C++ (struct/class/
+// typedef/method/#define), Python (def/class), Lua (function/local), JS/TS
+// (function/class/const/let).
+void Editor::goToDefinitionProjectWide(const std::string& word)
+{
+	if (word.empty()) return;
+
+	// Search root: projectRoot if set, else the active doc's directory.
+	std::filesystem::path root = projectRoot;
+	if (root.empty() && !tabs.empty() && doc().filename != "untitled") {
+		root = std::filesystem::path(doc().filename).parent_path();
+	}
+	if (root.empty()) root = std::filesystem::current_path();
+
+	// Definition patterns — checked in order; first match wins. Keep these
+	// language-agnostic where possible.
+	const std::vector<std::string> defKeywords = {
+		"class", "struct", "interface", "enum", "record", "namespace",
+		"trait", "typedef", "type", "def", "fn", "function", "module",
+		"protocol", "actor",
+	};
+
+	// File extensions worth scanning — source-y, excludes binaries and
+	// build / vcs / cache dirs.
+	auto extOk = [](const std::string& e) {
+		static const std::unordered_set<std::string> ok = {
+			".c", ".h", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh",
+			".m", ".mm", ".inl",
+			".cs", ".vb", ".fs", ".fsx",
+			".java", ".kt", ".kts", ".scala", ".groovy",
+			".py", ".pyw", ".rb", ".php", ".pl",
+			".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+			".go", ".rs", ".swift",
+			".lua", ".sh", ".ps1", ".psm1",
+			".sql", ".r", ".jl", ".dart",
+			".cmake", ".txt",
+		};
+		return ok.count(e) != 0;
+	};
+	auto skipDir = [](const std::string& name) {
+		return name == ".git" || name == ".svn" || name == ".hg"
+			|| name == "node_modules" || name == "bin" || name == "obj"
+			|| name == "out" || name == "build" || name == "target"
+			|| name == ".vs" || name == ".vscode" || name == ".idea"
+			|| name == "__pycache__";
+	};
+
+	auto isWordBoundary = [](char c) {
+		return !(std::isalnum((unsigned char) c) || c == '_');
+	};
+
+	// Score each match — favours stronger definition signals.
+	struct Hit { std::filesystem::path path; int line; int score; std::string preview; };
+	std::vector<Hit> hits;
+	std::error_code ec;
+	int budget = 8000;   // file budget — keep walks bounded on huge projects
+
+	for (auto it = std::filesystem::recursive_directory_iterator(
+			root, std::filesystem::directory_options::skip_permission_denied, ec);
+		 it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+	{
+		if (ec) { ec.clear(); continue; }
+		if (it->is_directory(ec)) {
+			if (skipDir(it->path().filename().string())) it.disable_recursion_pending();
+			continue;
+		}
+		if (--budget < 0) break;
+		auto ext = it->path().extension().string();
+		std::transform(ext.begin(), ext.end(), ext.begin(),
+			[](unsigned char c){ return (char) std::tolower(c); });
+		if (!extOk(ext)) continue;
+		if (navIsExcluded(it->path())) continue;
+
+		std::ifstream f(it->path());
+		if (!f.is_open()) continue;
+		std::string line;
+		int lineNo = 0;
+		while (std::getline(f, line)) {
+			++lineNo;
+			// Strip leading whitespace for cheap pattern checks.
+			size_t s = 0;
+			while (s < line.size() && (line[s] == ' ' || line[s] == '\t')) ++s;
+			// Search for the word and check it sits at a word boundary.
+			size_t pos = 0;
+			while ((pos = line.find(word, pos)) != std::string::npos) {
+				bool leftOk  = (pos == 0) || isWordBoundary(line[pos - 1]);
+				bool rightOk = (pos + word.size() >= line.size())
+					|| isWordBoundary(line[pos + word.size()]);
+				if (!leftOk || !rightOk) { ++pos; continue; }
+
+				int score = 0;
+				// Strong signals: a definition keyword immediately to the left.
+				for (auto& kw : defKeywords) {
+					if (pos >= kw.size() + 1) {
+						size_t kwStart = pos - kw.size() - 1;
+						if (line[kwStart + kw.size()] == ' ' &&
+							line.compare(kwStart, kw.size(), kw) == 0 &&
+							(kwStart == 0 || isWordBoundary(line[kwStart - 1])))
+						{
+							score = 100;
+							break;
+						}
+					}
+				}
+				// Medium: #define <word>, %macro <word>, etc.
+				if (score == 0 && s < line.size() && line[s] == '#') {
+					if (line.find("#define", s) == s) score = 80;
+				}
+				// Medium-weak: `<type> <word>(` — likely a method/function signature.
+				if (score == 0) {
+					size_t afterWord = pos + word.size();
+					// Skip spaces, then look for '('
+					size_t p = afterWord;
+					while (p < line.size() && line[p] == ' ') ++p;
+					if (p < line.size() && line[p] == '(') {
+						// Require something before that looks like a return type
+						// (an identifier-ish token).
+						if (pos > 0) score = 50;
+					}
+				}
+				// Weak signal: `<word> = ` style assignment in the leading column
+				// (Python / Lua / JS / TS top-level definitions).
+				if (score == 0 && pos == s) {
+					size_t p = pos + word.size();
+					while (p < line.size() && line[p] == ' ') ++p;
+					if (p < line.size() && line[p] == '=' &&
+						(p + 1 >= line.size() || line[p + 1] != '='))
+					{
+						score = 30;
+					}
+				}
+				if (score > 0) {
+					Hit h;
+					h.path    = it->path();
+					h.line    = lineNo - 1;   // 0-based for SetCursor
+					h.score   = score;
+					h.preview = line.substr(0, (std::min)((size_t) 200, line.size()));
+					hits.push_back(std::move(h));
+				}
+				pos += word.size();
+			}
+		}
+	}
+
+	if (hits.empty()) {
+		showError("No definition of '" + word + "' found under " + root.string());
+		return;
+	}
+	// Best score wins; ties broken by first file encountered.
+	std::stable_sort(hits.begin(), hits.end(),
+		[](const Hit& a, const Hit& b){ return a.score > b.score; });
+	auto& best = hits.front();
+	openFile(best.path.string());
+	// openFile leaves the newly-opened tab as the active one — scroll it.
+	if (!tabs.empty()) {
+		auto& e = doc().editor;
+		e.SetCursor(best.line, 0);
+		e.ScrollToLine(best.line, TextEditor::Scroll::alignMiddle);
+	}
+}
+
+
+void Editor::findReferencesOf(TabDocument& t, const std::string& word)
+{
+	referencesWord = word;
+	referencesHits.clear();
+	referencesFileCount = 0;
+	if (word.empty()) { referencesVisible = true; return; }
+
+	auto isBoundary = [](char c) {
+		return !(std::isalnum(static_cast<unsigned char>(c)) || c == '_');
+	};
+	// Whole-word scan of one text blob → append every matching line.
+	auto scanText = [&](const std::string& file, std::istream& in) {
+		std::string line;
+		int ln = 0;
+		bool counted = false;
+		while (std::getline(in, line)) {
+			size_t pos = 0;
+			while ((pos = line.find(word, pos)) != std::string::npos) {
+				bool leftOk  = (pos == 0) || isBoundary(line[pos - 1]);
+				size_t end = pos + word.size();
+				bool rightOk = (end >= line.size()) || isBoundary(line[end]);
+				if (leftOk && rightOk) {
+					std::string trimmed = line;
+					size_t s = trimmed.find_first_not_of(" \t");
+					if (s != std::string::npos) trimmed = trimmed.substr(s);
+					referencesHits.push_back({ file, ln, trimmed });
+					if (!counted) { ++referencesFileCount; counted = true; }
+					break;
+				}
+				pos = end;
+			}
+			++ln;
+		}
+	};
+
+	// Project-wide when we have a root (or the active doc's dir); the active
+	// doc is scanned from its live buffer so unsaved edits are reflected.
+	std::filesystem::path root = projectRoot;
+	if (root.empty() && t.filename != "untitled")
+		root = std::filesystem::path(t.filename).parent_path();
+
+	std::string activeCanon;
+	{
+		std::error_code ec;
+		if (t.filename != "untitled")
+			activeCanon = std::filesystem::weakly_canonical(t.filename, ec).string();
+	}
+
+	if (root.empty()) {
+		// No project context — just scan the active buffer.
+		std::istringstream ss(t.editor.GetText());
+		scanText(t.filename == "untitled" ? "(untitled)" : t.filename, ss);
+		referencesVisible = true;
+		return;
+	}
+
+	std::error_code ec;
+	int budget = 6000;
+	for (auto it = std::filesystem::recursive_directory_iterator(
+			root, std::filesystem::directory_options::skip_permission_denied, ec);
+		 it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+	{
+		if (ec) { ec.clear(); continue; }
+		if (it->is_directory(ec)) {
+			auto n = it->path().filename().string();
+			if (n == ".git" || n == ".svn" || n == "node_modules" || n == "bin" ||
+				n == "obj" || n == "out" || n == "build" || n == "target" ||
+				n == ".vs" || n == ".vscode" || n == "__pycache__")
+				it.disable_recursion_pending();
+			continue;
+		}
+		if (--budget < 0) break;
+		if (!navIsCodeFile(it->path())) continue;
+		auto canon = std::filesystem::weakly_canonical(it->path(), ec);
+		// Skip the active doc here; we scan its live buffer separately below.
+		if (!activeCanon.empty() && canon.string() == activeCanon) continue;
+		std::ifstream f(it->path());
+		if (!f.is_open()) continue;
+		scanText(it->path().string(), f);
+	}
+	// Active doc from its live buffer.
+	if (!activeCanon.empty()) {
+		std::istringstream ss(t.editor.GetText());
+		scanText(t.filename, ss);
+	}
+	referencesVisible = true;
+}
+
+
+void Editor::renderReferencesPanel()
+{
+	if (!referencesVisible) return;
+	ImGui::SetNextWindowSize(ImVec2(440.0f, 360.0f), ImGuiCond_FirstUseEver);
+	// Stable dock ID (### resets the hash seed) so the window can be pre-docked
+	// to the right by navInitDockLayout regardless of the symbol in the title.
+	std::string title = std::string("References: ") + referencesWord + "###refsPanel";
+	if (ImGui::Begin(title.c_str(), &referencesVisible))
+	{
+		ImGui::TextDisabled("%zu match%s across %d file%s",
+			referencesHits.size(), referencesHits.size() == 1 ? "" : "es",
+			referencesFileCount, referencesFileCount == 1 ? "" : "s");
+		ImGui::Separator();
+
+		std::string lastFile;
+		for (size_t i = 0; i < referencesHits.size(); ++i) {
+			auto& hit = referencesHits[i];
+			if (hit.file != lastFile) {
+				lastFile = hit.file;
+				auto leaf = std::filesystem::path(hit.file).filename().string();
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
+				ImGui::TextUnformatted(leaf.empty() ? hit.file.c_str() : leaf.c_str());
+				ImGui::PopStyleColor();
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hit.file.c_str());
+			}
+			ImGui::PushID((int)i);
+			char buf[32];
+			std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
+			if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f))) {
+				openFile(hit.file);
+				if (!tabs.empty()) {
+					auto& ed = doc().editor;
+					ed.SetCursor(hit.line, 0);
+					ed.ScrollToLine(hit.line, TextEditor::Scroll::alignMiddle);
+				}
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", hit.text.c_str());
+			ImGui::PopID();
+		}
+	}
+	ImGui::End();
+}
+
+
+// ── Image viewer + non-text dispatch ───────────────────────────────
+
+bool Editor::isImageExt(const std::string& ext)
+{
+	return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp"
+		|| ext == ".tga" || ext == ".gif" || ext == ".psd" || ext == ".hdr"
+		|| ext == ".pic";
+}
+
+bool Editor::isBinaryExt(const std::string& ext)
+{
+	// Files we should not try to render as text. Executables are handled
+	// separately (run them); everything else here hands off to the OS.
+	return ext == ".exe" || ext == ".dll" || ext == ".so" || ext == ".dylib"
+		|| ext == ".lib" || ext == ".a"   || ext == ".obj" || ext == ".o"
+		|| ext == ".pdb" || ext == ".zip" || ext == ".7z"  || ext == ".tar"
+		|| ext == ".gz"  || ext == ".rar" || ext == ".pdf" || ext == ".mp3"
+		|| ext == ".mp4" || ext == ".mov" || ext == ".wav" || ext == ".ogg"
+		|| ext == ".flac"|| ext == ".webm"|| ext == ".mkv" || ext == ".bin"
+		|| ext == ".iso";
+}
+
+void Editor::openImageFile(const std::string& path)
+{
+	// If already open, focus the existing image window.
+	for (auto& img : images) {
+		if (img->path == path) { img->wantFocus = true; img->open = true; return; }
+	}
+	int w = 0, h = 0, n = 0;
+	stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &n, 4);
+	if (!pixels) {
+		showError(std::string("Could not load image: ") + path
+			+ "\n(" + (stbi_failure_reason() ? stbi_failure_reason() : "unknown") + ")");
+		return;
+	}
+	auto img = std::make_unique<ImageDoc>();
+	img->path        = path;
+	img->windowTitle = std::filesystem::path(path).filename().string() + "##img:" + path;
+	img->w           = w;
+	img->h           = h;
+	img->tex         = IM_NEW(ImTextureData)();
+	img->tex->Create(ImTextureFormat_RGBA32, w, h);
+	std::memcpy(img->tex->GetPixels(), pixels, (size_t) w * h * 4);
+	img->tex->Status   = ImTextureStatus_WantCreate;
+	img->tex->UseColors = true;
+	stbi_image_free(pixels);
+	// Register so PlatformIO.Textures sees this each frame. Pushing to
+	// PlatformIO.Textures directly is wrong — UpdateTexturesEndFrame()
+	// resize(0)'s that list every frame and rebuilds it from FontAtlases +
+	// g.UserTextures, so a direct push only survives the current frame
+	// (which is why the first-time upload never happened and the image
+	// stayed in "loading…" forever).
+	ImGui::RegisterUserTexture(img->tex);
+	img->wantFocus = true;
+	images.push_back(std::move(img));
+}
+
+void Editor::renderImageWindows()
+{
+	for (auto it = images.begin(); it != images.end(); ) {
+		auto& img = **it;
+		if (!img.open) {
+			// Queue the GPU texture for destroy + unregister so the next
+			// EndFrame removes it from PlatformIO.Textures. The ImTextureData
+			// itself gets IM_DELETE'd by ImGui's lifecycle once the backend
+			// reports it Destroyed.
+			if (img.tex) {
+				img.tex->WantDestroyNextFrame = true;
+				ImGui::UnregisterUserTexture(img.tex);
+			}
+			it = images.erase(it);
+			continue;
+		}
+		if (img.wantFocus) { ImGui::SetNextWindowFocus(); img.wantFocus = false; }
+		ImGui::SetNextWindowSize(ImVec2((float) (std::min)(img.w + 40, 900),
+		                                (float) (std::min)(img.h + 80, 700)),
+		                        ImGuiCond_FirstUseEver);
+		if (ImGui::Begin(img.windowTitle.c_str(), &img.open))
+		{
+			ImGui::Text("%dx%d", img.w, img.h);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(120.0f);
+			ImGui::SliderFloat("zoom", &img.zoom, 0.1f, 8.0f, "%.2fx");
+			if (ImGui::SmallButton("1:1"))  { img.zoom = 1.0f; }
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Fit")) {
+				auto avail = ImGui::GetContentRegionAvail();
+				float zx = avail.x / (float) img.w;
+				float zy = (avail.y - 30.0f) / (float) img.h;
+				img.zoom = (std::max)(0.05f, (std::min)(zx, zy));
+			}
+			ImGui::Separator();
+			ImGui::BeginChild("##imgScroll", ImVec2(0, 0),
+				ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+			// Only draw once the backend has uploaded the texture to the GPU.
+			// On the first frame after openImageFile pushes the ImTextureData,
+			// its TexID is still ImTextureID_Invalid — calling Image() then
+			// generates an ImDrawCmd referencing a non-uploaded texture and
+			// trips the renderer's "tex_id != Invalid" assert. Wait one frame.
+			if (img.tex && img.tex->Status == ImTextureStatus_OK
+				&& img.tex->TexID != ImTextureID_Invalid)
+			{
+				// Auto-fit on first display: scale so the whole image is
+				// visible, but never magnify past 1:1 (small images stay
+				// crisp at native size). Avoids a huge image opening at 1:1
+				// and overflowing the window.
+				if (!img.fitted && img.w > 0 && img.h > 0) {
+					auto avail = ImGui::GetContentRegionAvail();
+					if (avail.x > 1.0f && avail.y > 1.0f) {
+						float zx = avail.x / (float) img.w;
+						float zy = avail.y / (float) img.h;
+						img.zoom = (std::min)(1.0f, (std::min)(zx, zy));
+						img.fitted = true;
+					}
+				}
+				ImGui::Image(img.tex->GetTexRef(),
+					ImVec2(img.w * img.zoom, img.h * img.zoom));
+			}
+			else
+			{
+				ImGui::TextDisabled("loading…");
+			}
+			ImGui::EndChild();
+		}
+		ImGui::End();
+		++it;
+	}
+}
+
+
+// ── Font discovery + dynamic loading ────────────────────────────────
+
+void Editor::discoverFonts()
+{
+	availableFonts.clear();
+	std::vector<std::filesystem::path> roots;
+#ifdef _WIN32
+	if (auto win = std::getenv("WINDIR")) roots.emplace_back(std::filesystem::path(win) / "Fonts");
+	else roots.emplace_back("C:\\Windows\\Fonts");
+	if (auto local = std::getenv("LOCALAPPDATA"))
+		roots.emplace_back(std::filesystem::path(local) / "Microsoft" / "Windows" / "Fonts");
+#else
+	roots.emplace_back("/usr/share/fonts");
+	roots.emplace_back("/usr/local/share/fonts");
+	if (auto home = std::getenv("HOME")) roots.emplace_back(std::filesystem::path(home) / ".fonts");
+#endif
+	std::error_code ec;
+	for (auto& root : roots) {
+		if (!std::filesystem::exists(root, ec)) continue;
+		for (auto it = std::filesystem::recursive_directory_iterator(
+				root, std::filesystem::directory_options::skip_permission_denied, ec);
+			 it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+		{
+			if (ec) { ec.clear(); continue; }
+			if (!it->is_regular_file(ec)) continue;
+			auto ext = it->path().extension().string();
+			std::transform(ext.begin(), ext.end(), ext.begin(),
+				[](unsigned char c) { return (char) std::tolower(c); });
+			if (ext == ".ttf" || ext == ".otf")
+				availableFonts.push_back(it->path().string());
+		}
+	}
+	std::sort(availableFonts.begin(), availableFonts.end(),
+		[](const std::string& a, const std::string& b) {
+			auto fa = std::filesystem::path(a).filename().string();
+			auto fb = std::filesystem::path(b).filename().string();
+			std::transform(fa.begin(), fa.end(), fa.begin(),
+				[](unsigned char c) { return (char) std::tolower(c); });
+			std::transform(fb.begin(), fb.end(), fb.begin(),
+				[](unsigned char c) { return (char) std::tolower(c); });
+			return fa < fb;
+		});
+}
+
+void Editor::applyFont()
+{
+	activeFont = nullptr;
+	if (fontPath.empty()) return;
+	std::error_code ec;
+	if (!std::filesystem::exists(fontPath, ec)) return;
+	ImFontConfig cfg;
+	auto leaf = std::filesystem::path(fontPath).stem().string();
+	std::snprintf(cfg.Name, sizeof(cfg.Name), "%s", leaf.c_str());
+	cfg.OversampleH = 1;
+	cfg.OversampleV = 1;
+	activeFont = ImGui::GetIO().Fonts->AddFontFromFileTTF(fontPath.c_str(), 15.0f, &cfg);
+}
+
+
+// ── Settings dialog + persistence ────────────────────────────────────
+//
+// Tiny hand-rolled "lines of key=value" serializer at <configDir>/settings.txt.
+// Sections are headers in square brackets. Avoid a real JSON dep for now
+// since the surface is small.
+
+static std::filesystem::path settingsPath()
+{
+	return Editor::userConfigDir() / "settings.txt";
+}
+
+void Editor::loadSettings()
+{
+	std::ifstream f(settingsPath());
+	if (!f.is_open()) return;
+	std::string section;
+	std::string line;
+	while (std::getline(f, line)) {
+		while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+		if (line.empty() || line[0] == '#') continue;
+		if (line.front() == '[' && line.back() == ']') {
+			section = line.substr(1, line.size() - 2);
+			continue;
+		}
+		auto eq = line.find('=');
+		if (eq == std::string::npos) continue;
+		std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+		if (section == "interpreters") interpreterOverrides[k] = v;
+		else if (section == "build")    projectBuildOverrides[k] = v;
+		else if (section == "editor") {
+			if      (k == "auto_indent")    prefAutoIndent    = (v == "1" || v == "true");
+			else if (k == "complete_pairs") prefCompletePairs = (v == "1" || v == "true");
+			else if (k == "show_fps")       prefShowFps       = (v == "1" || v == "true");
+			else if (k == "ctrl_scroll_zoom") prefCtrlScrollZoom = (v == "1" || v == "true");
+			else if (k == "invert_pan")     prefInvertPan     = (v == "1" || v == "true");
+			else if (k == "word_wrap")      prefWordWrap      = (v == "1" || v == "true");
+			else if (k == "wrap_width")     prefWrapWidthPx   = std::atoi(v.c_str());
+			else if (k == "fps_limit")      prefFpsLimit      = std::atoi(v.c_str());
+			else if (k == "idle_throttle")  prefIdleThrottle  = (v == "1" || v == "true");
+			else if (k == "font_size")      prefFontSize      = std::strtof(v.c_str(), nullptr);
+			else if (k == "font_path")      fontPath          = v;
+			else if (k == "nav_show_dot")   navShowDotFiles   = (v == "1" || v == "true");
+			else if (k == "nav_show_excl")  navShowExcluded   = (v == "1" || v == "true");
+			else if (k == "nav_code_only")  navCodeOnly       = (v == "1" || v == "true");
+			else if (k == "nav_flat")       navFlatFiles      = (v == "1" || v == "true");
+		}
+		else if (section == "toolchains") {
+			if      (k == "msvc")    activeMsvcPath   = v;
+			else if (k == "dotnet")  activeDotnetPath = v;
+			else if (k == "config")  activeBuildConfig = v;
+		}
+		else if (section == "state") {
+			if (k == "seen_first_run") seenFirstRun = (v == "1" || v == "true");
+		}
+		else if (section == "recent_files") {
+			if (!v.empty() &&
+				std::find(recentFiles.begin(), recentFiles.end(), v) == recentFiles.end())
+				recentFiles.push_back(v);
+		}
+		else if (section == "recent_projects") {
+			if (!v.empty() &&
+				std::find(recentProjects.begin(), recentProjects.end(), v) == recentProjects.end())
+				recentProjects.push_back(v);
+		}
+		else if (section == "project_sessions") {
+			// Format: <abs_root>=<file1>|<file2>|...
+			std::vector<std::string> files;
+			size_t pos = 0;
+			while (pos < v.size()) {
+				size_t bar = v.find('|', pos);
+				if (bar == std::string::npos) bar = v.size();
+				if (bar > pos) files.push_back(v.substr(pos, bar - pos));
+				pos = bar + 1;
+			}
+			if (!files.empty()) projectSessions[k] = std::move(files);
+		}
+	}
+	if (recentFiles.size()    > 20) recentFiles.resize(20);
+	if (recentProjects.size() > 20) recentProjects.resize(20);
+}
+
+void Editor::rememberRecentFile(const std::string& path)
+{
+	if (path.empty() || path == "untitled") return;
+	std::error_code ec;
+	auto canon = std::filesystem::weakly_canonical(path, ec);
+	std::string key = ec ? path : canon.string();
+	auto it = std::find(recentFiles.begin(), recentFiles.end(), key);
+	if (it != recentFiles.end()) recentFiles.erase(it);
+	recentFiles.insert(recentFiles.begin(), key);
+	if (recentFiles.size() > 20) recentFiles.resize(20);
+}
+
+void Editor::rememberRecentProject(const std::string& path)
+{
+	if (path.empty()) return;
+	std::error_code ec;
+	auto canon = std::filesystem::weakly_canonical(path, ec);
+	std::string key = ec ? path : canon.string();
+	auto it = std::find(recentProjects.begin(), recentProjects.end(), key);
+	if (it != recentProjects.end()) recentProjects.erase(it);
+	recentProjects.insert(recentProjects.begin(), key);
+	if (recentProjects.size() > 20) recentProjects.resize(20);
+}
+
+
+void Editor::saveSettings()
+{
+	std::error_code ec;
+	std::filesystem::create_directories(settingsPath().parent_path(), ec);
+	std::ofstream f(settingsPath(), std::ios::trunc);
+	if (!f.is_open()) return;
+	f << "# imguicolortext settings — generated by the editor's Settings dialog.\n";
+	f << "[editor]\n";
+	f << "auto_indent="      << (prefAutoIndent     ? "1" : "0") << "\n";
+	f << "complete_pairs="   << (prefCompletePairs  ? "1" : "0") << "\n";
+	f << "show_fps="         << (prefShowFps        ? "1" : "0") << "\n";
+	f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
+	f << "invert_pan="       << (prefInvertPan      ? "1" : "0") << "\n";
+	f << "word_wrap="        << (prefWordWrap       ? "1" : "0") << "\n";
+	f << "wrap_width="       << prefWrapWidthPx << "\n";
+	f << "fps_limit="        << prefFpsLimit << "\n";
+	f << "idle_throttle="    << (prefIdleThrottle   ? "1" : "0") << "\n";
+	f << "nav_show_dot="     << (navShowDotFiles    ? "1" : "0") << "\n";
+	f << "nav_show_excl="    << (navShowExcluded    ? "1" : "0") << "\n";
+	f << "nav_code_only="    << (navCodeOnly        ? "1" : "0") << "\n";
+	f << "nav_flat="         << (navFlatFiles       ? "1" : "0") << "\n";
+	f << "font_size="        << prefFontSize << "\n";
+	if (!fontPath.empty()) f << "font_path=" << fontPath << "\n";
+	f << "\n";
+	f << "[toolchains]\n";
+	if (!activeMsvcPath.empty())   f << "msvc="   << activeMsvcPath   << "\n";
+	if (!activeDotnetPath.empty()) f << "dotnet=" << activeDotnetPath << "\n";
+	f << "config=" << activeBuildConfig << "\n";
+	f << "\n";
+	f << "[state]\n";
+	f << "seen_first_run=1\n\n";
+	f << "[recent_files]\n";
+	for (auto& p : recentFiles)    f << "path=" << p << "\n";
+	f << "\n[recent_projects]\n";
+	for (auto& p : recentProjects) f << "path=" << p << "\n";
+	f << "\n";
+	f << "[interpreters]\n";
+	for (auto& [k, v] : interpreterOverrides) f << k << "=" << v << "\n";
+	f << "\n[build]\n";
+	for (auto& [k, v] : projectBuildOverrides) f << k << "=" << v << "\n";
+	f << "\n[project_sessions]\n";
+	for (auto& [root, files] : projectSessions) {
+		if (files.empty()) continue;
+		f << root << "=";
+		for (size_t i = 0; i < files.size(); ++i) {
+			if (i) f << "|";
+			f << files[i];
+		}
+		f << "\n";
+	}
+}
+
+void Editor::detectToolchains()
+{
+	if (toolchainsDetected) return;
+	toolchainsDetected = true;
+	std::error_code ec;
+
+#ifdef _WIN32
+	// Enumerate MSVC installations under each VS edition.
+	for (const char* edition : { "2022", "2019" }) {
+		for (const char* flavour : { "Community", "Professional", "Enterprise", "BuildTools", "Preview" }) {
+			std::filesystem::path msvcRoot = std::string("C:\\Program Files\\Microsoft Visual Studio\\")
+				+ edition + "\\" + flavour + "\\VC\\Tools\\MSVC";
+			if (!std::filesystem::is_directory(msvcRoot, ec)) continue;
+			for (auto& e : std::filesystem::directory_iterator(msvcRoot, ec)) {
+				if (!e.is_directory()) continue;
+				auto cl = e.path() / "bin" / "Hostx64" / "x64" / "cl.exe";
+				if (std::filesystem::is_regular_file(cl, ec)) {
+					std::string ver = e.path().filename().string();
+					detectedMsvc.push_back({ std::string("VS ") + edition + " " + flavour + " — " + ver, cl.string() });
+				}
+			}
+		}
+	}
+	// Also accept an active env var if we were launched from a Dev Prompt.
+	if (const char* envVer = std::getenv("VCToolsVersion")) {
+		if (const char* envDir = std::getenv("VCToolsInstallDir")) {
+			std::filesystem::path cl = std::filesystem::path(envDir) / "bin" / "Hostx64" / "x64" / "cl.exe";
+			detectedMsvc.push_back({ std::string("Active env — ") + envVer, cl.string() });
+		}
+	}
+#endif
+
+	// .NET SDKs via `dotnet --list-sdks`.
+#ifdef _WIN32
+	FILE* p = _popen("dotnet --list-sdks 2>NUL", "r");
+#else
+	FILE* p = popen("dotnet --list-sdks 2>/dev/null", "r");
+#endif
+	if (p) {
+		char buf[256];
+		while (fgets(buf, sizeof(buf), p)) {
+			std::string line(buf);
+			while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
+			if (line.empty()) continue;
+			// Format: "8.0.100 [C:\Program Files\dotnet\sdk]"
+			auto br = line.find('[');
+			std::string ver  = (br != std::string::npos) ? line.substr(0, br) : line;
+			while (!ver.empty() && ver.back() == ' ') ver.pop_back();
+			std::string path = (br != std::string::npos && line.back() == ']')
+				? line.substr(br + 1, line.size() - br - 2) : "";
+			detectedDotnetSdks.push_back({ ver, path });
+		}
+#ifdef _WIN32
+		_pclose(p);
+#else
+		pclose(p);
+#endif
+	}
+
+	if (activeMsvcPath.empty()   && !detectedMsvc.empty())        activeMsvcPath   = detectedMsvc.front().path;
+	if (activeDotnetPath.empty() && !detectedDotnetSdks.empty())  activeDotnetPath = "dotnet";
+}
+
+
+void Editor::renderSettings()
+{
+	if (!settingsVisible) return;
+	detectToolchains();
+	ImGui::SetNextWindowSize(ImVec2(640.0f, 420.0f), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Settings##editorSettings", &settingsVisible))
+	{
+		if (ImGui::BeginTabBar("##settingsTabs"))
+		{
+			if (ImGui::BeginTabItem("Editor"))
+			{
+				ImGui::Checkbox("Auto-indent on new line", &prefAutoIndent);
+				ImGui::Checkbox("Auto-complete matching brackets / quotes", &prefCompletePairs);
+				ImGui::Checkbox("Show FPS on status bar", &prefShowFps);
+				ImGui::Checkbox("Ctrl + scroll wheel adjusts editor font size", &prefCtrlScrollZoom);
+				ImGui::Checkbox("Invert middle-mouse pan direction", &prefInvertPan);
+				ImGui::Checkbox("Word wrap", &prefWordWrap);
+				if (prefWordWrap) {
+					ImGui::SetNextItemWidth(220.0f);
+					ImGui::SliderInt("Wrap width (px, 0 = fit window)", &prefWrapWidthPx, 0, 2000);
+				}
+				ImGui::SliderFloat("Editor font size", &prefFontSize, 10.0f, 28.0f, "%.0f");
+
+				ImGui::Separator();
+				ImGui::TextDisabled("Performance");
+				// 0 = unlimited. Clamp display so the slider can reach "off".
+				ImGui::SliderInt("Max FPS (0 = unlimited)", &prefFpsLimit, 0, 240);
+				ImGui::Checkbox("Throttle to ~10 FPS when window unfocused (idle)", &prefIdleThrottle);
+
+				if (!tabs.empty()) {
+					auto& e = doc().editor;
+					e.SetAutoIndentEnabled(prefAutoIndent);
+					e.SetCompletePairedGlyphs(prefCompletePairs);
+				}
+				// Pan-invert + word-wrap apply to every open doc, not just the active one.
+				for (auto& up : tabs) {
+					up->editor.SetPanInverted(prefInvertPan);
+					up->editor.SetWordWrap(prefWordWrap);
+					up->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
+				}
+				fontSize = prefFontSize;
+
+				// Font selector — enumerate system TTFs once, then pick by filename.
+				// "(Bundled DejaVu)" maps to fontPath empty / activeFont nullptr.
+				if (availableFonts.empty()) discoverFonts();
+				std::string current = fontPath.empty()
+					? std::string("(Bundled DejaVu)")
+					: std::filesystem::path(fontPath).filename().string();
+				if (ImGui::BeginCombo("Editor font", current.c_str())) {
+					if (ImGui::Selectable("(Bundled DejaVu)", fontPath.empty())) {
+						fontPath.clear();
+						activeFont = nullptr;
+					}
+					for (auto& p : availableFonts) {
+						std::string name = std::filesystem::path(p).filename().string();
+						bool selected = (p == fontPath);
+						if (ImGui::Selectable(name.c_str(), selected)) {
+							fontPath = p;
+							applyFont();
+						}
+						if (selected) ImGui::SetItemDefaultFocus();
+					}
+					ImGui::EndCombo();
+				}
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Interpreters"))
+			{
+				ImGui::TextDisabled("Run command for F5, per file type. Empty = use OS default.");
+				ImGui::Separator();
+				// Each row: language label (e.g. "Python (.py, .pyw)") + input.
+				// Group extensions that share an interpreter so we don't show
+				// .py and .pyw as two rows for the same Python config.
+				struct LangRow { const char* name; std::vector<const char*> exts; const char* def; };
+				static const LangRow rows[] = {
+					{ "Python",      { ".py", ".pyw" },   "python" },
+					{ "PowerShell",  { ".ps1" },          "powershell -NoProfile -ExecutionPolicy Bypass -File" },
+					{ "Bash",        { ".sh" },           "bash" },
+					{ "Batch",       { ".bat", ".cmd" },  "" },  // direct via cmd.exe
+					{ "Lua",         { ".lua" },          "lua" },
+					{ "JavaScript",  { ".js" },           "node" },
+				};
+				for (size_t i = 0; i < IM_ARRAYSIZE(rows); ++i) {
+					ImGui::PushID((int)i);
+					// Label on its own line (input goes full-width below, otherwise
+					// SetNextItemWidth(-FLT_MIN) pushes the right-side label off-screen).
+					std::string label = rows[i].name;
+					label += " (";
+					for (size_t e = 0; e < rows[i].exts.size(); ++e) {
+						if (e) label += ", ";
+						label += rows[i].exts[e];
+					}
+					label += ")";
+					ImGui::TextUnformatted(label.c_str());
+					// Read first ext's value as the canonical, write to all exts
+					// so editing once applies to .py and .pyw together.
+					auto& canon = interpreterOverrides[rows[i].exts[0]];
+					if (canon.empty()) canon = rows[i].def;
+					char buf[256];
+					std::snprintf(buf, sizeof(buf), "%s", canon.c_str());
+					ImGui::SetNextItemWidth(-FLT_MIN);
+					if (ImGui::InputText("##interp", buf, sizeof(buf))) {
+						canon = buf;
+						for (auto ext : rows[i].exts) interpreterOverrides[ext] = canon;
+					}
+					ImGui::Spacing();
+					ImGui::PopID();
+				}
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Toolchains"))
+			{
+				// MSVC: pick from detected installs, or hand-edit the cl.exe path.
+				ImGui::TextDisabled("C / C++ compiler (MSVC). Detected installs:");
+				if (detectedMsvc.empty()) {
+					ImGui::BulletText("(none detected — install Visual Studio's C++ workload, or set %%VCToolsInstallDir%%)");
+				} else {
+					if (ImGui::BeginCombo("##msvcSel",
+						activeMsvcPath.empty() ? "(none selected)" : activeMsvcPath.c_str())) {
+						for (auto& t : detectedMsvc) {
+							bool selected = (t.path == activeMsvcPath);
+							std::string item = t.label + "   " + t.path;
+							if (ImGui::Selectable(item.c_str(), selected)) activeMsvcPath = t.path;
+							if (selected) ImGui::SetItemDefaultFocus();
+						}
+						ImGui::EndCombo();
+					}
+				}
+				{
+					char buf[512];
+					std::snprintf(buf, sizeof(buf), "%s", activeMsvcPath.c_str());
+					ImGui::SetNextItemWidth(-FLT_MIN);
+					if (ImGui::InputText("##msvcPath", buf, sizeof(buf))) activeMsvcPath = buf;
+				}
+				ImGui::Spacing();
+				ImGui::Separator();
+				ImGui::TextDisabled(".NET SDK. Detected SDKs:");
+				if (detectedDotnetSdks.empty()) {
+					ImGui::BulletText("(dotnet --list-sdks returned nothing — install .NET SDK)");
+				} else {
+					if (ImGui::BeginCombo("##dotnetSel",
+						activeDotnetPath.empty() ? "(none selected)" : activeDotnetPath.c_str())) {
+						// "dotnet" is on PATH — that's the common case.
+						bool isPath = (activeDotnetPath == "dotnet");
+						if (ImGui::Selectable("dotnet (on PATH)", isPath)) activeDotnetPath = "dotnet";
+						if (isPath) ImGui::SetItemDefaultFocus();
+						for (auto& sdk : detectedDotnetSdks) {
+							std::string item = "SDK " + sdk.label + "   " + sdk.path;
+							bool sel = (activeDotnetPath == sdk.path);
+							if (ImGui::Selectable(item.c_str(), sel)) activeDotnetPath = sdk.path;
+						}
+						ImGui::EndCombo();
+					}
+				}
+				{
+					char buf[512];
+					std::snprintf(buf, sizeof(buf), "%s", activeDotnetPath.c_str());
+					ImGui::SetNextItemWidth(-FLT_MIN);
+					if (ImGui::InputText("##dotnetPath", buf, sizeof(buf))) activeDotnetPath = buf;
+				}
+				ImGui::Spacing();
+				ImGui::Separator();
+				// Build configuration — applied to MSBuild / CMake / dotnet presets.
+				// Tokens %CONFIG% expand to this in any build command.
+				ImGui::TextDisabled("Build configuration (substituted as %%CONFIG%% in build commands):");
+				static const char* configs[] = {
+					"Debug", "Release", "RelWithDebInfo", "MinSizeRel"
+				};
+				int curIdx = 0;
+				for (int i = 0; i < IM_ARRAYSIZE(configs); ++i)
+					if (activeBuildConfig == configs[i]) curIdx = i;
+				if (ImGui::Combo("##buildCfg", &curIdx, configs, IM_ARRAYSIZE(configs)))
+					activeBuildConfig = configs[curIdx];
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Build"))
+			{
+				ImGui::TextDisabled("Per-project build command (F6). Keyed by absolute project root.");
+				ImGui::Separator();
+
+				// Preset commands the user can pick from for a fresh override.
+				static const char* presets[] = {
+					"dotnet build",
+					"msbuild /m /v:minimal",
+					"cmake --build .",
+					"cmake --build build",
+					"cmake --build out/build/x64-Debug",
+					"ninja",
+					"make",
+					"make -j8",
+				};
+				static int presetIdx = 0;
+				ImGui::Combo("Preset", &presetIdx, presets, IM_ARRAYSIZE(presets));
+				ImGui::SameLine();
+				if (!projectRoot.empty()) {
+					if (ImGui::Button("Apply to current project"))
+						projectBuildOverrides[projectRoot.string()] = presets[presetIdx];
+				} else {
+					ImGui::TextDisabled("(no current project — Open Project... first)");
+				}
+				ImGui::Spacing();
+
+				if (projectBuildOverrides.empty()) {
+					ImGui::TextDisabled("(no overrides yet)");
+				}
+				for (auto it = projectBuildOverrides.begin(); it != projectBuildOverrides.end(); ) {
+					ImGui::PushID(it->first.c_str());
+					ImGui::TextDisabled("%s", it->first.c_str());
+					char buf[512];
+					std::snprintf(buf, sizeof(buf), "%s", it->second.c_str());
+					ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80.0f);
+					if (ImGui::InputText("##cmd", buf, sizeof(buf))) it->second = buf;
+					ImGui::SameLine();
+					if (ImGui::SmallButton("Remove")) { it = projectBuildOverrides.erase(it); ImGui::PopID(); continue; }
+					ImGui::PopID();
+					++it;
+				}
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Keybinds"))
+			{
+				ImGui::TextDisabled("Click a chord to record a new one. Esc cancels, Backspace clears.");
+				ImGui::Separator();
+				// Editable keybind catalogue. The default chord lives here as a
+				// fallback so user overrides can be diffed/reset. Overrides go
+				// into `keybindOverrides` (in-memory only for now — persist in a
+				// follow-up if the user actually rebinds anything).
+				struct Bind { const char* id; const char* action; const char* defaultCombo; const char* group; };
+				static const Bind binds[] = {
+					{ "file.new",        "New tab",                  "Ctrl+N",        "File" },
+					{ "file.open",       "Open file...",             "Ctrl+O",        "File" },
+					{ "file.save",       "Save",                     "Ctrl+S",        "File" },
+					{ "file.saveAs",     "Save As...",               "Ctrl+Shift+S",  "File" },
+					{ "file.close",      "Close tab",                "Ctrl+W",        "File" },
+					{ "file.reopen",     "Reopen last closed tab",   "Ctrl+Shift+T",  "File" },
+					{ "file.history",    "File History",             "Ctrl+I",        "File" },
+
+					{ "edit.undo",       "Undo",                     "Ctrl+Z",        "Edit" },
+					{ "edit.redo",       "Redo",                     "Ctrl+Y",        "Edit" },
+					{ "edit.cut",        "Cut",                      "Ctrl+X",        "Edit" },
+					{ "edit.copy",       "Copy",                     "Ctrl+C",        "Edit" },
+					{ "edit.paste",      "Paste",                    "Ctrl+V",        "Edit" },
+					{ "edit.selAll",     "Select all",               "Ctrl+A",        "Edit" },
+					{ "edit.addOcc",     "Add next occurrence",      "Ctrl+D",        "Edit" },
+					{ "edit.selAllOcc",  "Select all occurrences",   "Ctrl+Shift+D",  "Edit" },
+					{ "edit.indent",     "Indent line(s)",           "Ctrl+]",        "Edit" },
+					{ "edit.deindent",   "De-indent line(s)",        "Ctrl+[",        "Edit" },
+					{ "edit.comment",    "Toggle comments",          "Ctrl+/",        "Edit" },
+					{ "edit.moveLine",   "Move line(s)",             "Alt+Up/Down",   "Edit" },
+
+					{ "find.find",       "Find",                     "Ctrl+F",        "Find" },
+					{ "find.next",       "Find next",                "F3",            "Find" },
+					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find" },
+					{ "find.goto",       "Go to Line...",            "Ctrl+G",        "Find" },
+
+					{ "code.foldAll",    "Fold all",                 "Ctrl+0",        "Code" },
+					{ "code.unfoldAll",  "Unfold all",               "Ctrl+J",        "Code" },
+					{ "code.foldCur",    "Fold current",             "Ctrl+Shift+[",  "Code" },
+					{ "code.unfoldCur",  "Unfold current",           "Ctrl+Shift+]",  "Code" },
+					{ "code.upper",      "Selection -> UPPERCASE",   "Ctrl+K Ctrl+U", "Code" },
+					{ "code.lower",      "Selection -> lowercase",   "Ctrl+K Ctrl+L", "Code" },
+					{ "code.hSrc",       "Switch Header / Source",   "Alt+O",         "Code" },
+
+					{ "view.splitR",     "Split tab right",          "Ctrl+\\",       "View" },
+					{ "view.zoomIn",     "Zoom in",                  "Ctrl++",        "View" },
+					{ "view.zoomOut",    "Zoom out",                 "Ctrl+-",        "View" },
+					{ "view.cycleNext",  "Cycle tabs forward",       "Ctrl+Tab",      "View" },
+					{ "view.cyclePrev",  "Cycle tabs backward",      "Ctrl+Shift+Tab","View" },
+
+					{ "proj.run",        "Run",                      "F5",            "Project" },
+					{ "proj.build",      "Build project",            "F6",            "Project" },
+				};
+
+				// In-memory overrides — keyed by bind id. Persist on demand.
+				static std::unordered_map<std::string, std::string> keybindOverrides;
+				static std::string capturingId;       // id of the row currently waiting for a chord
+				static int         capturingFrame = 0; // frame we started — avoid catching the click that opened us
+				static int         curFrame = 0; ++curFrame;
+
+				// Build the list of distinct groups in declaration order.
+				std::vector<const char*> groupOrder;
+				for (auto& b : binds) {
+					bool present = false;
+					for (auto g : groupOrder) if (std::strcmp(g, b.group) == 0) { present = true; break; }
+					if (!present) groupOrder.push_back(b.group);
+				}
+
+				auto chordFor = [&](const Bind& b) -> std::string {
+					auto it = keybindOverrides.find(b.id);
+					return it != keybindOverrides.end() ? it->second : b.defaultCombo;
+				};
+
+				// Capture-next-chord logic. We watch IsKeyPressed across the
+				// modifier-aware keys and assemble a "Mod+Key" string.
+				auto tryCaptureChord = [&](const std::string& targetId) {
+					if (capturingId != targetId) return;
+					if (curFrame == capturingFrame) return;  // skip frame the popup opened on
+					ImGuiIO& io = ImGui::GetIO();
+					if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+						capturingId.clear();
+						return;
+					}
+					if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
+						keybindOverrides.erase(targetId);
+						capturingId.clear();
+						return;
+					}
+					// Walk every named key and grab the first non-modifier one
+					// pressed this frame. We must skip BOTH the physical modifier
+					// keys (Left/Right Ctrl/Shift/Alt/Super) AND the four
+					// ImGuiKey_ReservedForModXXX aliases — those live inside the
+					// NamedKey range too, and IsKeyPressed fires on them when a
+					// modifier goes down, which previously captured garbage like
+					// "Ctrl+" with no real key (the "polls mods twice" bug).
+					auto isModifierKey = [](ImGuiKey k) {
+						return k == ImGuiKey_LeftCtrl  || k == ImGuiKey_RightCtrl  ||
+						       k == ImGuiKey_LeftShift || k == ImGuiKey_RightShift ||
+						       k == ImGuiKey_LeftAlt   || k == ImGuiKey_RightAlt   ||
+						       k == ImGuiKey_LeftSuper || k == ImGuiKey_RightSuper ||
+						       k == ImGuiKey_ReservedForModCtrl  ||
+						       k == ImGuiKey_ReservedForModShift ||
+						       k == ImGuiKey_ReservedForModAlt   ||
+						       k == ImGuiKey_ReservedForModSuper;
+					};
+					for (ImGuiKey k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END;
+						 k = (ImGuiKey)(k + 1))
+					{
+						if (isModifierKey(k)) continue;
+						if (!ImGui::IsKeyPressed(k, false)) continue;
+						// Assemble the full chord: every held modifier + the key.
+						std::string chord;
+						if (io.KeyCtrl)  chord += "Ctrl+";
+						if (io.KeyShift) chord += "Shift+";
+						if (io.KeyAlt)   chord += "Alt+";
+						if (io.KeySuper) chord += "Super+";
+						const char* name = ImGui::GetKeyName(k);
+						if (!name || !name[0]) continue;   // unnamed key — ignore
+						chord += name;
+						keybindOverrides[targetId] = chord;
+						capturingId.clear();
+						return;
+					}
+				};
+
+				// One collapsible TreeNode per group, each containing its own
+				// nested table so groups visually mean something.
+				for (auto group : groupOrder) {
+					ImGui::SetNextItemOpen(true, ImGuiCond_FirstUseEver);
+					if (!ImGui::TreeNodeEx(group, ImGuiTreeNodeFlags_DefaultOpen)) continue;
+					if (ImGui::BeginTable((std::string("##kbtbl_") + group).c_str(), 3,
+						ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+						ImGuiTableFlags_SizingStretchProp))
+					{
+						ImGui::TableSetupColumn("Action",    ImGuiTableColumnFlags_WidthStretch, 0.55f);
+						ImGui::TableSetupColumn("Shortcut",  ImGuiTableColumnFlags_WidthStretch, 0.35f);
+						ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthStretch, 0.10f);
+						for (auto& b : binds) {
+							if (std::strcmp(b.group, group) != 0) continue;
+							ImGui::PushID(b.id);
+							ImGui::TableNextRow();
+							ImGui::TableNextColumn();
+							ImGui::TextUnformatted(b.action);
+							ImGui::TableNextColumn();
+							std::string label = (capturingId == b.id)
+								? std::string("press chord…")
+								: chordFor(b);
+							if (ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, 0))) {
+								capturingId    = b.id;
+								capturingFrame = curFrame;
+							}
+							tryCaptureChord(b.id);
+							ImGui::TableNextColumn();
+							bool overridden = keybindOverrides.count(b.id) != 0;
+							if (overridden) {
+								if (ImGui::SmallButton("reset")) keybindOverrides.erase(b.id);
+							}
+							ImGui::PopID();
+						}
+						ImGui::EndTable();
+					}
+					ImGui::TreePop();
+				}
+				ImGui::EndTabItem();
+			}
+			ImGui::EndTabBar();
+		}
+		ImGui::Separator();
+		if (ImGui::Button("Save"))   { saveSettings(); }
+		ImGui::SameLine();
+		if (ImGui::Button("Close"))  { saveSettings(); settingsVisible = false; }
+	}
+	ImGui::End();
+}
+
+
+// ── Diff against a chosen second file ────────────────────────────────
+void Editor::openDiffOtherDialog()
+{
+	if (auto* vp = ImGui::GetWindowViewport()) dialogViewportId = vp->ID;
+	else dialogViewportId = ImGui::GetMainViewport()->ID;
+	dialogNeedsPlacement = true;
+	IGFD::FileDialogConfig config;
+	config.countSelectionMax = 1;
+	config.flags = ImGuiFileDialogFlags_DontShowHiddenFiles;
+	populateFileDialogPlaces();
+	ImGuiFileDialog::Instance()->OpenDialog("diff-other", "Pick file to diff against active doc...", ".*", config);
+	diffOtherMode = true;
+}
+
+
 void Editor::openContainingFolder()
 {
 	if (tabs.empty() || doc().filename == "untitled") return;
@@ -716,6 +2730,43 @@ void Editor::openFile()
 
 void Editor::openFile(const std::string& path)
 {
+	// Dispatch by file kind: images go to the image viewer; executables run;
+	// other binary blobs open in the OS default handler. Only text-ish files
+	// fall through to the editor below.
+	{
+		auto ext = std::filesystem::path(path).extension().string();
+		std::transform(ext.begin(), ext.end(), ext.begin(),
+			[](unsigned char c){ return (char)std::tolower(c); });
+		if (isImageExt(ext)) {
+			openImageFile(path);
+			return;
+		}
+		if (ext == ".exe") {
+			navOpenExternally(path);
+			return;
+		}
+		if (isBinaryExt(ext)) {
+			navOpenExternally(path);
+			return;
+		}
+		// Unknown extension? Sniff the first 4 KB — if it contains NUL bytes
+		// it's almost certainly binary. Hand off to the OS rather than
+		// dumping garbage into the text editor.
+		{
+			std::ifstream f(path, std::ios::binary);
+			if (f.is_open()) {
+				char probe[4096];
+				f.read(probe, sizeof(probe));
+				std::streamsize n = f.gcount();
+				for (std::streamsize i = 0; i < n; ++i) {
+					if (probe[i] == '\0') {
+						navOpenExternally(path);
+						return;
+					}
+				}
+			}
+		}
+	}
 	// If this file is already open in some tab, just bring it forward instead
 	// of opening a second copy. Compare canonical paths so different ways of
 	// spelling the same path (relative vs absolute, mixed separators, etc.)
@@ -767,6 +2818,7 @@ void Editor::openFile(const std::string& path)
 		target->version = target->editor.GetUndoIndex();
 		target->filename = path;
 		target->wantFocus = true;
+		rememberRecentFile(path);
 		// Make this tab the active one so SetNextWindowFocus in
 		// renderDockedDocuments actually points at this doc.
 		for (size_t i = 0; i < tabs.size(); ++i)
@@ -861,10 +2913,52 @@ void Editor::render()
 	dockArea.y -= statusBarHeight + style.ItemSpacing.y;
 
 	ImGuiID dockId = ImGui::GetID("MainDockSpace");
-	ImGui::DockSpace(dockId, dockArea, ImGuiDockNodeFlags_None);
+	// One-shot default layout: Nav docked into a left split. Only runs if
+	// no imgui.ini layout already exists for this dockspace.
+	navInitDockLayout(dockId);
+	// Sticky single-doc layout: PassthruCentralNode lets the doc fill the
+	// work area cleanly. (We don't auto-hide the tab bar — the user wants
+	// it always visible to track open docs.)
+	ImGui::DockSpace(dockId, dockArea, ImGuiDockNodeFlags_PassthruCentralNode);
 
 	renderDockedDocuments();
+	renderNavigationPanel();
+	renderImageWindows();
 	renderScriptOutputWindow();
+	renderReferencesPanel();
+	renderSettings();
+
+	// Diff-against-other file picker — overlay on any state.
+	if (diffOtherMode) {
+		auto dlg = ImGuiFileDialog::Instance();
+		ImGuiViewport* vp = ImGui::FindViewportByID(dialogViewportId);
+		if (!vp) vp = ImGui::GetMainViewport();
+		if (dialogNeedsPlacement) {
+			ImGui::SetNextWindowViewport(vp->ID);
+			ImVec2 sz(vp->Size.x * 0.6f, vp->Size.y * 0.6f);
+			ImVec2 pos(vp->Pos.x + (vp->Size.x - sz.x) * 0.5f,
+			           vp->Pos.y + (vp->Size.y - sz.y) * 0.5f);
+			ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+			ImGui::SetNextWindowSize(sz, ImGuiCond_Always);
+			dialogNeedsPlacement = false;
+		}
+		bool finished = dlg->Display("diff-other", ImGuiWindowFlags_NoCollapse,
+			ImVec2(480.0f, 320.0f), vp->Size);
+		if (finished) {
+			if (dlg->IsOk() && !tabs.empty()) {
+				diffOtherPath = dlg->GetFilePathName();
+				std::ifstream f(diffOtherPath);
+				std::string contentB((std::istreambuf_iterator<char>(f)),
+				                      std::istreambuf_iterator<char>());
+				auto& t = doc();
+				t.diff.SetLanguage(t.editor.GetLanguage());
+				t.diff.SetText(contentB, t.editor.GetText());
+				state = State::diff;
+			}
+			diffOtherMode = false;
+			dlg->Close();
+		}
+	}
 
 	ImGui::Spacing();
 	renderStatusBar();
@@ -876,6 +2970,44 @@ void Editor::render()
 	else if (state == State::confirmQuit) { renderConfirmQuit(); }
 	else if (state == State::confirmError) { renderConfirmError(); }
 	else if (state == State::gotoLine)     { renderGotoLine(); }
+	else if (state == State::openProject)
+	{
+		// Re-uses the existing file-open dialog mechanism but on the
+		// "project-open" key, opened by openProjectFolderPicker().
+		ImGuiViewport* vp = ImGui::FindViewportByID(dialogViewportId);
+		if (!vp) vp = ImGui::GetMainViewport();
+		auto dialog = ImGuiFileDialog::Instance();
+		if (dialogNeedsPlacement) {
+			ImGui::SetNextWindowViewport(vp->ID);
+			ImVec2 sz(vp->Size.x * 0.7f, vp->Size.y * 0.7f);
+			ImVec2 pos(vp->Pos.x + (vp->Size.x - sz.x) * 0.5f,
+			           vp->Pos.y + (vp->Size.y - sz.y) * 0.5f);
+			ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+			ImGui::SetNextWindowSize(sz, ImGuiCond_Always);
+			dialogNeedsPlacement = false;
+		}
+		bool finished = dialog->Display("project-open", ImGuiWindowFlags_NoCollapse,
+			ImVec2(480.0f, 320.0f), vp->Size);
+		saveFileDialogPlaces();
+		if (finished) {
+			if (dialog->IsOk()) {
+				// If the user picked a *file* (e.g. project.sln, foo.csproj),
+				// use its containing directory as the project root. Otherwise
+				// use the current dialog directory.
+				std::string picked = dialog->GetFilePathName();
+				std::error_code ec;
+				std::filesystem::path target;
+				if (!picked.empty() && std::filesystem::is_regular_file(picked, ec)) {
+					target = std::filesystem::path(picked).parent_path();
+				} else {
+					target = dialog->GetCurrentPath();
+				}
+				setProjectRoot(target);
+			}
+			state = State::edit;
+			dialog->Close();
+		}
+	}
 
 	ImGui::End();
 
@@ -914,13 +3046,39 @@ void Editor::render()
 
 void Editor::renderDockedDocuments()
 {
-	ImGuiID dockId = ImGui::GetID("MainDockSpace");
+	// Target the dockspace's CENTRAL node for new documents. DockBuilderGetCentralNode
+	// returns it regardless of the saved layout, so new docs always land in the
+	// editing area as tabs — never derived from a (possibly floating/popped-out)
+	// window, which is what made tabs cascade out into their own viewports.
+	ImGuiID rootId = ImGui::GetID("MainDockSpace");
+	ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(rootId);
+	ImGuiID centralId = central ? central->ID
+	                  : (centralDockId ? (ImGuiID) centralDockId : rootId);
 
-	// first time setup: dock all initial windows into the dockspace
+	// Honor a pending "split right" request by splitting the central node and
+	// re-docking the active doc into the new right pane.
+	if (wantSplitRight && tabs.size() >= 2 && activeTab < tabs.size()) {
+		ImGuiID rightId = 0, leftId = 0;
+		ImGui::DockBuilderSplitNode(centralId, ImGuiDir_Right, 0.5f, &rightId, &leftId);
+		auto label = windowLabelFor(*tabs[activeTab]);
+		ImGui::DockBuilderDockWindow(label.c_str(), rightId);
+		ImGui::DockBuilderFinish(rootId);
+		tabs[activeTab]->wantFocus = true;
+		tabs[activeTab]->dockedOnce = true;
+		wantSplitRight = false;
+	}
+
 	for (size_t i = 0; i < tabs.size(); ++i)
 	{
 		auto& t = *tabs[i];
-		ImGui::SetNextWindowDockID(dockId, ImGuiCond_FirstUseEver);
+		// Force a brand-new doc into the central node exactly once (Always, so
+		// it actually moves), then leave it alone so the user can drag it out
+		// or split it afterwards.
+		if (!t.dockedOnce)
+		{
+			ImGui::SetNextWindowDockID(centralId, ImGuiCond_Always);
+			t.dockedOnce = true;
+		}
 		bool focusing = t.wantFocus;
 		if (focusing)
 		{
@@ -928,9 +3086,6 @@ void Editor::renderDockedDocuments()
 			t.wantFocus = false;
 		}
 		renderDocumentWindow(t);
-		// In a docked area, SetNextWindowFocus alone sometimes isn't enough
-		// to bring the tab forward — also call SetWindowFocus on the same
-		// label after Begin/End so the dock node activates it.
 		if (focusing)
 		{
 			ImGui::SetWindowFocus(windowLabelFor(t).c_str());
@@ -965,18 +3120,35 @@ void Editor::renderDocumentWindow(TabDocument& t)
 		}
 	}
 
-	ImGui::PushFont(nullptr, fontSize);
-	auto cursorPos = ImGui::GetCursorScreenPos();
-	t.editor.SetTextContextMenuCallback([this, &t, &cursorPos](int line, int column)
+
+	ImGui::PushFont(activeFont, fontSize);
+	t.editor.SetTextContextMenuCallback([this, &t](int line, int column)
 										{
 											// Refresh the trie at right-click time so it picks up identifiers
-											// the colorizer has tokenised since the doc was opened (e.g. the
-											// demo C++ doc — keywords are in immediately, but `main`,
-											// `numbers`, etc. only become available after the first colorize
-											// pass). Cheap enough to do on a single menu open.
+											// the colorizer has tokenised since the doc was opened.
 											buildAutocompleteTrie(t);
 
-											const auto word = t.editor.GetWordAtScreenPos(cursorPos);
+											// Resolve the "operative word" for word-aware menu items:
+											//   1. If there's an active selection, use that text — respects
+											//      multi-select and lets the user pick the exact symbol.
+											//   2. Otherwise, the word at the right-click's (line, column).
+											// The screen-position lookup we used to do was wrong: it captured
+											// the layout cursor at render time (top-left of editor child),
+											// so GetWordAtScreenPos returned garbage from row 0.
+											std::string word;
+											if (t.editor.AnyCursorHasSelection()) {
+												word = t.editor.GetCurrentSelectionText();
+												// Strip whitespace — multi-line selections often start/end
+												// with newlines that break GoToDefinitionOf lookups.
+												while (!word.empty() && (word.back() == '\n' || word.back() == '\r'
+													|| word.back() == ' ' || word.back() == '\t')) word.pop_back();
+												while (!word.empty() && (word.front() == '\n' || word.front() == '\r'
+													|| word.front() == ' ' || word.front() == '\t'))
+													word.erase(word.begin());
+											}
+											if (word.empty()) {
+												word = t.editor.GetWordAt(line, column);
+											}
 
 											if (ImGui::MenuItem("Copy", "Ctrl-C")) { t.editor.Copy(); }
 											if (ImGui::MenuItem("Cut", "Ctrl-X")) { t.editor.Cut(); }
@@ -1201,27 +3373,29 @@ void Editor::renderDocumentWindow(TabDocument& t)
 
 											if (!word.empty())
 											{
-												t.editor.SelectWord(line, column);
-												// Only offer symbol-aware navigation for tokens the autocomplete
-												// trie knows about (language keywords/declarations/identifiers +
-												// identifiers the colorizer has seen in this document). Avoids
-												// littering the menu when the user right-clicks on punctuation
-												// or plain prose.
-												bool isSymbol = t.trie.contains(word);
-												if (isSymbol)
+												// Preserve any existing selection — only auto-select the word
+												// under the cursor when the user right-clicked on bare text.
+												// Otherwise multi-select / range selections get squashed down
+												// to a single word every time the user opens the menu.
+												if (!t.editor.AnyCursorHasSelection())
 												{
-													if (ImGui::MenuItem("Go to Definition"))
-													{
-														t.editor.GoToDefinitionOf(word, true);
-													}
-													if (ImGui::MenuItem("Go to Declaration"))
-													{
-														t.editor.GoToFirstOccurrenceOf(word, true, false);
-													}
-													if (ImGui::MenuItem("Select All Occurrences"))
-													{
-														t.editor.SelectAllOccurrencesOf(word, true, true);
-													}
+													t.editor.SelectWord(line, column);
+												}
+												// Symbol navigation. These are always offered (not gated on the
+												// trie) and use the project-wide grep search, which works across
+												// files and languages — the in-file trie jump was unreliable
+												// (and outright missed C# cross-file symbols).
+												if (ImGui::MenuItem("Go to Definition"))
+												{
+													goToDefinitionProjectWide(word);
+												}
+												if (ImGui::MenuItem("Find References"))
+												{
+													findReferencesOf(t, word);
+												}
+												if (ImGui::MenuItem("Select All Occurrences (this file)"))
+												{
+													t.editor.SelectAllOccurrencesOf(word, true, true);
 												}
 											}
 											ImGui::Separator();
@@ -1230,6 +3404,15 @@ void Editor::renderDocumentWindow(TabDocument& t)
 
 	ImVec2 editorSize = ImGui::GetContentRegionAvail();
 	t.editor.Render("##editorContent", editorSize);
+
+	// Hover hint: when the user hovers a known symbol in the editor for
+	// `hoverDelaySec` without moving the mouse, show a tooltip with the
+	// symbol's best-guess definition line + a reference count.
+	if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+		!ImGui::IsAnyItemActive())
+	{
+		renderHoverTooltip(t);
+	}
 
 	ImGui::PopFont();
 	ImGui::End();
@@ -1242,12 +3425,16 @@ void Editor::renderDocumentWindow(TabDocument& t)
 
 void Editor::tryToQuit()
 {
-	// Persist file-dialog favourites BEFORE the quit path can pull us out
-	// of the message loop — covers the case where the user added a place
-	// via the dialog UI but never closed the dialog cleanly.
+	// Persist file-dialog favourites + editor settings BEFORE the quit path
+	// can pull us out of the message loop.
 	saveFileDialogPlaces();
-	// And flush the ImGui layout right now too, so window positions /
-	// docking state are guaranteed-persisted even on abrupt close.
+	// Snapshot the current tab set into projectSessions for whatever
+	// projectRoot is active, so next launch with the same --project arg
+	// restores the workspace.
+	saveCurrentProjectSession();
+	saveSettings();
+	// Flush the ImGui layout right now too, so window positions / docking
+	// state are guaranteed-persisted even on abrupt close.
 	if (auto* fn = ImGui::GetIO().IniFilename) ImGui::SaveIniSettingsToDisk(fn);
 
 	bool anyDirty = false;
@@ -1271,6 +3458,34 @@ void Editor::renderMenuBar()
 		{
 			if (ImGui::MenuItem("New Tab", SHORTCUT "N")) { newFile(); }
 			if (ImGui::MenuItem("Open...", SHORTCUT "O")) { openFile(); }
+			if (ImGui::MenuItem("Open Project...")) { openProjectFolderPicker(); }
+			if (ImGui::BeginMenu("Open Recent File", !recentFiles.empty())) {
+				// PushID per row — repeated paths in the list (or paths
+				// containing ## metacharacters) would otherwise alias to the
+				// same ImGui widget ID and trip the duplicate-ID assert.
+				for (size_t i = 0; i < recentFiles.size(); ++i) {
+					ImGui::PushID((int) i);
+					if (ImGui::MenuItem(recentFiles[i].c_str())) {
+						openFile(recentFiles[i]);
+					}
+					ImGui::PopID();
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Clear")) { recentFiles.clear(); saveSettings(); }
+				ImGui::EndMenu();
+			}
+			if (ImGui::BeginMenu("Open Recent Project", !recentProjects.empty())) {
+				for (size_t i = 0; i < recentProjects.size(); ++i) {
+					ImGui::PushID((int) i);
+					if (ImGui::MenuItem(recentProjects[i].c_str())) {
+						setProjectRoot(recentProjects[i]);
+					}
+					ImGui::PopID();
+				}
+				ImGui::Separator();
+				if (ImGui::MenuItem("Clear")) { recentProjects.clear(); saveSettings(); }
+				ImGui::EndMenu();
+			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Save", SHORTCUT "S", nullptr, isSavable())) { saveFile(); }
 			if (ImGui::MenuItem("Save As...", SHORTCUT "Shift+S")) { showSaveFileAs(); }
@@ -1285,6 +3500,11 @@ void Editor::renderMenuBar()
 			{
 				reopenLastClosedTab();
 			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("File History…",      " " SHORTCUT "I")) { showDiff(); }
+			if (ImGui::MenuItem("Diff Against File…"))                  { openDiffOtherDialog(); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Settings...")) { loadSettings(); settingsVisible = true; }
 			ImGui::Separator();
 			// Path utilities — handy when the current doc lives on disk.
 			bool hasPath = !tabs.empty() && doc().filename != "untitled";
@@ -1354,51 +3574,84 @@ void Editor::renderMenuBar()
 			ImGui::EndMenu();
 		}
 
+		// VIEW — strictly window / appearance toggles. Code-editing toggles
+		// moved to Edit; folding to Code; history/diff to File; build to Project.
 		if (ImGui::BeginMenu("View"))
 		{
-			if (ImGui::MenuItem("Zoom In", " " SHORTCUT "+")) { increaseFontSIze(); }
+			if (ImGui::MenuItem("Zoom In",  " " SHORTCUT "+")) { increaseFontSIze(); }
 			if (ImGui::MenuItem("Zoom Out", " " SHORTCUT "-")) { decreaseFontSIze(); }
 			ImGui::Separator();
 			bool flag;
-			if (ImGui::MenuItem("Autocomplete", nullptr, &autocomplete)) { setAutocompleteMode(autocomplete); }
-			flag = e.IsShowWhitespacesEnabled();        if (ImGui::MenuItem("Show Whitespaces", nullptr, &flag)) { e.SetShowWhitespacesEnabled(flag); }
-			flag = e.IsShowSpacesEnabled();             if (ImGui::MenuItem("Show Spaces", nullptr, &flag)) { e.SetShowSpacesEnabled(flag); }
-			flag = e.IsShowTabsEnabled();               if (ImGui::MenuItem("Show Tabs", nullptr, &flag)) { e.SetShowTabsEnabled(flag); }
-			flag = e.IsShowLineNumbersEnabled();        if (ImGui::MenuItem("Show Line Numbers", nullptr, &flag)) { e.SetShowLineNumbersEnabled(flag); }
-			flag = e.IsShowingMatchingBrackets();       if (ImGui::MenuItem("Show Matching Brackets", nullptr, &flag)) { e.SetShowMatchingBrackets(flag); }
-			flag = e.IsCompletingPairedGlyphs();        if (ImGui::MenuItem("Complete Matching Glyphs", nullptr, &flag)) { e.SetCompletePairedGlyphs(flag); }
+			flag = e.IsShowLineNumbersEnabled();        if (ImGui::MenuItem("Show Line Numbers",         nullptr, &flag)) { e.SetShowLineNumbersEnabled(flag); }
+			flag = e.IsShowWhitespacesEnabled();        if (ImGui::MenuItem("Show Whitespaces",          nullptr, &flag)) { e.SetShowWhitespacesEnabled(flag); }
+			flag = e.IsShowSpacesEnabled();             if (ImGui::MenuItem("Show Spaces",               nullptr, &flag)) { e.SetShowSpacesEnabled(flag); }
+			flag = e.IsShowTabsEnabled();               if (ImGui::MenuItem("Show Tabs",                 nullptr, &flag)) { e.SetShowTabsEnabled(flag); }
+			flag = e.IsShowingMatchingBrackets();       if (ImGui::MenuItem("Show Matching Brackets",    nullptr, &flag)) { e.SetShowMatchingBrackets(flag); }
 			flag = e.IsShowPanScrollIndicatorEnabled(); if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag)) { e.SetShowPanScrollIndicatorEnabled(flag); }
-			flag = e.IsMiddleMousePanMode();            if (ImGui::MenuItem("Middle Mouse Pan Mode", nullptr, &flag)) { if (flag) e.SetMiddleMousePanMode(); else e.SetMiddleMouseScrollMode(); }
-			flag = e.IsFoldingEnabled();                if (ImGui::MenuItem("Enable Folding", nullptr, &flag)) { e.SetFoldingEnabled(flag); }
-			if (ImGui::MenuItem("Fold All", " " SHORTCUT "0", nullptr, e.IsFoldingEnabled())) { e.FoldAll(); }
-			if (ImGui::MenuItem("Unfold All", " " SHORTCUT "J", nullptr, e.IsFoldingEnabled())) { e.UnfoldAll(); }
-			if (ImGui::MenuItem("Fold Current", " " SHORTCUT "Shift+[", nullptr, e.IsFoldingEnabled())) { e.FoldCurrent(); }
-			if (ImGui::MenuItem("Unfold Current", " " SHORTCUT "Shift+]", nullptr, e.IsFoldingEnabled())) { e.UnfoldCurrent(); }
-			ImGui::Separator();
-			if (ImGui::MenuItem("File History…", " " SHORTCUT "I")) { showDiff(); }
-			if (ImGui::MenuItem("Show Output", "F5", &script->visible)) {}
-			if (ImGui::MenuItem("Build Project", "F6")) { runProjectBuild(); }
-			ImGui::Separator();
-			if (ImGui::MenuItem("Save Layout Now"))
-			{
-				if (auto* fn = ImGui::GetIO().IniFilename) ImGui::SaveIniSettingsToDisk(fn);
+			if (ImGui::MenuItem("Word Wrap", nullptr, &prefWordWrap)) {
+				for (auto& up : tabs) up->editor.SetWordWrap(prefWordWrap);
 			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Navigation Panel",  nullptr, &navPanelVisible)) {}
+			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Pop Out Left",  "Ctrl+Alt+←")) { popOutActiveDoc(-1); }
+			if (ImGui::MenuItem("Pop Out Right", "Ctrl+Alt+→")) { popOutActiveDoc(+1); }
+			if (ImGui::MenuItem("Merge Window Back", "Ctrl+Alt+M")) { remergeActiveWindow(); }
+			if (ImGui::MenuItem("Merge All Windows", "Ctrl+Alt+Shift+M")) { remergeAllWindows(); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Save Layout Now"))  { if (auto* fn = ImGui::GetIO().IniFilename) ImGui::SaveIniSettingsToDisk(fn); }
 			if (ImGui::MenuItem("Reset Layout"))
 			{
-				// Wipe the in-memory layout; on next save it'll persist the
-				// fresh "no settings" state. User must dock things again.
+				// Clear the saved layout AND re-arm the default-layout builder so
+				// next frame rebuilds Nav-left / Refs-right / Output-bottom.
 				ImGui::LoadIniSettingsFromMemory("");
+				ImGui::DockBuilderRemoveNode(ImGui::GetID("MainDockSpace"));
+				dockLayoutInitialized = false;
+				centralDockId = 0;
 			}
+			ImGui::EndMenu();
+		}
+
+		// CODE — fold / comments / matching-glyphs / autocomplete; everything
+		// that affects the code itself, not the chrome around it.
+		if (ImGui::BeginMenu("Code"))
+		{
+			bool flag = e.IsFoldingEnabled();
+			if (ImGui::MenuItem("Enable Folding",  nullptr, &flag)) { e.SetFoldingEnabled(flag); }
+			if (ImGui::MenuItem("Fold All",        " " SHORTCUT "0",       nullptr, e.IsFoldingEnabled())) { e.FoldAll(); }
+			if (ImGui::MenuItem("Unfold All",      " " SHORTCUT "J",       nullptr, e.IsFoldingEnabled())) { e.UnfoldAll(); }
+			if (ImGui::MenuItem("Fold Current",    " " SHORTCUT "Shift+[", nullptr, e.IsFoldingEnabled())) { e.FoldCurrent(); }
+			if (ImGui::MenuItem("Unfold Current",  " " SHORTCUT "Shift+]", nullptr, e.IsFoldingEnabled())) { e.UnfoldCurrent(); }
+			ImGui::Separator();
+			flag = e.IsCompletingPairedGlyphs(); if (ImGui::MenuItem("Auto-complete Brackets", nullptr, &flag)) { e.SetCompletePairedGlyphs(flag); prefCompletePairs = flag; }
+			flag = e.IsAutoIndentEnabled();      if (ImGui::MenuItem("Auto-indent",            nullptr, &flag)) { e.SetAutoIndentEnabled(flag); prefAutoIndent = flag; }
+			if (ImGui::MenuItem("Autocomplete (Trie)", nullptr, &autocomplete)) { setAutocompleteMode(autocomplete); }
+			ImGui::Separator();
+			flag = e.IsMiddleMousePanMode();     if (ImGui::MenuItem("Middle Mouse Pan", nullptr, &flag)) { if (flag) e.SetMiddleMousePanMode(); else e.SetMiddleMouseScrollMode(); }
+			ImGui::EndMenu();
+		}
+
+		// PROJECT — build / run / project tooling.
+		if (ImGui::BeginMenu("Project"))
+		{
+			if (ImGui::MenuItem("Build Project",      "F6")) { runProjectBuild(); }
+			if (ImGui::MenuItem("Run",                "F5")) { runProjectExeOrScript(); }
+			if (ImGui::MenuItem("Run Active Document (script)")) { runScriptForDoc(); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Open Project...")) { openProjectFolderPicker(); }
 			ImGui::EndMenu();
 		}
 
 		if (ImGui::BeginMenu("Find"))
 		{
-			if (ImGui::MenuItem("Find",        " " SHORTCUT "F")) { e.OpenFindReplaceWindow(); }
-			if (ImGui::MenuItem("Find Next",   "F3",        nullptr, e.HasFindString())) { e.FindNext(); }
-			if (ImGui::MenuItem("Find All",    "^" SHORTCUT "G", nullptr, e.HasFindString())) { e.FindAll(); }
+			if (ImGui::MenuItem("Find",        " " SHORTCUT "F"))      { e.OpenFindReplaceWindow(); }
+			if (ImGui::MenuItem("Find Next",   "F3",                   nullptr, e.HasFindString())) { e.FindNext(); }
+			if (ImGui::MenuItem("Find All",    "^" SHORTCUT "G",       nullptr, e.HasFindString())) { e.FindAll(); }
 			ImGui::Separator();
-			if (ImGui::MenuItem("Go to Line…", " " SHORTCUT "G")) { showGotoLine(); }
+			if (ImGui::MenuItem("Go to Line…", " " SHORTCUT "G"))      { showGotoLine(); }
 			ImGui::EndMenu();
 		}
 
@@ -1441,6 +3694,10 @@ void Editor::renderMenuBar()
 				// editor's own Find-All binding below.
 				showGotoLine();
 			}
+			else if (ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) {
+				// Ctrl+\ — split the active tab into a right-side dock pane.
+				splitActiveTabRight();
+			}
 			else if (ImGui::IsKeyPressed(ImGuiKey_Equal, false)) { increaseFontSIze(); }
 			else if (ImGui::IsKeyPressed(ImGuiKey_Minus, false)) { decreaseFontSIze(); }
 			else if (ImGui::IsKeyPressed(ImGuiKey_Tab, false))
@@ -1464,10 +3721,33 @@ void Editor::renderMenuBar()
 				toggleHeaderSource();
 			}
 		}
-		// F5: run the active document with its interpreter (async, threaded).
+		// Ctrl+Alt viewport control: pop the active doc out to its own OS window
+		// (←/→) or merge windows back in (M = current, Shift+M = all).
+		if (ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyDown(ImGuiMod_Alt))
+		{
+			if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  false)) popOutActiveDoc(-1);
+			else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) popOutActiveDoc(+1);
+			else if (ImGui::IsKeyPressed(ImGuiKey_M, false))
+			{
+				if (ImGui::IsKeyDown(ImGuiMod_Shift)) remergeAllWindows();
+				else remergeActiveWindow();
+			}
+		}
+		// Ctrl + scroll wheel: nudge editor font size. Toggleable in Settings
+		// because some users prefer Ctrl+wheel to scroll their navigation, not
+		// rescale text. Skip when an input widget is focused so it doesn't
+		// fight with the find/replace text box.
+		if (prefCtrlScrollZoom && ImGui::IsKeyDown(ImGuiMod_Ctrl) && !ImGui::IsAnyItemActive())
+		{
+			float w = ImGui::GetIO().MouseWheel;
+			if (w > 0.0f) { increaseFontSIze(); prefFontSize = fontSize; }
+			else if (w < 0.0f) { decreaseFontSIze(); prefFontSize = fontSize; }
+		}
+		// F5: prefer running the project's built exe; fall back to running the
+		// active document with its interpreter.
 		if (ImGui::IsKeyPressed(ImGuiKey_F5, false))
 		{
-			runScriptForDoc();
+			runProjectExeOrScript();
 		}
 		// F6: run the project's build script (walk up for build.bat / .ps1 /
 		// Makefile / CMakeLists.txt). Output streams into the same window.
@@ -1485,21 +3765,37 @@ void Editor::renderMenuBar()
 
 void Editor::renderStatusBar()
 {
-	static const char* langNames[] = { "None", "C", "C++", "C#", "AngelScript", "Lua", "Python", "GLSL", "HLSL", "JSON", "Markdown", "SQL" };
-	static const TextEditor::Language* langDefs[] = {
-		nullptr,
-		TextEditor::Language::C(),
-		TextEditor::Language::Cpp(),
-		TextEditor::Language::Cs(),
-		TextEditor::Language::AngelScript(),
-		TextEditor::Language::Lua(),
-		TextEditor::Language::Python(),
-		TextEditor::Language::Glsl(),
-		TextEditor::Language::Hlsl(),
-		TextEditor::Language::Json(),
-		TextEditor::Language::Markdown(),
-		TextEditor::Language::Sql()
-	};
+	// Built-in language list + every runtime-defined language discovered at
+	// startup, de-duplicated by name. Cached after first build.
+	static std::vector<std::string> langNamesV;
+	static std::vector<const TextEditor::Language*> langDefsV;
+	if (langNamesV.empty()) {
+		langNamesV = { "None", "C", "C++", "C#", "AngelScript", "Lua", "Python", "GLSL", "HLSL", "JSON", "Markdown", "SQL", "INI" };
+		langDefsV  = {
+			nullptr,
+			TextEditor::Language::C(),
+			TextEditor::Language::Cpp(),
+			TextEditor::Language::Cs(),
+			TextEditor::Language::AngelScript(),
+			TextEditor::Language::Lua(),
+			TextEditor::Language::Python(),
+			TextEditor::Language::Glsl(),
+			TextEditor::Language::Hlsl(),
+			TextEditor::Language::Json(),
+			TextEditor::Language::Markdown(),
+			TextEditor::Language::Sql(),
+			TextEditor::Language::Ini()
+		};
+		// Append runtime languages (HTML, INI, YAML, CFG, BAT, PS1, CMake, XML, XAML…)
+		std::unordered_set<std::string> seen(langNamesV.begin(), langNamesV.end());
+		for (auto& [ext, lang] : runtimeLanguagesByExt()) {
+			(void)ext;
+			if (!lang || seen.count(lang->name)) continue;
+			seen.insert(lang->name);
+			langNamesV.push_back(lang->name);
+			langDefsV.push_back(lang);
+		}
+	}
 
 	auto& t = doc();
 	auto& e = t.editor;
@@ -1511,12 +3807,12 @@ void Editor::renderStatusBar()
 
 	if (ImGui::BeginCombo("##LangSel", langName.c_str()))
 	{
-		for (int n = 0; n < static_cast<int>(IM_ARRAYSIZE(langNames)); n++)
+		for (size_t n = 0; n < langNamesV.size(); n++)
 		{
-			bool selected = (langName == langNames[n]);
-			if (ImGui::Selectable(langNames[n], selected))
+			bool selected = (langName == langNamesV[n]);
+			if (ImGui::Selectable(langNamesV[n].c_str(), selected))
 			{
-				e.SetLanguage(langDefs[n]);
+				e.SetLanguage(langDefsV[n]);
 				buildAutocompleteTrie(t);
 			}
 			if (selected) ImGui::SetItemDefaultFocus();
@@ -1527,15 +3823,73 @@ void Editor::renderStatusBar()
 	ImGui::SameLine(0.0f, 0.0f);
 	ImGui::AlignTextToFramePadding();
 
+	// Toolchain selector — only when a project is loaded AND the active doc
+	// language is one we recognize a toolchain for. Renders as a combo so
+	// the user can switch active MSVC / .NET inline without leaving the
+	// editor. Selection persists via saveSettings on quit.
+	const auto* langPtr = e.GetLanguage();
+	if (langPtr && !projectRoot.empty()) {
+		const std::string& ln = langPtr->name;
+		if (ln == "C" || ln == "C++") {
+			detectToolchains();
+			std::string label = "MSVC: ";
+			if (activeMsvcPath.empty()) label += "(none)";
+			else {
+				auto p = std::filesystem::path(activeMsvcPath);
+				for (auto it = p; !it.empty() && it.has_parent_path(); it = it.parent_path()) {
+					auto name = it.filename().string();
+					if (!name.empty() && (name[0] >= '0' && name[0] <= '9') && name.find('.') != std::string::npos) {
+						label += name; break;
+					}
+				}
+			}
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
+			ImGui::SetNextItemWidth(220.0f);
+			if (ImGui::BeginCombo("##msvcStatusSel", label.c_str())) {
+				for (auto& tc : detectedMsvc) {
+					bool sel = (tc.path == activeMsvcPath);
+					if (ImGui::Selectable(tc.label.c_str(), sel)) activeMsvcPath = tc.path;
+					if (sel) ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+		} else if (ln == "C#") {
+			detectToolchains();
+			std::string label = ".NET: ";
+			label += detectedDotnetSdks.empty() ? "(none)" : detectedDotnetSdks.front().label;
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
+			ImGui::SetNextItemWidth(220.0f);
+			if (ImGui::BeginCombo("##dotnetStatusSel", label.c_str())) {
+				for (auto& sdk : detectedDotnetSdks) {
+					bool sel = (sdk.path == activeDotnetPath);
+					std::string item = "SDK " + sdk.label;
+					if (ImGui::Selectable(item.c_str(), sel)) activeDotnetPath = sdk.path;
+					if (sel) ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+		}
+	}
+
 	int line, column;
 	e.GetCurrentCursor(line, column);
 	float glyphWidth = ImGui::CalcTextSize("#").x;
 	char status[256];
-	int statusSize = std::snprintf(status, sizeof(status),
-								   "Ln %d, Col %d  Tab: %d  %s",
-								   line + 1, column + 1,
-								   e.GetTabSize(),
-								   std::filesystem::path(t.filename).filename().string().c_str());
+	// Optionally prepend an FPS readout — settings-toggleable so it's not in
+	// the user's face by default. The value is the smoothed framerate ImGui
+	// already maintains for its own debug widgets.
+	int statusSize = 0;
+	if (prefShowFps) {
+		statusSize = std::snprintf(status, sizeof(status),
+			"%.0f fps  Ln %d, Col %d  Tab: %d  %s",
+			ImGui::GetIO().Framerate, line + 1, column + 1, e.GetTabSize(),
+			std::filesystem::path(t.filename).filename().string().c_str());
+	} else {
+		statusSize = std::snprintf(status, sizeof(status),
+			"Ln %d, Col %d  Tab: %d  %s",
+			line + 1, column + 1, e.GetTabSize(),
+			std::filesystem::path(t.filename).filename().string().c_str());
+	}
 
 	float size = glyphWidth * static_cast<float>(statusSize + 3);
 	float width = ImGui::GetContentRegionAvail().x;
