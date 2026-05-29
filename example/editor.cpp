@@ -936,9 +936,11 @@ void Editor::setProjectRoot(const std::filesystem::path& p)
 	std::error_code ec;
 	auto abs = std::filesystem::absolute(p, ec);
 	if (ec || abs.empty()) return;
-	// Promote to the outermost repo root so nested project files open the whole
-	// project (with its local deps) rather than just the leaf folder.
-	abs = resolveOutermostRoot(abs);
+	// Respect exactly what the user opened: a folder is used as-is, a project
+	// file resolves to its containing folder. (Earlier we climbed to the
+	// outermost git root, but that over-reached on monorepos — e.g. opening
+	// uevr-frontend/uevr jumped up to the whole uevr-frontend tree.)
+	if (std::filesystem::is_regular_file(abs, ec)) abs = abs.parent_path();
 	// If we're switching projects, snapshot the outgoing project's open tabs
 	// so reopening that project later restores the workspace.
 	if (!projectRoot.empty()) {
@@ -3700,9 +3702,16 @@ void Editor::renderDocumentWindow(TabDocument& t)
 												{
 													goToDefinitionProjectWide(qualified, false);
 												}
-												if (ImGui::MenuItem("Go to Declaration"))
+												// Declaration vs definition only means something where
+												// headers exist (C/C++); other languages have a single
+												// definition site, so don't show it for them.
 												{
-													goToDefinitionProjectWide(qualified, true);
+													const auto* lang = t.editor.GetLanguage();
+													bool hasDecl = lang && (lang->name == "C" || lang->name == "C++");
+													if (hasDecl && ImGui::MenuItem("Go to Declaration"))
+													{
+														goToDefinitionProjectWide(qualified, true);
+													}
 												}
 												if (ImGui::MenuItem("Find References"))
 												{
