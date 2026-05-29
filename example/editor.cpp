@@ -1412,6 +1412,8 @@ void Editor::renderNavigationPanel()
 			ImGui::TextDisabled("%s", std::filesystem::path(ctxPath).filename().string().c_str());
 			ImGui::Separator();
 			if (!isDir && ImGui::MenuItem("Open")) { openFile(ctxPath); }
+			if (!isDir && ImGui::MenuItem("Open to Left"))  { openFileToSide(ctxPath, -1); }
+			if (!isDir && ImGui::MenuItem("Open to Right")) { openFileToSide(ctxPath, +1); }
 			if (ImGui::MenuItem("Open in Explorer")) { navOpenPathInExplorer(ctxPath); }
 			if (ImGui::MenuItem("Copy path")) { ImGui::SetClipboardText(ctxPath.c_str()); }
 			ImGui::Separator();
@@ -1606,6 +1608,16 @@ void Editor::splitActiveTabRight()
 {
 	if (tabs.size() < 2) return;             // need a second tab to split into
 	wantSplitRight = true;
+}
+
+void Editor::openFileToSide(const std::string& path, int dir)
+{
+	openFile(path);                          // opens or focuses the file
+	if (tabs.empty() || dir == 0) return;
+	// The opened/focused file is the active tab; queue it to be docked into a
+	// side split next frame (renderDockedDocuments does the DockBuilder work).
+	pendingSideDocId = tabs[activeTab]->id;
+	pendingSideDir   = dir;
 }
 
 
@@ -3377,6 +3389,25 @@ void Editor::renderDockedDocuments()
 		tabs[activeTab]->wantFocus = true;
 		tabs[activeTab]->dockedOnce = true;
 		wantSplitRight = false;
+	}
+
+	// Honor a pending "open to left/right" — a file opened from the nav panel
+	// that should land in a split beside the central docs, not as a tab.
+	if (pendingSideDir != 0) {
+		for (auto& up : tabs) {
+			if (up->id != pendingSideDocId) continue;
+			ImGuiID sideId = 0, restId = 0;
+			ImGui::DockBuilderSplitNode(centralId,
+				pendingSideDir < 0 ? ImGuiDir_Left : ImGuiDir_Right,
+				0.5f, &sideId, &restId);
+			ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), sideId);
+			ImGui::DockBuilderFinish(rootId);
+			up->dockedOnce = true;     // don't let the loop re-dock it to centre
+			up->wantFocus  = true;
+			break;
+		}
+		pendingSideDir = 0;
+		pendingSideDocId = 0;
 	}
 
 	for (size_t i = 0; i < tabs.size(); ++i)

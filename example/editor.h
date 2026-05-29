@@ -266,6 +266,14 @@ private:
 	void splitActiveTabRight();
 	bool wantSplitRight = false;
 
+	// Open a file into a split pane on the left (dir<0) or right (dir>0) of the
+	// document area — used by the nav panel's "Open to Left/Right". Opens the
+	// file, then a deferred DockBuilder split in renderDockedDocuments docks it
+	// to the side (handled next frame via these pending fields).
+	void openFileToSide(const std::string& path, int dir);
+	size_t pendingSideDocId = 0;
+	int    pendingSideDir   = 0;   // -1 left, +1 right, 0 none
+
 	// Settings dialog — interpreters per extension, build overrides,
 	// editor toggles. Persisted to <configDir>/settings.json (minimal
 	// hand-rolled writer; no JSON dep).
