@@ -15,9 +15,9 @@ development tools.
 
 - This should work on MacOS (tested), Linux (untested) and Windows (untested).
 - Ensure you have the C++ and CMake extensions activated in your installation.
-- Open the top-level ImGuiColorTextEdit folder.
-- As the top-level does not contain a CMakeList.txt file, tell Visual Studio Code you want to use the example/CMakeList.txt file.
+- Open the top-level ImGuiColorTextEdit folder and use its CMakeLists.txt file.
 - When you build the executable, the dependencies (SDL3, Dear ImGui and ImGuiFileDialog) will be automatically downloaded.
+- By default the example is built. Pass `-DTEXTEDITOR_BUILD_EXAMPLE=OFF` to build only the TextEditor library, or `-DDEPS=LOCAL` to link against a system-installed SDL3.
 
 ## Xcode
 
@@ -25,8 +25,8 @@ development tools.
 	- Install **homebrew** using the instructions at [https://brew.sh](https://brew.sh).
 	- Install git using **brew install git** from the command line.
 	- Install Cmake using **brew install cmake** from the command line.
-	- Run the following in the **examples** folder: **cmake -B ../build -G Xcode**.
-	- You now have an Xcode project in the top-level **build** folder.
+	- Run the following in the top-level folder: **cmake -B build -G Xcode**.
+	- You now have an Xcode project in the **build** folder.
 	- This step is only required once.
 
 ## Visual Studio
@@ -45,8 +45,7 @@ development tools.
 	- Ensure the **build-essential**, **cmake** and **ninja-build** packages are installed.
 
 - All platforms
-	- Run the following commands:
-		- **cd example**
-		- **cmake -B ../build -G "Ninja Multi-Config"**
-		- **cmake --build ../build --config Debug**
+	- Run the following commands from the top-level folder:
+		- **cmake -B build -G "Ninja Multi-Config"**
+		- **cmake --build build --config Debug**
 	- The executable should now be at **ImGuiColorTextEdit/build/Debug/example**
