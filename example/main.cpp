@@ -24,7 +24,9 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
 
-
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
 #include "editor.h"
 #include "dejavu.h"
@@ -35,6 +37,19 @@
 //
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+	// Hide the console window that Windows pops up for a console-subsystem app
+	// when launched from Explorer — but ONLY if we own it. If the editor was
+	// started from a real terminal (>1 process attached to the console), leave
+	// that terminal alone. FreeConsole detaches us; the popup console then
+	// closes since nothing else is attached.
+	{
+		DWORD pids[4];
+		DWORD attached = GetConsoleProcessList(pids, 4);
+		if (attached <= 1)
+			FreeConsole();
+	}
+#endif
 	// Parse --project <dir> and positional args. Positionals are sorted into
 	// (a) project root (last folder OR project file we see — supports shell
 	// context-menu integration: right-click a .sln in Explorer → opens here)

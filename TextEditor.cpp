@@ -3833,6 +3833,13 @@ void TextEditor::Folder::updateVisibility(Document& document)
 			}
 		}
 	}
+
+	// Cache how many lines are hidden so the per-frame visual-index mapping can
+	// short-circuit to an O(1) identity when nothing is folded (common case).
+	int hidden = 0;
+	for (int i = 0; i < lineCount; ++i)
+		if (!document[i].visible) ++hidden;
+	hiddenLineCount = hidden;
 }
 
 void TextEditor::Folder::toggleFold(int line, Document& document)

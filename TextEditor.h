@@ -1201,6 +1201,12 @@ protected:
 		// Global folding flag
 		bool foldingEnabled = true;
 
+		// Number of lines currently hidden by folds, refreshed in
+		// updateVisibility(). When 0, visual index == document line, letting the
+		// (per-frame, called many times) visual-index mapping take an O(1)
+		// identity path instead of scanning all lines — critical for large files.
+		int hiddenLineCount = 0;
+
 		// Folding API
 		void rebuildFoldRanges(Document& document);
 		void updateVisibility(Document& document);
@@ -1681,6 +1687,8 @@ protected:
 	int getVisualLineCount() const {
 		// Number of visible (non-folded) lines. Used to size the scrollable
 		// content area and to clamp visual indices.
+		// Fast path: nothing folded → every line visible.
+		if (foldRanges.hiddenLineCount == 0) return document.lineCount();
 		int n = 0;
 		for (int i = 0; i < document.lineCount(); ++i) {
 			if (document[i].visible) ++n;
@@ -1691,6 +1699,13 @@ protected:
 	int visualIndexToLine(int visualIndex) const {
 		if (visualIndex < 0)
 			visualIndex = 0;
+
+		// Fast path: nothing folded → visual index IS the document line.
+		if (foldRanges.hiddenLineCount == 0) {
+			int last = document.lineCount() - 1;
+			if (last < 0) return 0;
+			return visualIndex > last ? last : visualIndex;
+		}
 
 		int current = 0;
 		int lastVisible = 0;
@@ -1708,6 +1723,12 @@ protected:
 
 	int lineToVisualIndex(int line) const {
 		if (line < 0) return 0;
+		// Fast path: nothing folded → document line IS the visual index.
+		if (foldRanges.hiddenLineCount == 0) {
+			int last = document.lineCount() - 1;
+			if (last < 0) return 0;
+			return line > last ? last : line;
+		}
 		int current = 0;
 		int lastVisibleBeforeTarget = 0;
 		for (int i = 0; i < document.lineCount(); ++i) {
