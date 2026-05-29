@@ -860,8 +860,10 @@ void TextEditor::renderText()
 			column += (codepoint == '\t') ? tabSize - (column % tabSize) : 1;
 		}
 
-		// draw VSCode/Sublime-style fold preview on folded fold-start lines
-		if (foldRanges.foldingEnabled)
+		// draw VSCode/Sublime-style fold preview on folded fold-start lines.
+		// Skip the whole scan when nothing is folded (hiddenLineCount == 0) —
+		// otherwise this is O(visibleLines * totalFolds) every frame.
+		if (foldRanges.foldingEnabled && foldRanges.hiddenLineCount > 0)
 		{
 			for (auto& fr : foldRanges)
 			{
@@ -1090,6 +1092,10 @@ void TextEditor::renderMargin()
 	{
 		int line = fr.start.line;
 		if (line < 0 || line >= document.lineCount() || !document[line].visible || line == fr.end.line)
+			continue;
+		// Cull off-screen fold arrows — only the visible range matters, and a
+		// large file can have thousands of folds (was drawing them all/frame).
+		if (line < firstVisibleLine || line > lastVisibleLine)
 			continue;
 		auto vi = lineToVisualIndex(line);
 		float y = cursorScreenPos.y + vi * glyphSize.y + glyphSize.y * 0.5f;
