@@ -163,7 +163,7 @@ private:
 	inline void increaseFontSIze() { fontSize = std::clamp(fontSize + 1.0f, 8.0f, 24.0f); }
 	inline void decreaseFontSIze() { fontSize = std::clamp(fontSize - 1.0f, 8.0f, 24.0f); }
 
-	bool autocomplete = false;
+	bool autocomplete = true;   // on by default; underpins identifier navigation
 
 	// Script runner state — F5 spawns the interpreter for the current document
 	// in a background thread and streams stdout/stderr into a docked "Output"
@@ -341,7 +341,7 @@ private:
 	// enum/record, method signatures, #define, etc.). Opens the first hit at
 	// the matching line. Works for languages the in-file trie doesn't cover
 	// (notably C# cross-file lookups).
-	void goToDefinitionProjectWide(const std::string& word);
+	void goToDefinitionProjectWide(const std::string& word, bool declaration = false);
 
 	// Recents — MRU lists of recently opened files and projects.
 	// Capped at 20 entries each, persisted in settings.

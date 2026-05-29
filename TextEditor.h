@@ -221,6 +221,53 @@ public:
 		return document.getSectionText(s, e);
 	}
 
+	// Qualified name at a (line, column): the word, extended across `.` and
+	// `::` separators (and `->`) so `System.Diagnostics.Process` /
+	// `std::vector` come back whole instead of a single segment. Used for
+	// namespaced go-to-definition.
+	std::string GetQualifiedWordAt(int line, int column) const {
+		std::string ln = GetLineText(line);
+		if (ln.empty()) return {};
+		int n = static_cast<int>(ln.size());
+		if (column < 0) column = 0;
+		if (column > n) column = n;
+		auto isIdent = [](char c) {
+			return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+			       (c >= '0' && c <= '9') || c == '_';
+		};
+		// A separator is `.`, or `::`, or `->` joining two identifier chars.
+		auto sepLenAt = [&](int i) -> int {       // length of separator starting at i, else 0
+			if (i < 0 || i >= n) return 0;
+			if (ln[i] == '.') return 1;
+			if (ln[i] == ':' && i + 1 < n && ln[i + 1] == ':') return 2;
+			if (ln[i] == '-' && i + 1 < n && ln[i + 1] == '>') return 2;
+			return 0;
+		};
+		// Expand left.
+		int start = column;
+		while (start > 0) {
+			if (isIdent(ln[start - 1])) { --start; continue; }
+			int s2 = sepLenAt(start - 2 >= 0 && ln[start-1]==':' ? start - 2 : start - 1);
+			// step back over a separator only if an identifier char precedes it
+			int sl = (ln[start-1]=='.') ? 1
+			       : (start-2>=0 && ln[start-1]==':' && ln[start-2]==':') ? 2
+			       : (start-2>=0 && ln[start-1]=='>' && ln[start-2]=='-') ? 2 : 0;
+			(void)s2;
+			if (sl > 0 && start - sl - 1 >= 0 && isIdent(ln[start - sl - 1])) { start -= sl; continue; }
+			break;
+		}
+		// Expand right.
+		int end = column;
+		while (end < n) {
+			if (isIdent(ln[end])) { ++end; continue; }
+			int sl = sepLenAt(end);
+			if (sl > 0 && end + sl < n && isIdent(ln[end + sl])) { end += sl; continue; }
+			break;
+		}
+		if (end <= start) return GetWordAt(line, column);
+		return ln.substr(start, end - start);
+	}
+
 
 	// scrolling support
 	enum class Scroll {

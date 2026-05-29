@@ -861,11 +861,38 @@ void Editor::restoreProjectSession(const std::filesystem::path& root)
 	}
 }
 
+// Walk up from a path to the outermost enclosing repository root, so opening a
+// project file buried inside a larger tree (e.g. imgui/examples/foo) roots the
+// nav panel at the whole project (imgui/) where its local dependencies live.
+// Strategy: the outermost ancestor that contains a `.git` entry; failing that,
+// the highest ancestor still holding a solution/workspace-level marker; else the
+// folder itself.
+static std::filesystem::path resolveOutermostRoot(std::filesystem::path start)
+{
+	std::error_code ec;
+	if (std::filesystem::is_regular_file(start, ec)) start = start.parent_path();
+	std::filesystem::path best = start;
+	std::filesystem::path cur  = start;
+	for (int i = 0; i < 64; ++i) {
+		// Outermost wins: keep overwriting `best` as we climb past each marker.
+		if (std::filesystem::exists(cur / ".git", ec) ||
+			std::filesystem::exists(cur / ".hg", ec)  ||
+			std::filesystem::exists(cur / ".svn", ec))
+			best = cur;
+		if (!cur.has_parent_path() || cur.parent_path() == cur) break;
+		cur = cur.parent_path();
+	}
+	return best;
+}
+
 void Editor::setProjectRoot(const std::filesystem::path& p)
 {
 	std::error_code ec;
 	auto abs = std::filesystem::absolute(p, ec);
 	if (ec || abs.empty()) return;
+	// Promote to the outermost repo root so nested project files open the whole
+	// project (with its local deps) rather than just the leaf folder.
+	abs = resolveOutermostRoot(abs);
 	// If we're switching projects, snapshot the outgoing project's open tabs
 	// so reopening that project later restores the workspace.
 	if (!projectRoot.empty()) {
@@ -1223,6 +1250,51 @@ static void renderDirNode(Editor* self,
 	}
 }
 
+// Flat view: every file under root in one alphabetical list (no folder
+// hierarchy), honoring the same filters. Click opens; hover shows the relative
+// path; right-click sets the context path for the shared popup.
+static void navRenderFlat(Editor* self, const std::filesystem::path& root,
+                          bool showDot, std::string& contextPath)
+{
+	std::error_code ec;
+	std::vector<std::filesystem::path> files;
+	int budget = 20000;
+	for (auto it = std::filesystem::recursive_directory_iterator(
+			root, std::filesystem::directory_options::skip_permission_denied, ec);
+		 it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+		if (ec) { ec.clear(); continue; }
+		auto name = it->path().filename().string();
+		if (it->is_directory(ec)) {
+			bool dotdir = !showDot && !name.empty() && name[0] == '.';
+			if (dotdir || self->navIsExcluded(it->path())) it.disable_recursion_pending();
+			continue;
+		}
+		if (--budget < 0) break;
+		if (!showDot && !name.empty() && name[0] == '.') continue;
+		if (self->navIsExcluded(it->path())) continue;
+		if (self->navIsCodeOnly() && !self->navIsCodeFile(it->path())) continue;
+		files.push_back(it->path());
+	}
+	std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
+		auto an = a.filename().string(), bn = b.filename().string();
+		std::transform(an.begin(), an.end(), an.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+		std::transform(bn.begin(), bn.end(), bn.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+		return an < bn;
+	});
+	for (size_t i = 0; i < files.size(); ++i) {
+		ImGui::PushID((int)i);
+		auto name = files[i].filename().string();
+		if (ImGui::Selectable(name.c_str())) self->openFile(files[i].string());
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
+			std::error_code rec;
+			auto rel = std::filesystem::relative(files[i], root, rec);
+			ImGui::SetTooltip("%s", (rec ? files[i] : rel).string().c_str());
+		}
+		if (ImGui::BeginPopupContextItem()) { contextPath = files[i].string(); ImGui::EndPopup(); }
+		ImGui::PopID();
+	}
+}
+
 void Editor::renderNavigationPanel()
 {
 	if (!navPanelVisible) return;
@@ -1245,14 +1317,17 @@ void Editor::renderNavigationPanel()
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show items you've excluded so you can re-include them.");
 		ImGui::SameLine();
 		ImGui::Checkbox("flat", &navFlatFiles);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse folder contents — show folders without expanding files.");
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flat view — every file in one list, no folder nesting.");
 		ImGui::Separator();
 
 		navContextPath.clear();
 		std::error_code ec;
 		if (std::filesystem::is_directory(root, ec)) {
-			renderDirNode(this, root, 0, navShowDotFiles,
-				navContextPath, navRenameTarget, navRenameBuf, navPendingDelete);
+			if (navFlatFiles)
+				navRenderFlat(this, root, navShowDotFiles, navContextPath);
+			else
+				renderDirNode(this, root, 0, navShowDotFiles,
+					navContextPath, navRenameTarget, navRenameBuf, navPendingDelete);
 		} else {
 			ImGui::TextDisabled("(no project root set)");
 		}
@@ -1540,9 +1615,24 @@ void Editor::renderHoverTooltip(TabDocument& t)
 // for C# (class/struct/interface/record/enum/method), C/C++ (struct/class/
 // typedef/method/#define), Python (def/class), Lua (function/local), JS/TS
 // (function/class/const/let).
-void Editor::goToDefinitionProjectWide(const std::string& word)
+void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration)
 {
 	if (word.empty()) return;
+
+	// Qualified names (System.Diagnostics.Process, std::vector, foo->bar): grep
+	// for the LAST segment (the type/member name that actually appears at a
+	// definition site); keep the full name for messaging + filename matching.
+	std::string symbol = word;
+	{
+		size_t cut = symbol.size();
+		for (size_t i = 0; i < symbol.size(); ++i) {
+			if (symbol[i] == '.') cut = i + 1;
+			else if (symbol[i] == ':' && i + 1 < symbol.size() && symbol[i+1] == ':') cut = i + 2;
+			else if (symbol[i] == '-' && i + 1 < symbol.size() && symbol[i+1] == '>') cut = i + 2;
+		}
+		if (cut < symbol.size()) symbol = symbol.substr(cut);
+	}
+	if (symbol.empty()) return;
 
 	// Search root: projectRoot if set, else the active doc's directory.
 	std::filesystem::path root = projectRoot;
@@ -1610,6 +1700,18 @@ void Editor::goToDefinitionProjectWide(const std::string& word)
 		if (!extOk(ext)) continue;
 		if (navIsExcluded(it->path())) continue;
 
+		// File-level bias. Declaration mode favours headers; definition mode
+		// favours implementation files. A file named after the symbol
+		// (User.cs / User.h for "User") gets a bonus — "go to the file".
+		bool isHeader = (ext == ".h" || ext == ".hpp" || ext == ".hxx" || ext == ".hh");
+		int fileBonus = 0;
+		if (declaration && isHeader) fileBonus += 8;
+		if (!declaration && !isHeader) fileBonus += 4;
+		{
+			auto stem = it->path().stem().string();
+			if (stem == symbol) fileBonus += 6;
+		}
+
 		std::ifstream f(it->path());
 		if (!f.is_open()) continue;
 		std::string line;
@@ -1619,13 +1721,13 @@ void Editor::goToDefinitionProjectWide(const std::string& word)
 			// Strip leading whitespace for cheap pattern checks.
 			size_t s = 0;
 			while (s < line.size() && (line[s] == ' ' || line[s] == '\t')) ++s;
-			// Search for the word and check it sits at a word boundary.
+			// Whole-word scan for the (last-segment) symbol.
 			size_t pos = 0;
-			while ((pos = line.find(word, pos)) != std::string::npos) {
+			while ((pos = line.find(symbol, pos)) != std::string::npos) {
 				bool leftOk  = (pos == 0) || isWordBoundary(line[pos - 1]);
-				bool rightOk = (pos + word.size() >= line.size())
-					|| isWordBoundary(line[pos + word.size()]);
-				if (!leftOk || !rightOk) { ++pos; continue; }
+				bool rightOk = (pos + symbol.size() >= line.size())
+					|| isWordBoundary(line[pos + symbol.size()]);
+				if (!leftOk || !rightOk) { pos += 1; continue; }
 
 				int score = 0;
 				// Strong signals: a definition keyword immediately to the left.
@@ -1641,26 +1743,19 @@ void Editor::goToDefinitionProjectWide(const std::string& word)
 						}
 					}
 				}
-				// Medium: #define <word>, %macro <word>, etc.
+				// Medium: #define <symbol>.
 				if (score == 0 && s < line.size() && line[s] == '#') {
 					if (line.find("#define", s) == s) score = 80;
 				}
-				// Medium-weak: `<type> <word>(` — likely a method/function signature.
+				// Medium-weak: `<type> <symbol>(` — a method/function signature.
 				if (score == 0) {
-					size_t afterWord = pos + word.size();
-					// Skip spaces, then look for '('
-					size_t p = afterWord;
+					size_t p = pos + symbol.size();
 					while (p < line.size() && line[p] == ' ') ++p;
-					if (p < line.size() && line[p] == '(') {
-						// Require something before that looks like a return type
-						// (an identifier-ish token).
-						if (pos > 0) score = 50;
-					}
+					if (p < line.size() && line[p] == '(' && pos > 0) score = 50;
 				}
-				// Weak signal: `<word> = ` style assignment in the leading column
-				// (Python / Lua / JS / TS top-level definitions).
+				// Weak: `<symbol> = ` top-level assignment.
 				if (score == 0 && pos == s) {
-					size_t p = pos + word.size();
+					size_t p = pos + symbol.size();
 					while (p < line.size() && line[p] == ' ') ++p;
 					if (p < line.size() && line[p] == '=' &&
 						(p + 1 >= line.size() || line[p + 1] != '='))
@@ -1669,6 +1764,16 @@ void Editor::goToDefinitionProjectWide(const std::string& word)
 					}
 				}
 				if (score > 0) {
+					// Declaration vs definition tie-break: a line ending in ';'
+					// is a prototype/declaration; one with '{' is a body. Nudge
+					// toward the requested kind.
+					bool endsSemicolon = !line.empty() && line.find_last_not_of(" \t") != std::string::npos
+						&& line[line.find_last_not_of(" \t")] == ';';
+					bool hasBrace = line.find('{', pos) != std::string::npos;
+					if (declaration && endsSemicolon) score += 12;
+					if (!declaration && hasBrace)     score += 12;
+					score += fileBonus;
+
 					Hit h;
 					h.path    = it->path();
 					h.line    = lineNo - 1;   // 0-based for SetCursor
@@ -1676,13 +1781,14 @@ void Editor::goToDefinitionProjectWide(const std::string& word)
 					h.preview = line.substr(0, (std::min)((size_t) 200, line.size()));
 					hits.push_back(std::move(h));
 				}
-				pos += word.size();
+				pos += symbol.size();
 			}
 		}
 	}
 
 	if (hits.empty()) {
-		showError("No definition of '" + word + "' found under " + root.string());
+		showError(std::string("No ") + (declaration ? "declaration" : "definition")
+			+ " of '" + word + "' found under " + root.string());
 		return;
 	}
 	// Best score wins; ties broken by first file encountered.
@@ -2056,6 +2162,7 @@ void Editor::loadSettings()
 			else if (k == "complete_pairs") prefCompletePairs = (v == "1" || v == "true");
 			else if (k == "show_fps")       prefShowFps       = (v == "1" || v == "true");
 			else if (k == "ctrl_scroll_zoom") prefCtrlScrollZoom = (v == "1" || v == "true");
+			else if (k == "autocomplete")   autocomplete      = (v == "1" || v == "true");
 			else if (k == "invert_pan")     prefInvertPan     = (v == "1" || v == "true");
 			else if (k == "word_wrap")      prefWordWrap      = (v == "1" || v == "true");
 			else if (k == "wrap_width")     prefWrapWidthPx   = std::atoi(v.c_str());
@@ -2140,6 +2247,7 @@ void Editor::saveSettings()
 	f << "complete_pairs="   << (prefCompletePairs  ? "1" : "0") << "\n";
 	f << "show_fps="         << (prefShowFps        ? "1" : "0") << "\n";
 	f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
+	f << "autocomplete="     << (autocomplete       ? "1" : "0") << "\n";
 	f << "invert_pan="       << (prefInvertPan      ? "1" : "0") << "\n";
 	f << "word_wrap="        << (prefWordWrap       ? "1" : "0") << "\n";
 	f << "wrap_width="       << prefWrapWidthPx << "\n";
@@ -3375,19 +3483,25 @@ void Editor::renderDocumentWindow(TabDocument& t)
 											{
 												// Preserve any existing selection — only auto-select the word
 												// under the cursor when the user right-clicked on bare text.
-												// Otherwise multi-select / range selections get squashed down
-												// to a single word every time the user opens the menu.
 												if (!t.editor.AnyCursorHasSelection())
 												{
 													t.editor.SelectWord(line, column);
 												}
-												// Symbol navigation. These are always offered (not gated on the
-												// trie) and use the project-wide grep search, which works across
-												// files and languages — the in-file trie jump was unreliable
-												// (and outright missed C# cross-file symbols).
+												// Qualified name (System.Diagnostics, std::vector) for the
+												// navigation items; plain word for in-file occurrence ops.
+												std::string qualified = t.editor.GetQualifiedWordAt(line, column);
+												if (qualified.empty()) qualified = word;
+
+												// Definition = where it's defined (bodies / .cpp). Declaration =
+												// where it's declared (prototypes / headers). Both project-wide,
+												// both handle namespaced/qualified names.
 												if (ImGui::MenuItem("Go to Definition"))
 												{
-													goToDefinitionProjectWide(word);
+													goToDefinitionProjectWide(qualified, false);
+												}
+												if (ImGui::MenuItem("Go to Declaration"))
+												{
+													goToDefinitionProjectWide(qualified, true);
 												}
 												if (ImGui::MenuItem("Find References"))
 												{
