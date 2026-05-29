@@ -118,6 +118,10 @@ int main(int argc, char** argv) {
 		ImGuiStyle& style = ImGui::GetStyle();
 		style.WindowPadding.x = 12.0f;   // default 8 — adds a right-edge gap to the scrollbar
 		style.ScrollbarSize   = 15.0f;   // slightly chunkier, easier to grab
+		// Raise the floor on how narrow a docked pane (and thus its tab) can be
+		// squeezed — stops document tabs collapsing into unreadable slivers when
+		// several are split side by side. Default is 32x32.
+		style.WindowMinSize   = ImVec2(140.0f, 80.0f);
 	}
 
 	// setup platform/renderer backends
