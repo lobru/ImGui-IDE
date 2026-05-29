@@ -51,6 +51,7 @@
 // can persist favourites at any quit/teardown path.
 static void saveFileDialogPlaces();
 static void populateFileDialogPlaces();
+static std::filesystem::path resolveOutermostRoot(std::filesystem::path start);
 
 
 //
@@ -800,7 +801,7 @@ void Editor::toggleHeaderSource()
 				return;
 			}
 		}
-		// 2. Exists on disk? Open it.
+		// 2. Exists on disk next to the source? Open it.
 		std::error_code ec;
 		if (std::filesystem::exists(candidate, ec))
 		{
@@ -808,7 +809,52 @@ void Editor::toggleHeaderSource()
 			return;
 		}
 	}
-	// 3. Nothing found — silently no-op (could add status message later).
+
+	// 3. Project-tree fallback — handles include/ vs src/ splits (the common
+	// case the same-dir search misses). Search the project root (or the doc's
+	// repo root) for <stem><candidateExt>; pick the match whose path shares the
+	// longest prefix with the source file (nearest sibling tree wins).
+	{
+		std::filesystem::path searchRoot = projectRoot;
+		if (searchRoot.empty()) searchRoot = resolveOutermostRoot(p.parent_path());
+		std::error_code ec;
+		std::unordered_set<std::string> wanted;
+		for (auto& candExt : candidates) wanted.insert(p.stem().string() + candExt);
+
+		std::filesystem::path best;
+		size_t bestCommon = 0;
+		auto srcStr = p.generic_string();
+		int budget = 40000;
+		for (auto it = std::filesystem::recursive_directory_iterator(
+				searchRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+			 it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+			if (ec) { ec.clear(); continue; }
+			if (it->is_directory(ec)) {
+				auto n = it->path().filename().string();
+				if (n == ".git" || n == "node_modules" || n == "out" || n == "build" ||
+					n == "obj" || n == "bin" || n == ".vs") it.disable_recursion_pending();
+				continue;
+			}
+			if (--budget < 0) break;
+			if (!wanted.count(it->path().filename().string())) continue;
+			// Longest common path prefix with the source = nearest relative.
+			auto cand = it->path().generic_string();
+			size_t common = 0;
+			while (common < cand.size() && common < srcStr.size() && cand[common] == srcStr[common]) ++common;
+			if (best.empty() || common > bestCommon) { best = it->path(); bestCommon = common; }
+		}
+		if (!best.empty()) {
+			// Re-check open tabs for the resolved path before opening.
+			for (size_t i = 0; i < tabs.size(); ++i) {
+				if (std::filesystem::path(tabs[i]->filename) == best) {
+					activeTab = i; tabs[i]->wantFocus = true; return;
+				}
+			}
+			openFile(best.string());
+			return;
+		}
+	}
+	// 4. Nothing found — silently no-op.
 }
 
 
