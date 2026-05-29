@@ -181,6 +181,28 @@ private:
 	std::shared_ptr<ScriptState> script = std::make_shared<ScriptState>();
 	void renderScriptOutputWindow();
 	void runScriptForDoc();
+
+	// Per-project symbol index. Built once in the background when a project is
+	// opened (and refreshed on demand), it caches every identifier seen + the
+	// definition sites for each symbol, so autocomplete and Go-to-Definition
+	// read a table instead of grepping the tree each time. Lives in a shared_ptr
+	// (same survival reason as ScriptState) and is published atomically under a
+	// mutex after each build. `gen` discards a stale build when the project
+	// changes mid-index.
+	struct DefSite { std::string file; int line; int score; };
+	struct ProjectIndex {
+		std::vector<std::string>                              identifiers; // sorted unique
+		std::unordered_map<std::string, std::vector<DefSite>> defs;        // symbol -> sites
+	};
+	struct IndexState {
+		std::mutex                          mutex;
+		std::shared_ptr<const ProjectIndex> index;
+		std::atomic<bool>                   building{false};
+		std::atomic<int>                    gen{0};
+	};
+	std::shared_ptr<IndexState> indexState = std::make_shared<IndexState>();
+	void rebuildProjectIndex();                              // spawn background build
+	std::shared_ptr<const ProjectIndex> indexSnapshot();     // thread-safe read
 	// F6: walk up from the active doc to find a project build script
 	// (build.bat / build.ps1 / build.sh / Makefile / CMakeLists.txt) and run it.
 	void runProjectBuild();

@@ -953,6 +953,8 @@ void Editor::setProjectRoot(const std::filesystem::path& p)
 	navPanelVisible = true;
 	rememberRecentProject(abs.string());
 	restoreProjectSession(abs);
+	// Kick off the background symbol index for this project (autocomplete + nav).
+	rebuildProjectIndex();
 	// Persist immediately so a crash/quit doesn't lose the session.
 	saveSettings();
 }
@@ -1304,21 +1306,35 @@ static void navRenderFlat(Editor* self, const std::filesystem::path& root,
 {
 	std::error_code ec;
 	std::vector<std::filesystem::path> files;
+	std::unordered_set<std::string> seen;   // dedupe by canonical path
 	int budget = 20000;
+	auto isBuildDir = [](const std::string& n) {
+		return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
+		       n == "bin" || n == "obj" || n == "out" || n == "build" ||
+		       n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
+		       n == "__pycache__" || n == "packages" || n == "Debug" || n == "Release";
+	};
 	for (auto it = std::filesystem::recursive_directory_iterator(
 			root, std::filesystem::directory_options::skip_permission_denied, ec);
 		 it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
 		if (ec) { ec.clear(); continue; }
 		auto name = it->path().filename().string();
 		if (it->is_directory(ec)) {
+			// Don't descend into build/vendor/vcs trees — that's what produced
+			// junk + duplicate copies of project files in the flat list.
 			bool dotdir = !showDot && !name.empty() && name[0] == '.';
-			if (dotdir || self->navIsExcluded(it->path())) it.disable_recursion_pending();
+			if (dotdir || isBuildDir(name) || self->navIsExcluded(it->path()))
+				it.disable_recursion_pending();
 			continue;
 		}
 		if (--budget < 0) break;
+		if (!it->is_regular_file(ec)) continue;            // actual files only
 		if (!showDot && !name.empty() && name[0] == '.') continue;
 		if (self->navIsExcluded(it->path())) continue;
-		if (self->navIsCodeOnly() && !self->navIsCodeFile(it->path())) continue;
+		// Flat view shows project source/content only.
+		if (!self->navIsCodeFile(it->path())) continue;
+		auto canon = std::filesystem::weakly_canonical(it->path(), ec);
+		if (!seen.insert((ec ? it->path() : canon).string()).second) continue;  // no dupes
 		files.push_back(it->path());
 	}
 	std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
@@ -1591,6 +1607,123 @@ void Editor::splitActiveTabRight()
 }
 
 
+// ── Per-project symbol index ─────────────────────────────────────────
+
+std::shared_ptr<const Editor::ProjectIndex> Editor::indexSnapshot()
+{
+	std::lock_guard<std::mutex> lock(indexState->mutex);
+	return indexState->index;
+}
+
+// Background walk of the project's code files. Collects every identifier token
+// (for autocomplete) and the definition sites of each symbol (for Go-to-Def).
+// Published atomically when done; a newer build (gen) supersedes an older one.
+void Editor::rebuildProjectIndex()
+{
+	if (projectRoot.empty()) return;
+	auto st = indexState;                       // by value → outlives Editor
+	if (st->building.exchange(true)) return;    // one build at a time
+	int gen = ++st->gen;
+	std::filesystem::path root = projectRoot;
+
+	std::thread([st, gen, root]() {
+		auto extOk = [](const std::string& e) {
+			static const std::unordered_set<std::string> ok = {
+				".c",".h",".cpp",".hpp",".cxx",".hxx",".cc",".hh",".m",".mm",".inl",
+				".cs",".vb",".fs",".fsx",".java",".kt",".kts",".scala",".groovy",
+				".py",".pyw",".rb",".php",".pl",".js",".jsx",".ts",".tsx",".mjs",".cjs",
+				".go",".rs",".swift",".lua",".sh",".ps1",".psm1",".sql",".r",".jl",".dart",
+			};
+			return ok.count(e) != 0;
+		};
+		auto skipDir = [](const std::string& n) {
+			return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
+			       n == "bin" || n == "obj" || n == "out" || n == "build" ||
+			       n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
+			       n == "__pycache__" || n == "packages";
+		};
+		static const std::unordered_set<std::string> defKw = {
+			"class","struct","interface","enum","record","namespace","trait",
+			"typedef","type","def","fn","function","module","protocol","actor","union",
+		};
+		auto isIdentStart = [](char c){ return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||c=='_'; };
+		auto isIdent      = [](char c){ return (c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'; };
+
+		auto idx = std::make_shared<ProjectIndex>();
+		std::unordered_set<std::string> idset;
+		std::error_code ec;
+		int budget = 12000;
+
+		for (auto it = std::filesystem::recursive_directory_iterator(
+				root, std::filesystem::directory_options::skip_permission_denied, ec);
+			 it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+		{
+			if (gen != st->gen.load()) { st->building = false; return; }   // superseded
+			if (ec) { ec.clear(); continue; }
+			if (it->is_directory(ec)) {
+				if (skipDir(it->path().filename().string())) it.disable_recursion_pending();
+				continue;
+			}
+			if (--budget < 0) break;
+			auto ext = it->path().extension().string();
+			std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+			if (!extOk(ext)) continue;
+
+			std::ifstream f(it->path());
+			if (!f.is_open()) continue;
+			std::string fileStr = it->path().string();
+			std::string line;
+			int lineNo = 0;
+			while (std::getline(f, line)) {
+				int curLine = lineNo++;
+				size_t n = line.size();
+				size_t lead = 0;
+				while (lead < n && (line[lead] == ' ' || line[lead] == '\t')) ++lead;
+				bool hashLine = lead < n && line[lead] == '#';
+
+				std::string prevTok;
+				size_t i = 0;
+				bool firstTok = true;
+				while (i < n) {
+					if (!isIdentStart(line[i])) { ++i; continue; }
+					size_t s2 = i;
+					while (i < n && isIdent(line[i])) ++i;
+					std::string tok = line.substr(s2, i - s2);
+					idset.insert(tok);
+
+					int score = 0;
+					if (defKw.count(prevTok)) score = 100;                 // class/def/... NAME
+					else if (hashLine && prevTok == "define") score = 80;  // #define NAME
+					else {
+						size_t p = i; while (p < n && line[p] == ' ') ++p;
+						if (p < n && line[p] == '(' && !firstTok) score = 50;   // type NAME(
+						else if (firstTok && s2 == lead) {                       // NAME = at col0
+							size_t q = i; while (q < n && line[q] == ' ') ++q;
+							if (q < n && line[q] == '=' && (q+1 >= n || line[q+1] != '=')) score = 30;
+						}
+					}
+					if (score > 0) {
+						auto& v = idx->defs[tok];
+						if (v.size() < 32) v.push_back({ fileStr, curLine, score });   // cap per symbol
+					}
+					prevTok = tok;
+					firstTok = false;
+				}
+			}
+		}
+
+		idx->identifiers.assign(idset.begin(), idset.end());
+		std::sort(idx->identifiers.begin(), idx->identifiers.end());
+
+		if (gen == st->gen.load()) {
+			std::lock_guard<std::mutex> lock(st->mutex);
+			st->index = idx;
+		}
+		st->building = false;
+	}).detach();
+}
+
+
 // ── Hover hints + Find References (imgui-bundle style) ──────────────
 
 void Editor::renderHoverTooltip(TabDocument& t)
@@ -1686,6 +1819,28 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 		root = std::filesystem::path(doc().filename).parent_path();
 	}
 	if (root.empty()) root = std::filesystem::current_path();
+
+	// Fast path: the prebuilt project index already knows the definition sites.
+	// (Definition mode only — the grep fallback below applies the header/body
+	// bias that "Go to Declaration" relies on.)
+	if (!declaration) {
+		if (auto idx = indexSnapshot()) {
+			auto it = idx->defs.find(symbol);
+			if (it != idx->defs.end() && !it->second.empty()) {
+				const DefSite* best = nullptr;
+				for (auto& d : it->second) if (!best || d.score > best->score) best = &d;
+				if (best) {
+					openFile(best->file);
+					if (!tabs.empty()) {
+						auto& e = doc().editor;
+						e.SetCursor(best->line, 0);
+						e.ScrollToLine(best->line, TextEditor::Scroll::alignMiddle);
+					}
+					return;
+				}
+			}
+		}
+	}
 
 	// Definition patterns — checked in order; first match wins. Keep these
 	// language-agnostic where possible.
@@ -4662,4 +4817,9 @@ void Editor::buildAutocompleteTrie(TabDocument& t)
 		for (auto& word : language->identifiers)  t.trie.insert(word);
 	}
 	t.editor.IterateIdentifiers([&](const std::string& id) { t.trie.insert(id); });
+	// Project-wide identifiers from the background index — so autocomplete
+	// suggests symbols defined anywhere in the project, not just this file.
+	if (auto idx = indexSnapshot()) {
+		for (auto& id : idx->identifiers) t.trie.insert(id);
+	}
 }
