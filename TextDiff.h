@@ -103,6 +103,9 @@ private:
 	float rightTextPos;
 	float rightTextEnd;
 	float textScroll;
+	// Right-edge gutter inside each text column so glyphs don't kiss the
+	// next column's line-number strip.
+	static constexpr float textRightPadding = 10.0f;
 
 	// split string into lines
 	void splitLines(std::vector<std::string_view>& result, const std::string_view& text);

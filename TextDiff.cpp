@@ -266,11 +266,16 @@ void TextDiff::renderSideBySide(const char* title, const ImVec2& size, bool bord
 	rightTextPos = rightLineNumberPos + rightLineNumberWidth;
 	rightTextEnd = rightTextPos + textColumnWidth;
 
+	// Visible text width is the column minus a small right gutter so glyphs
+	// don't kiss the next column's line-number strip. The clip rects in
+	// renderSideBySideText subtract the same padding for symmetry.
+	float usableTextWidth = std::max(0.0f, textColumnWidth - textRightPadding);
+
 	visibleLines = std::max(static_cast<int>(std::ceil(visibleSize.y / glyphSize.y)), 0);
-	visibleColumns = std::max(static_cast<int>(std::ceil(textColumnWidth / glyphSize.x)), 0);
+	visibleColumns = std::max(static_cast<int>(std::ceil(usableTextWidth / glyphSize.x)), 0);
 
 	firstVisibleColumn = std::max(static_cast<int>(std::floor(textScroll / glyphSize.x)), 0);
-	lastVisibleColumn = static_cast<int>(std::floor((textScroll + textColumnWidth) / glyphSize.x));
+	lastVisibleColumn = static_cast<int>(std::floor((textScroll + usableTextWidth) / glyphSize.x));
 	firstVisibleLine = std::max(static_cast<int>(std::floor(ImGui::GetScrollY() / glyphSize.y)), 0);
 	lastVisibleLine = std::min(static_cast<int>(std::floor((ImGui::GetScrollY() + visibleSize.y) / glyphSize.y)), static_cast<int>(lineInfo.size() - 1));
 
@@ -347,8 +352,10 @@ void TextDiff::renderSideBySideText() {
 	auto yTop = drawList->GetClipRectMin().y;
 	auto yBottom = drawList->GetClipRectMax().y;
 
-	// render left text
-	drawList->PushClipRect(ImVec2(leftTextPos, yTop), ImVec2(rightLineNumberPos, yBottom), false);
+	// render left text — pull the clip in by textRightPadding so glyphs
+	// don't run into the next column's line-number strip.
+	drawList->PushClipRect(ImVec2(leftTextPos, yTop),
+		ImVec2(rightLineNumberPos - textRightPadding, yBottom), false);
 
 	for (auto i = firstVisibleLine; i <= lastVisibleLine; i++) {
 		auto& line = lineInfo[i];
@@ -367,8 +374,9 @@ void TextDiff::renderSideBySideText() {
 
 	drawList->PopClipRect();
 
-	// render right text
-	drawList->PushClipRect(ImVec2(rightTextPos, yTop), ImVec2(rightTextEnd, yBottom), false);
+	// render right text — same right gutter as the left column.
+	drawList->PushClipRect(ImVec2(rightTextPos, yTop),
+		ImVec2(rightTextEnd - textRightPadding, yBottom), false);
 
 	for (auto i = firstVisibleLine; i <= lastVisibleLine; i++) {
 		auto& line = lineInfo[i];

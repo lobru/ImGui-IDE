@@ -86,6 +86,15 @@ public:
 	inline void SetMiddleMousePanMode() { panMode = true; }
 	inline void SetMiddleMouseScrollMode() { panMode = false; }
 	inline bool IsMiddleMousePanMode() const { return panMode; }
+	inline void SetPanInverted(bool value) { panInverted = value; }
+	inline bool IsPanInverted() const { return panInverted; }
+	// Word wrap. When on, long lines wrap to the view width (or wrapWidthPx if
+	// > 0) at word boundaries; horizontal scrolling is disabled. Off by default
+	// — the normal column-grid path is unchanged when this is false.
+	inline void SetWordWrap(bool value) { wordWrap = value; }
+	inline bool IsWordWrap() const { return wordWrap; }
+	inline void SetWrapWidth(float px) { wrapWidthPx = px; }
+	inline float GetWrapWidth() const { return wrapWidthPx; }
 	inline void SetFoldingEnabled(bool enabled) { foldRanges.foldingEnabled = enabled; }
 	inline bool IsFoldingEnabled() const { return foldRanges.foldingEnabled; }
 
@@ -192,12 +201,25 @@ public:
 
 	inline CursorPosition GetMainCursorPosition() const { CursorPosition p; getCursor(p.line, p.column, cursors.getMainIndex()); return p; }
 	inline CursorPosition GetCurrentCursorPosition() const { CursorPosition p; getCursor(p.line, p.column, cursors.getCurrentIndex()); return p; }
+	// Text of whatever the user has highlighted under the current cursor.
+	// Empty when there's no selection.
+	inline std::string GetCurrentSelectionText() const { return getCursorText(cursors.getCurrentIndex()); }
 	inline CursorPosition GetCursorPosition(size_t cursor) const { CursorPosition p; getCursor(p.line, p.column, cursor); return p; }
 	inline CursorSelection GetCursorSelection(size_t cursor) const { CursorSelection s; getCursor(s.start.line, s.start.column, s.end.line, s.end.column, cursor); return s; }
 	inline CursorSelection GetMainCursorSelection() const { return GetCursorSelection(cursors.getMainIndex()); }
 
 	// get the word at a screen position
 	std::string GetWordAtScreenPos(const ImVec2& screenPos) const;
+	// Extract the word at a (line, column) text coordinate. Used by the
+	// right-click context-menu callback, which receives the click position in
+	// text coords — screenPos-based lookup gets stale by the time the menu's
+	// MenuItem fires (mouse has moved onto the menu).
+	inline std::string GetWordAt(int line, int column) const {
+		auto c = document.normalizeCoordinate(Coordinate(line, column));
+		auto s = document.findWordStart(c, true);
+		auto e = document.findWordEnd(c, true);
+		return document.getSectionText(s, e);
+	}
 
 
 	// scrolling support
@@ -521,6 +543,7 @@ public:
 		static const Language* Json();
 		static const Language* Markdown();
 		static const Language* Sql();
+		static const Language* Ini();
 
 		// Load a language definition from a simple key=value text file. Lines are
 		//   key = value
@@ -1359,6 +1382,7 @@ protected:
 	void renderMarkers();
 	void renderMatchingBrackets();
 	void renderText();
+	void renderTextWrapped();   // word-wrap render path (text + selection + cursors)
 	void renderCursors();
 	void renderMargin();
 	void renderLineNumbers();
@@ -1572,9 +1596,22 @@ protected:
 	ImWchar completePairCloser = 0;
 	Coordinate completePairLocation;
 	bool panMode = true;
+	bool panInverted = false;
+
+	// Word-wrap state. wrapRows is rebuilt each frame in render() when wordWrap
+	// is on; it is the 1:many visual-row model (one document line → N rows).
+	// Empty / unused when wordWrap is off.
+	bool  wordWrap = false;
+	float wrapWidthPx = 0.0f;        // 0 = wrap to the view width
+	int   wrapColumns = 0;           // computed: chars per row this frame
+	struct WrapRow { int line; int startColumn; int endColumn; };
+	std::vector<WrapRow> wrapRows;
+	void  buildWrapRows();           // (re)compute wrapRows for visible lines
+	int   wrapRowOfCoordinate(const Coordinate& c) const;  // row index for a doc coord
 	bool panning = false;
 	bool scrolling = false;
 	ImVec2 scrollStart;
+	ImVec2 panScrollAnchor;   // screen-space click point; the indicator draws here
 	bool showPanScrollIndicator = true;
 	std::function<void()> delayedChangeCallback;
 	std::chrono::milliseconds delayedChangeDelay;

@@ -186,8 +186,13 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	auto pos = ImGui::GetCursorScreenPos();
 	// scrollable content height = number of visible lines (folded lines collapse)
 	const int totalLines = std::max(getVisualLineCount(), 1);
+	// Right-edge gutter so glyphs never kiss the window border. Applied to:
+	//   - totalSize.x : lets horizontal scroll reveal the trailing space.
+	//   - visibleWidth: makes the last-visible-column calc stop short of the edge.
+	//   - text clip rect: visually clips anything that overshoots.
+	const float rightTextPadding = glyphSize.x * 1.5f;
 	auto totalSize = ImVec2(
-		textOffset + document.getMaxColumn() * glyphSize.x + cursorWidth,
+		textOffset + document.getMaxColumn() * glyphSize.x + cursorWidth + rightTextPadding,
 		totalLines * glyphSize.y
 	);
 
@@ -198,9 +203,27 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	float scrollbarSize = ImGui::GetStyle().ScrollbarSize;
 	verticalScrollBarSize = (totalSize.y > visibleSize.y) ? scrollbarSize : 0.0f;
 	horizontalScrollBarSize = (totalSize.x > visibleSize.x) ? scrollbarSize : 0.0f;
-	visibleWidth = visibleSize.x - textOffset - verticalScrollBarSize;
+	visibleWidth = visibleSize.x - textOffset - verticalScrollBarSize - rightTextPadding;
 	visibleHeight = visibleSize.y - horizontalScrollBarSize;
 	visibleLines = std::max((int)ceil(visibleHeight / glyphSize.y), 0);
+
+	// Word wrap overrides the measurement: rows replace lines as the vertical
+	// unit, and there is no horizontal scroll (content width == view width).
+	if (wordWrap)
+	{
+		float avail = (wrapWidthPx > 0.0f)
+			? wrapWidthPx
+			: (visibleSize.x - textOffset - scrollbarSize - rightTextPadding);
+		wrapColumns = std::max(1, static_cast<int>(avail / glyphSize.x));
+		buildWrapRows();
+		totalSize.x = visibleSize.x;
+		totalSize.y = std::max(static_cast<int>(wrapRows.size()), 1) * glyphSize.y;
+		verticalScrollBarSize = (totalSize.y > visibleSize.y) ? scrollbarSize : 0.0f;
+		horizontalScrollBarSize = 0.0f;
+		visibleWidth = visibleSize.x - textOffset - verticalScrollBarSize - rightTextPadding;
+		visibleHeight = visibleSize.y;
+		visibleLines = std::max((int)ceil(visibleHeight / glyphSize.y), 0);
+	}
 
 	// determine scrolling requirements (uses last frame's firstVisibleLine/Column stored in member vars)
 	float scrollX = -1.0f;
@@ -212,9 +235,15 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	if (ensureCursorIsVisible)
 	{
 		auto cursor = cursors.getCurrent().getInteractiveEnd();
-		int cursorVI = lineToVisualIndex(cursor.line);
-		int firstVI = lineToVisualIndex(firstVisibleLine);
-		int lastVI = lineToVisualIndex(lastVisibleLine);
+		// In wrap mode the vertical unit is the wrapped row; no horizontal scroll.
+		int cursorVI = wordWrap ? wrapRowOfCoordinate(cursor) : lineToVisualIndex(cursor.line);
+		int firstVI  = static_cast<int>(std::floor(ImGui::GetScrollY() / glyphSize.y));
+		int lastVI   = firstVI + std::max(visibleLines - 1, 0);
+		if (!wordWrap)
+		{
+			firstVI = lineToVisualIndex(firstVisibleLine);
+			lastVI  = lineToVisualIndex(lastVisibleLine);
+		}
 
 		if (cursorVI < firstVI)
 		{
@@ -225,13 +254,16 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 			scrollY = std::max(0.0f, (cursorVI + 1.0f) * glyphSize.y - visibleHeight);
 		}
 
-		if (cursor.column < firstVisibleColumn)
+		if (!wordWrap)
 		{
-			scrollX = std::max(0.0f, static_cast<float>(cursor.column) * glyphSize.x);
-		}
-		else if (cursor.column > lastVisibleColumn)
-		{
-			scrollX = std::max(0.0f, (cursor.column + 1.0f) * glyphSize.x - visibleWidth);
+			if (cursor.column < firstVisibleColumn)
+			{
+				scrollX = std::max(0.0f, static_cast<float>(cursor.column) * glyphSize.x);
+			}
+			else if (cursor.column > lastVisibleColumn)
+			{
+				scrollX = std::max(0.0f, (cursor.column + 1.0f) * glyphSize.x - visibleWidth);
+			}
 		}
 
 		ensureCursorIsVisible = false;
@@ -243,18 +275,23 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 		scrollToLineNumber = std::min(scrollToLineNumber, document.lineCount());
 		scrollX = 0.0f;
 
+		// In wrap mode translate the target line to its first wrapped row.
+		int unit = scrollToLineNumber;
+		if (wordWrap)
+			unit = wrapRowOfCoordinate(Coordinate(scrollToLineNumber, 0));
+
 		switch (scrollToAlignment)
 		{
 		case Scroll::alignTop:
-			scrollY = std::max(0.0f, static_cast<float>(scrollToLineNumber) * glyphSize.y);
+			scrollY = std::max(0.0f, static_cast<float>(unit) * glyphSize.y);
 			break;
 
 		case Scroll::alignMiddle:
-			scrollY = std::max(0.0f, static_cast<float>(scrollToLineNumber - visibleLines / 2) * glyphSize.y);
+			scrollY = std::max(0.0f, static_cast<float>(unit - visibleLines / 2) * glyphSize.y);
 			break;
 
 		case Scroll::alignBottom:
-			scrollY = std::max(0.0f, static_cast<float>(scrollToLineNumber - (visibleLines - 1)) * glyphSize.y);
+			scrollY = std::max(0.0f, static_cast<float>(unit - (visibleLines - 1)) * glyphSize.y);
 			break;
 		}
 
@@ -347,17 +384,31 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	showMatchingBracketsChanged = false;
 	languageChanged = false;
 
-	// render editor parts
-	renderSelections();
-	renderMarkers();
-	renderMatchingBrackets();
-	renderMargin();          // <-- moved up so click-to-fold takes effect same frame
-	renderLineNumbers();
-	renderText();
-	renderCursors();
-	renderDecorations();
-	renderScrollbarMiniMap();
-	renderPanScrollIndicator();
+	// render editor parts. Word-wrap uses a single combined pass that draws
+	// line numbers + selection + glyphs + carets from the wrapped-row model;
+	// the line-based decoration passes (markers, brackets, minimap, fold
+	// margin) are skipped in wrap mode since their Y math assumes 1 line = 1
+	// row. (Documented v1 limitation.)
+	if (wordWrap)
+	{
+		// v1: line-based decoration passes (fold margin, markers, brackets,
+		// minimap) are skipped — their Y math assumes 1 line = 1 row.
+		renderTextWrapped();
+		renderPanScrollIndicator();
+	}
+	else
+	{
+		renderSelections();
+		renderMarkers();
+		renderMatchingBrackets();
+		renderMargin();          // <-- moved up so click-to-fold takes effect same frame
+		renderLineNumbers();
+		renderText();
+		renderCursors();
+		renderDecorations();
+		renderScrollbarMiniMap();
+		renderPanScrollIndicator();
+	}
 
 	if (ImGui::BeginPopup("LineNumberContextMenu"))
 	{
@@ -657,11 +708,78 @@ void TextEditor::renderMatchingBrackets()
 
 
 //
+//	TextEditor::buildWrapRows — 1:many visual-row model for word wrap.
+//
+//	Each VISIBLE document line (folding-aware) is split into one or more rows of
+//	at most `wrapColumns` columns, breaking at the last space before the limit
+//	when possible (word wrap) and hard-breaking otherwise. Rows store column
+//	ranges [startColumn, endColumn); the renderer/mouse/cursor map positions by
+//	column membership, so the same model drives all three consistently.
+//
+
+void TextEditor::buildWrapRows()
+{
+	wrapRows.clear();
+	int cols = wrapColumns > 0 ? wrapColumns : 1;
+	int tab = document.getTabSize();
+	int lineCount = document.lineCount();
+
+	for (int line = 0; line < lineCount; ++line)
+	{
+		if (!document[line].visible) continue;       // respect folding
+		auto& ln = document[line];
+		int sz = static_cast<int>(ln.size());
+		if (sz == 0) { wrapRows.push_back({ line, 0, 0 }); continue; }
+
+		int col = 0;
+		int rowStartCol = 0;
+		int lastSpaceCol = -1;                        // column boundary just after a space
+		for (int idx = 0; idx < sz; ++idx)
+		{
+			auto cp = ln[idx].codepoint;
+			int adv = (cp == '\t') ? (tab - (col % tab)) : 1;
+			if (col + adv - rowStartCol > cols && col > rowStartCol)
+			{
+				int breakCol = (lastSpaceCol > rowStartCol) ? lastSpaceCol : col;
+				wrapRows.push_back({ line, rowStartCol, breakCol });
+				rowStartCol = breakCol;
+				lastSpaceCol = -1;
+			}
+			col += adv;
+			if (cp == ' ' || cp == '\t') lastSpaceCol = col;
+		}
+		wrapRows.push_back({ line, rowStartCol, col });
+	}
+	if (wrapRows.empty()) wrapRows.push_back({ 0, 0, 0 });
+}
+
+// Visual-row index containing a document coordinate (the row whose column range
+// covers it; the line's last row when the column is at/after the line end).
+int TextEditor::wrapRowOfCoordinate(const Coordinate& c) const
+{
+	int fallback = 0;
+	for (int r = 0; r < static_cast<int>(wrapRows.size()); ++r)
+	{
+		if (wrapRows[r].line != c.line) continue;
+		fallback = r;
+		bool lastRowOfLine = (r + 1 >= static_cast<int>(wrapRows.size()))
+			|| wrapRows[r + 1].line != c.line;
+		if (c.column >= wrapRows[r].startColumn &&
+			(c.column < wrapRows[r].endColumn || lastRowOfLine))
+			return r;
+	}
+	return fallback;
+}
+
+
+//
 //	TextEditor::renderText
 //
 
 void TextEditor::renderText()
 {
+	if (wordWrap) { renderTextWrapped(); return; }
+
 	auto drawList = ImGui::GetWindowDrawList();
 	ImVec2 cursorScreenPos = ImGui::GetCursorScreenPos();
 	auto tabSize = document.getTabSize();
@@ -676,8 +794,11 @@ void TextEditor::renderText()
 	// a tab boundary, `firstRenderableColumn` is rounded down, so we'd draw
 	// 1-3 columns of glyphs to the LEFT of the text area — which renders
 	// behind the (fixed) line-number gutter. Clip prevents the bleed.
+	// Reserve a glyph-and-a-half on the right so trailing characters don't
+	// kiss the document window's edge.
 	const float gutterRightXText = ImGui::GetWindowPos().x + textOffset;
-	const float windowRightXText = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
+	const float windowRightXText = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x
+		- glyphSize.x * 1.5f - verticalScrollBarSize;
 	drawList->PushClipRect(
 		ImVec2(gutterRightXText, ImGui::GetWindowPos().y),
 		ImVec2(windowRightXText, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y),
@@ -794,6 +915,136 @@ void TextEditor::renderText()
 	}
 
 	drawList->PopClipRect();
+}
+
+
+//
+//	TextEditor::renderTextWrapped — word-wrap render path.
+//
+//	Draws line numbers, selection, glyphs and carets straight from `wrapRows`
+//	(built in render()). Each row occupies one screen line at y = row*glyphSize.y;
+//	a glyph at document column C in row [start,end) is drawn at x =
+//	textOffset + (C - start)*glyphSize.x. The same column→x mapping is used by
+//	the mouse hit-test and cursor movement so all three agree.
+//
+
+void TextEditor::renderTextWrapped()
+{
+	auto drawList = ImGui::GetWindowDrawList();
+	ImVec2 origin = ImGui::GetCursorScreenPos();
+	int rowCount = static_cast<int>(wrapRows.size());
+	if (rowCount == 0) return;
+
+	float scrollY = ImGui::GetScrollY();
+	int firstRow = std::clamp(static_cast<int>(std::floor(scrollY / glyphSize.y)), 0, rowCount - 1);
+	int lastRow  = std::clamp(static_cast<int>(std::floor((scrollY + visibleHeight) / glyphSize.y)), 0, rowCount - 1);
+
+	const float textLeft = origin.x + textOffset;
+	const float winLeft  = ImGui::GetWindowPos().x;
+	const float winTop   = ImGui::GetWindowPos().y;
+	const float winRight = winLeft + ImGui::GetWindowSize().x - glyphSize.x * 1.5f - verticalScrollBarSize;
+	const float winBot   = winTop + ImGui::GetWindowSize().y;
+
+	auto cursorLine = cursors.getCurrent().getInteractiveEnd().line;
+
+	// Line numbers + selection backgrounds first (under the glyphs).
+	for (int r = firstRow; r <= lastRow; ++r)
+	{
+		const WrapRow& wr = wrapRows[r];
+		float y = origin.y + r * glyphSize.y;
+		bool firstRowOfLine = (r == 0) || wrapRows[r - 1].line != wr.line;
+
+		// Line number on the line's first row only.
+		if (showLineNumbers && firstRowOfLine)
+		{
+			auto number = std::to_string(wr.line + 1);
+			auto width = static_cast<int>(number.size()) * glyphSize.x;
+			auto fg = (wr.line == cursorLine) ? Color::currentLineNumber : Color::lineNumber;
+			drawList->AddText(ImVec2(winLeft + lineNumberRightOffset - width, y),
+				palette.get(fg), number.c_str());
+		}
+
+		// Selection shading: intersect each cursor's selection with this row's
+		// column range, then with the line span.
+		for (auto& cursor : cursors)
+		{
+			if (!cursor.hasSelection()) continue;
+			auto s = cursor.getSelectionStart();
+			auto e = cursor.getSelectionEnd();
+			if (wr.line < s.line || wr.line > e.line) continue;
+			int selStart = (wr.line == s.line) ? s.column : 0;
+			int selEnd   = (wr.line == e.line) ? e.column : wr.endColumn;
+			int a = std::max(selStart, wr.startColumn);
+			int b = std::min(selEnd,   wr.endColumn);
+			// Whole-line (interior) selection extends a bit past the last glyph.
+			if (wr.line != e.line && b == wr.endColumn) b += 1;
+			if (b <= a && !(wr.line != s.line && wr.line != e.line)) continue;
+			float left  = textLeft + (a - wr.startColumn) * glyphSize.x;
+			float right = textLeft + (b - wr.startColumn) * glyphSize.x;
+			if (right <= left) right = left + glyphSize.x * 0.4f;
+			drawList->AddRectFilled(ImVec2(left, y), ImVec2(right, y + glyphSize.y),
+				IM_COL32(80, 80, 110, 150));
+		}
+	}
+
+	// Glyphs.
+	drawList->PushClipRect(ImVec2(textLeft, winTop), ImVec2(winRight, winBot), true);
+	for (int r = firstRow; r <= lastRow; ++r)
+	{
+		const WrapRow& wr = wrapRows[r];
+		auto& line = document[wr.line];
+		float y = origin.y + r * glyphSize.y;
+
+		int column = wr.startColumn;
+		size_t index = document.getIndex(line, column);
+		size_t lineSize = line.size();
+		while (index < lineSize && column < wr.endColumn)
+		{
+			auto& glyph = line[index];
+			auto codepoint = glyph.codepoint;
+			ImVec2 glyphPos{ textLeft + (column - wr.startColumn) * glyphSize.x, y };
+			if (codepoint == '\t')
+			{
+				if (showTabs)
+				{
+					const auto x1 = glyphPos.x + glyphSize.x * 0.3f;
+					const auto ym = glyphPos.y + fontSize * 0.5f;
+					const auto x2 = glyphPos.x + glyphSize.x;
+					drawList->AddLine(ImVec2(x1, ym), ImVec2(x2, ym), palette.get(Color::whitespace));
+				}
+			}
+			else if (codepoint == ' ')
+			{
+				if (showSpaces)
+					drawList->AddCircleFilled(ImVec2(glyphPos.x + glyphSize.x * 0.5f,
+						glyphPos.y + fontSize * 0.5f), 1.5f, palette.get(Color::whitespace), 4);
+			}
+			else
+			{
+				font->RenderChar(drawList, fontSize, glyphPos, palette.get(glyph.color), codepoint);
+			}
+			int tab = document.getTabSize();
+			column += (codepoint == '\t') ? tab - (column % tab) : 1;
+			++index;
+		}
+	}
+	drawList->PopClipRect();
+
+	// Carets.
+	if (!readOnly && ImGui::IsWindowFocused() &&
+		(!ImGui::GetIO().ConfigInputTextCursorBlink || cursorAnimationTimer < 0.5f))
+	{
+		for (auto& cursor : cursors)
+		{
+			auto pos = cursor.getInteractiveEnd();
+			int r = wrapRowOfCoordinate(pos);
+			if (r < firstRow || r > lastRow) continue;
+			float x = textLeft + (pos.column - wrapRows[r].startColumn) * glyphSize.x - 1;
+			float y = origin.y + r * glyphSize.y;
+			drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + cursorWidth, y + glyphSize.y),
+				palette.get(Color::cursor));
+		}
+	}
 }
 
 
@@ -1035,43 +1286,70 @@ void TextEditor::renderPanScrollIndicator()
 		return;
 
 	auto drawList = ImGui::GetWindowDrawList();
-	auto center = ImGui::GetWindowPos() + ImGui::GetWindowSize() / 2.0f;
+	// Anchor at the click point (captured on middle-press), not the window
+	// centre, so the indicator appears where the user actually clicked.
+	auto center = panScrollAnchor;
+	center.x = std::round(center.x);
+	center.y = std::round(center.y);
 
-	static constexpr int alpha = 160;
-	if (panning && scrolling)
-	{
-		drawList->AddCircleFilled(center, 20.0f, IM_COL32(255, 255, 255, alpha));
-		drawList->AddCircle(center, 5.0f, IM_COL32(0, 0, 0, alpha), 0, 2.0f);
+	// Simple but clearly visible indicator: a faint backing disc (so it reads
+	// against any code colour), a crisp ring + centre dot, and 4 small arrows.
+	// (Previous version at radius 10 / 55% alpha was effectively invisible.)
+	const ImGuiStyle& style = ImGui::GetStyle();
+	ImVec4 textC = style.Colors[ImGuiCol_Text];
+	textC.w = 0.9f;
+	ImU32 col = ImGui::ColorConvertFloat4ToU32(textC);
 
-	}
-	if (panning)
-	{
-		drawList->AddTriangle(
-			ImVec2(center.x - 15.0f, center.y),
-			ImVec2(center.x - 8.0f, center.y - 4.0f),
-			ImVec2(center.x - 8.0f, center.y + 4.0f),
-			IM_COL32(0, 0, 0, alpha), 2.0f);
+	constexpr float radius      = 14.0f;
+	constexpr float armLen      = 7.0f;    // arrow tail extension past the ring
+	constexpr float tipLen      = 5.0f;    // arrow tip leg length
+	constexpr float tipSpread   = 3.5f;    // arrow tip half-width
 
-		drawList->AddTriangle(
-			ImVec2(center.x + 15.0f, center.y),
-			ImVec2(center.x + 8.0f, center.y - 4.0f),
-			ImVec2(center.x + 8.0f, center.y + 4.0f),
-			IM_COL32(0, 0, 0, alpha), 2.0f);
-	}
-	if (scrolling)
-	{
-		drawList->AddTriangle(
-			ImVec2(center.x, center.y - 15.0f),
-			ImVec2(center.x - 4.0f, center.y - 8.0f),
-			ImVec2(center.x + 4.0f, center.y - 8.0f),
-			IM_COL32(0, 0, 0, alpha), 2.0f);
+	// Backing disc — low-alpha dark fill keeps the indicator legible without
+	// really "covering" content (it's tiny and translucent).
+	drawList->AddCircleFilled(center, radius + 4.0f, IM_COL32(20, 20, 24, 140));
+	drawList->AddCircle(center, radius, col, 0, 2.0f);
+	drawList->AddCircleFilled(center, 2.0f, col);
 
-		drawList->AddTriangle(
-			ImVec2(center.x, center.y + 15.0f),
-			ImVec2(center.x - 4.0f, center.y + 8.0f),
-			ImVec2(center.x + 4.0f, center.y + 8.0f),
-			IM_COL32(0, 0, 0, alpha), 2.0f);
-	}
+	// All four arrows whenever the indicator is active — middle-mouse pan
+	// moves both axes, so showing only L/R was misleading.
+	// Compute drag direction relative to the anchor. Used to bump the
+	// matching arrow's alpha — same cue Windows' middle-click pan cursor
+	// uses to show which way you're nudging.
+	ImVec2 mouse = ImGui::GetMousePos();
+	float dx = mouse.x - center.x;
+	float dy = mouse.y - center.y;
+	float dragMag = std::sqrt(dx * dx + dy * dy);
+	bool dragging = dragMag > 4.0f;
+
+	auto drawArrow = [&](float dirX, float dirY) {
+		// Brighten the arrow when the user is pulling that way.
+		ImU32 c = col;
+		if (dragging) {
+			float dot = dirX * (dx / dragMag) + dirY * (dy / dragMag);
+			if (dot > 0.35f) {
+				ImVec4 hi = style.Colors[ImGuiCol_Text];
+				hi.w = 0.95f;
+				c = ImGui::ColorConvertFloat4ToU32(hi);
+			}
+		}
+		float baseX = center.x + dirX * radius;
+		float baseY = center.y + dirY * radius;
+		float tipX  = baseX + dirX * armLen;
+		float tipY  = baseY + dirY * armLen;
+		// Two short legs forming a chevron at the tip.
+		float pX = -dirY * tipSpread;
+		float pY =  dirX * tipSpread;
+		drawList->AddLine(ImVec2(baseX, baseY), ImVec2(tipX, tipY), c, 1.5f);
+		drawList->AddLine(ImVec2(tipX, tipY),
+			ImVec2(tipX - dirX * tipLen + pX, tipY - dirY * tipLen + pY), c, 1.5f);
+		drawList->AddLine(ImVec2(tipX, tipY),
+			ImVec2(tipX - dirX * tipLen - pX, tipY - dirY * tipLen - pY), c, 1.5f);
+	};
+	drawArrow(-1.0f,  0.0f);   // ←
+	drawArrow( 1.0f,  0.0f);   // →
+	drawArrow( 0.0f, -1.0f);   // ↑
+	drawArrow( 0.0f,  1.0f);   // ↓
 }
 
 
@@ -1401,8 +1679,9 @@ void TextEditor::handleMouseInteractions()
 			mouseDelta.y = (absoluteMousePos.y - (windowSize.y - horizontalScrollBarSize - autoPanMargin.y)) * dragFactor;
 		}
 
-		ImGui::SetScrollX(ImGui::GetScrollX() - mouseDelta.x);
-		ImGui::SetScrollY(ImGui::GetScrollY() - mouseDelta.y);
+		float panSign = panInverted ? -1.0f : 1.0f;
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x);
+		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
 	}
 	else if (scrolling)
@@ -1416,8 +1695,9 @@ void TextEditor::handleMouseInteractions()
 		float scrollFactor = ImGui::GetIO().DeltaTime * 5.0f;
 		offset *= scrollFactor;
 
-		ImGui::SetScrollX(ImGui::GetScrollX() - offset.x);
-		ImGui::SetScrollY(ImGui::GetScrollY() - offset.y);
+		float panSign = panInverted ? -1.0f : 1.0f;
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x);
+		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y);
 
 		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
 			ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
@@ -1456,18 +1736,32 @@ void TextEditor::handleMouseInteractions()
 			0
 		);
 
-		int realLine = visualIndexToLine(visibleIndex);
-
-		// Compute glyph/cursor coordinates in document space
+		// Compute glyph/cursor coordinates in document space.
 		Coordinate glyphCoordinate;
 		Coordinate cursorCoordinate;
 
-		document.normalizeCoordinate(
-			1.0f* realLine,
-			1.0f*std::max(0, static_cast<int>((mousePos.x - textOffset) / glyphSize.x)),
-			glyphCoordinate,
-			cursorCoordinate
-		);
+		if (wordWrap && !wrapRows.empty())
+		{
+			// In wrap mode the visible index IS the wrapped-row index. Map it to
+			// the source line + a column offset into that row, so clicks land on
+			// the glyph under the cursor regardless of how the line was wrapped.
+			int row = std::clamp(visibleIndex, 0, static_cast<int>(wrapRows.size()) - 1);
+			int realLine = wrapRows[row].line;
+			int colInRow = std::max(0, static_cast<int>((mousePos.x - textOffset) / glyphSize.x));
+			int column = wrapRows[row].startColumn + colInRow;
+			document.normalizeCoordinate(1.0f * realLine, 1.0f * column,
+				glyphCoordinate, cursorCoordinate);
+		}
+		else
+		{
+			int realLine = visualIndexToLine(visibleIndex);
+			document.normalizeCoordinate(
+				1.0f* realLine,
+				1.0f*std::max(0, static_cast<int>((mousePos.x - textOffset) / glyphSize.x)),
+				glyphCoordinate,
+				cursorCoordinate
+			);
+		}
 
 		// show text cursor if required
 		if (ImGui::IsWindowFocused() && overText)
@@ -1631,6 +1925,9 @@ void TextEditor::handleMouseInteractions()
 		// --- Middle click: pan/scroll mode -------------------------------
 		else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
 		{
+			// Anchor the on-screen indicator at the exact click point (screen
+			// space) for both modes, so it appears where the user pressed.
+			panScrollAnchor = ImGui::GetMousePos();
 			if (panMode)
 			{
 				panning = true;
@@ -2158,7 +2455,19 @@ std::string TextEditor::GetWordAtScreenPos(const ImVec2& screenPos) const
 	// convert to text coordinates
 	Coordinate glyphCoordinate;
 	Coordinate cursorCoordinate;
-	document.normalizeCoordinate(local.y / glyphSize.y, (local.x - textOffset) / glyphSize.x, glyphCoordinate, cursorCoordinate);
+	if (wordWrap && !wrapRows.empty())
+	{
+		int row = std::clamp(static_cast<int>(local.y / glyphSize.y), 0,
+			static_cast<int>(wrapRows.size()) - 1);
+		int column = wrapRows[row].startColumn +
+			std::max(0, static_cast<int>((local.x - textOffset) / glyphSize.x));
+		document.normalizeCoordinate(1.0f * wrapRows[row].line, 1.0f * column,
+			glyphCoordinate, cursorCoordinate);
+	}
+	else
+	{
+		document.normalizeCoordinate(local.y / glyphSize.y, (local.x - textOffset) / glyphSize.x, glyphCoordinate, cursorCoordinate);
+	}
 
 	// Find word boundaries and extract text
 	auto start = document.findWordStart(glyphCoordinate);
@@ -2226,6 +2535,21 @@ void TextEditor::clearMarkers()
 
 void TextEditor::moveUp(int lines, bool select)
 {
+	// Word wrap: move by wrapped row, preserving the column offset within the row.
+	if (wordWrap && !wrapRows.empty())
+	{
+		for (auto& cursor : cursors)
+		{
+			Coordinate cur = cursor.getInteractiveEnd();
+			int r = wrapRowOfCoordinate(cur);
+			int colOff = cur.column - wrapRows[r].startColumn;
+			int tr = std::max(0, r - lines);
+			int tcol = std::min(wrapRows[tr].startColumn + colOff, wrapRows[tr].endColumn);
+			cursor.update(document.normalizeCoordinate(Coordinate(wrapRows[tr].line, tcol)), select);
+		}
+		makeCursorVisible();
+		return;
+	}
 	for (auto& cursor : cursors)
 	{
 		auto pos = document.getUp(cursor.getInteractiveEnd(), lines);
@@ -2248,6 +2572,21 @@ void TextEditor::moveUp(int lines, bool select)
 
 void TextEditor::moveDown(int lines, bool select)
 {
+	if (wordWrap && !wrapRows.empty())
+	{
+		int maxRow = static_cast<int>(wrapRows.size()) - 1;
+		for (auto& cursor : cursors)
+		{
+			Coordinate cur = cursor.getInteractiveEnd();
+			int r = wrapRowOfCoordinate(cur);
+			int colOff = cur.column - wrapRows[r].startColumn;
+			int tr = std::min(maxRow, r + lines);
+			int tcol = std::min(wrapRows[tr].startColumn + colOff, wrapRows[tr].endColumn);
+			cursor.update(document.normalizeCoordinate(Coordinate(wrapRows[tr].line, tcol)), select);
+		}
+		makeCursorVisible();
+		return;
+	}
 	for (auto& cursor : cursors)
 	{
 		auto pos = document.getDown(cursor.getInteractiveEnd(), lines);
@@ -3081,11 +3420,24 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	// JS, GLSL, HLSL, JSON, …) build folds from { } and would otherwise
 	// produce a duplicate fold per code block.
 	bool useIndentFolding = false;
+	bool useLuaFolding = false;
+	bool useIniFolding = false;
 	if (auto lang = document.getLanguage())
 	{
 		const std::string& name = lang->name;
 		useIndentFolding = (name == "Python");
+		useLuaFolding = (name == "Lua");
+		useIniFolding = (name == "INI");
 	}
+
+	// --- Lua keyword blocks (function/if/do/repeat … end/until) ---
+	// Stack of opener positions; each closer pops and produces a fold.
+	std::vector<Coordinate> luaStack;
+
+	// --- INI sections: fold each [header] down to the line before the next
+	// header (or EOF). `iniHeaderLine` is the line of the open section, -1 when
+	// none is open yet. We emit the fold when the next header arrives / at EOF.
+	int iniHeaderLine = -1;
 
 	// --- Braces ---
 	std::vector<Coordinate> braceStack;
@@ -3318,7 +3670,72 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				indentStack.push_back({ indent, Coordinate(line, indent) });
 			}
 		}
+
+		// Lua keyword-delimited block folding. `function`, `if`, `do` (covers
+		// for/while/standalone do), and `repeat` open a block; `end` and
+		// `until` close one. One-liners (`if x then y end`) net out on the same
+		// line and produce no fold (start.line == line is skipped).
+		if (useLuaFolding)
+		{
+			// Strip a trailing line comment so keywords inside `-- ...` don't count.
+			std::string scan = text;
+			size_t cpos = scan.find("--");
+			if (cpos != std::string::npos) scan.resize(cpos);
+
+			size_t i = 0;
+			while (i < scan.size())
+			{
+				char c = scan[i];
+				if (std::isalpha(static_cast<unsigned char>(c)) || c == '_')
+				{
+					size_t s = i;
+					while (i < scan.size() &&
+						(std::isalnum(static_cast<unsigned char>(scan[i])) || scan[i] == '_'))
+						++i;
+					std::string w = scan.substr(s, i - s);
+					if (w == "function" || w == "if" || w == "do" || w == "repeat")
+					{
+						luaStack.push_back(Coordinate(line, static_cast<int>(s)));
+					}
+					else if (w == "end" || w == "until")
+					{
+						if (!luaStack.empty())
+						{
+							Coordinate start = luaStack.back();
+							luaStack.pop_back();
+							if (start.line < line)
+								push_back(FoldRange(start, Coordinate(line, static_cast<int>(s)), Indent));
+						}
+					}
+				}
+				else
+				{
+					++i;
+				}
+			}
+		}
+
+		// INI section folding — a header line is one whose first non-whitespace
+		// character is '['. Each header closes the previous section's fold
+		// (header .. line-1) and opens a new one.
+		if (useIniFolding)
+		{
+			size_t s2 = 0;
+			while (s2 < text.size() && (text[s2] == ' ' || text[s2] == '\t')) ++s2;
+			if (s2 < text.size() && text[s2] == '[')
+			{
+				if (iniHeaderLine >= 0 && iniHeaderLine < line - 1)
+					push_back(FoldRange(Coordinate(iniHeaderLine, 0),
+					                    Coordinate(line - 1, 0), Region));
+				iniHeaderLine = line;
+			}
+		}
 	}
+
+	// Close a still-open INI section at EOF.
+	if (useIniFolding && iniHeaderLine >= 0 && iniHeaderLine < lineCount - 1)
+		push_back(FoldRange(Coordinate(iniHeaderLine, 0),
+		                    Coordinate(lineCount - 1, 0), Region));
 
 	// Close any line-comment run still open at EOF
 	flushLineCommentBlock(lineCount - 1);
@@ -12222,6 +12639,83 @@ const TextEditor::Language* TextEditor::Language::Markdown()
 		language.commentEnd = "-->";
 
 		language.customTokenizer = tokenizeMarkdown;
+		initialized = true;
+	}
+
+	return &language;
+}
+
+
+//
+//	tokenizeIni — hand-rolled (not re2c). INI has no fixed keyword set; the
+//	structure is what matters:
+//	  [section]     → the whole bracketed header is a declaration
+//	  key = value   → the key (left of '=') is a known identifier
+//	Comments (; and #) and the '=' punctuation are handled by the language's
+//	singleLineComment / isPunctuation, so this only needs to catch headers
+//	and keys.
+//
+
+static TextEditor::Iterator tokenizeIni(TextEditor::Iterator start, TextEditor::Iterator end, TextEditor::Color& color)
+{
+	TextEditor::Iterator i = start;
+	if (i >= end) return start;
+	ImWchar c = *i;
+
+	// [section header] — consume through the closing ']' (or line end).
+	if (c == '[')
+	{
+		++i;
+		while (i < end && *i != ']') ++i;
+		if (i < end) ++i;             // include the ']'
+		color = TextEditor::Color::declaration;
+		return i;
+	}
+
+	// key followed (after optional spaces) by '=' → highlight the key name.
+	auto isKeyChar = [](ImWchar ch) {
+		return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+		       (ch >= '0' && ch <= '9') || ch == '_' || ch == '.' || ch == '-';
+	};
+	if (isKeyChar(c) && !(c >= '0' && c <= '9'))
+	{
+		TextEditor::Iterator j = i;
+		while (j < end && isKeyChar(*j)) ++j;
+		TextEditor::Iterator k = j;
+		while (k < end && (*k == ' ' || *k == '\t')) ++k;
+		if (k < end && *k == '=')
+		{
+			color = TextEditor::Color::knownIdentifier;
+			return j;                 // colour only the key, not the spaces/'='
+		}
+	}
+
+	return start;                     // nothing special — let the default path run
+}
+
+
+//
+//	TextEditor::Language::Ini
+//
+
+const TextEditor::Language* TextEditor::Language::Ini()
+{
+	static bool initialized = false;
+	static TextEditor::Language language;
+
+	if (!initialized)
+	{
+		language.name = "INI";
+		language.caseSensitive = false;
+		// Both ';' and '#' are used for INI comments in the wild.
+		language.singleLineComment = ";";
+		language.singleLineCommentAlt = "#";
+		language.hasDoubleQuotedStrings = true;
+		language.customTokenizer = tokenizeIni;
+		language.isPunctuation = [](ImWchar c) {
+			return c == '=' || c == ':' || c == '[' || c == ']';
+		};
+		language.extensions = { ".ini", ".cfg", ".conf" };
 		initialized = true;
 	}
 
