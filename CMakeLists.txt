@@ -115,6 +115,11 @@ FetchContent_Declare(
 	imguifd
 	URL https://github.com/goossens/ImGuiFileDialog/archive/d0e97b2adc3d3452d72c750c7305dc0291acd052.tar.gz
 	URL_HASH SHA256=04bcd41f54fd57ede0864be200482c196d352d1a5d4498f7cd88fef3cf7029fd
+	# Point at a directory with no CMakeLists.txt so MakeAvailable only
+	# fetches the sources and skips add_subdirectory().  ImGuiFileDialog's
+	# own CMakeLists.txt expects find_package(imgui) and would otherwise
+	# add a second, broken target to the default build.
+	SOURCE_SUBDIR do-not-build
 )
 FetchContent_MakeAvailable(imguifd)
 
