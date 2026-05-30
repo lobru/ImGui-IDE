@@ -1694,17 +1694,19 @@ void TextEditor::handleMouseInteractions()
 	}
 	else if (scrolling)
 	{
-		// handle middle mouse button scrolling
-		float deadzone = glyphSize.x;
+		// handle middle mouse button scrolling. Horizontal gets a larger
+		// deadzone + damping so vertical scrolling is the easy default.
+		float deadzone  = glyphSize.x;
+		float deadzoneX = glyphSize.x * 3.0f;
 		auto offset = scrollStart - absoluteMousePos;
-		offset.x = (offset.x < 0.0f) ? std::min(offset.x + deadzone, 0.0f) : std::max(offset.x - deadzone, 0.0f);
-		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone, 0.0f) : std::max(offset.y - deadzone, 0.0f);
+		offset.x = (offset.x < 0.0f) ? std::min(offset.x + deadzoneX, 0.0f) : std::max(offset.x - deadzoneX, 0.0f);
+		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone,  0.0f) : std::max(offset.y - deadzone,  0.0f);
 
 		float scrollFactor = ImGui::GetIO().DeltaTime * 5.0f;
 		offset *= scrollFactor;
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x);
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * 0.35f);
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y);
 
 		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
