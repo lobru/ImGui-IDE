@@ -1686,7 +1686,9 @@ void TextEditor::handleMouseInteractions()
 		}
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x);
+		// Damp horizontal pan — reading is overwhelmingly vertical, so vertical
+		// scroll stays easy and sideways needs a more deliberate drag.
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f);
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
 	}
