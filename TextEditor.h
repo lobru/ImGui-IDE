@@ -1207,6 +1207,16 @@ protected:
 		// identity path instead of scanning all lines — critical for large files.
 		int hiddenLineCount = 0;
 
+		// Visual<->document line maps, rebuilt in updateVisibility() (fold/doc
+		// changes only, NOT per frame). They keep the mapping O(1) even when
+		// something IS folded — without them, folding a block in a large file
+		// tanked FPS because every mapping call went O(lines).
+		//   visibleToDoc[vi]   = document line for visual index vi
+		//   docToVisible[line] = visual index of `line` (nearest visible
+		//                        at-or-before it when `line` is folded away)
+		std::vector<int> visibleToDoc;
+		std::vector<int> docToVisible;
+
 		// Folding API
 		void rebuildFoldRanges(Document& document);
 		void updateVisibility(Document& document);
@@ -1685,39 +1695,40 @@ protected:
 	int screenYToDocumentLine(float y) const;
 	const FoldRange* GetFoldRangeStartingAt(int line);
 	int getVisualLineCount() const {
-		// Number of visible (non-folded) lines. Used to size the scrollable
-		// content area and to clamp visual indices.
 		// Fast path: nothing folded → every line visible.
 		if (foldRanges.hiddenLineCount == 0) return document.lineCount();
+		// Cached path: visibleToDoc holds exactly the visible lines.
+		if ((int) foldRanges.docToVisible.size() == document.lineCount())
+			return (int) foldRanges.visibleToDoc.size();
+		// Stale-size fallback (document changed before updateVisibility re-ran).
 		int n = 0;
-		for (int i = 0; i < document.lineCount(); ++i) {
+		for (int i = 0; i < document.lineCount(); ++i)
 			if (document[i].visible) ++n;
-		}
 		return n;
 	}
 
 	int visualIndexToLine(int visualIndex) const {
-		if (visualIndex < 0)
-			visualIndex = 0;
-
+		if (visualIndex < 0) visualIndex = 0;
 		// Fast path: nothing folded → visual index IS the document line.
 		if (foldRanges.hiddenLineCount == 0) {
 			int last = document.lineCount() - 1;
 			if (last < 0) return 0;
 			return visualIndex > last ? last : visualIndex;
 		}
-
-		int current = 0;
-		int lastVisible = 0;
+		// Cached path: O(1) lookup.
+		const auto& v2d = foldRanges.visibleToDoc;
+		if (!v2d.empty() && (int) foldRanges.docToVisible.size() == document.lineCount()) {
+			if (visualIndex >= (int) v2d.size()) return v2d.back();
+			return v2d[visualIndex];
+		}
+		// Stale-size fallback.
+		int current = 0, lastVisible = 0;
 		for (int i = 0; i < document.lineCount(); ++i) {
-			if (!document[i].visible)
-				continue;
-			if (current == visualIndex)
-				return i;
+			if (!document[i].visible) continue;
+			if (current == visualIndex) return i;
 			lastVisible = i;
 			++current;
 		}
-		// clamp to last *visible* line if visualIndex is past the end
 		return lastVisible;
 	}
 
@@ -1729,17 +1740,21 @@ protected:
 			if (last < 0) return 0;
 			return line > last ? last : line;
 		}
-		int current = 0;
-		int lastVisibleBeforeTarget = 0;
+		// Cached path: O(1) lookup.
+		const auto& d2v = foldRanges.docToVisible;
+		if (!d2v.empty() && (int) d2v.size() == document.lineCount()) {
+			if (line >= (int) d2v.size()) return d2v.back();
+			return d2v[line];
+		}
+		// Stale-size fallback.
+		int current = 0, lastVisibleBeforeTarget = 0;
 		for (int i = 0; i < document.lineCount(); ++i) {
-			if (i > line) break;                // past target — `line` was hidden
+			if (i > line) break;
 			if (!document[i].visible) continue;
 			if (i == line) return current;
 			lastVisibleBeforeTarget = current;
 			++current;
 		}
-		// `line` is hidden (folded). Snap to the VI of the nearest visible line
-		// at-or-before it so makeCursorVisible doesn't try to scroll past EOF.
 		return lastVisibleBeforeTarget;
 	}
 

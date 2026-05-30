@@ -3840,11 +3840,30 @@ void TextEditor::Folder::updateVisibility(Document& document)
 		}
 	}
 
-	// Cache how many lines are hidden so the per-frame visual-index mapping can
-	// short-circuit to an O(1) identity when nothing is folded (common case).
+	// Rebuild the visual<->document line maps + hidden count in one pass. These
+	// keep the per-frame visual-index mapping O(1) even while a fold is collapsed
+	// (this runs only on fold/document changes, not per frame). Without them,
+	// folding a block in a large file dropped FPS hard because every mapping call
+	// went O(lines).
+	visibleToDoc.clear();
+	visibleToDoc.reserve(lineCount);
+	docToVisible.assign(lineCount, 0);
 	int hidden = 0;
+	int lastVI = 0;
 	for (int i = 0; i < lineCount; ++i)
-		if (!document[i].visible) ++hidden;
+	{
+		if (document[i].visible)
+		{
+			lastVI = static_cast<int>(visibleToDoc.size());
+			docToVisible[i] = lastVI;
+			visibleToDoc.push_back(i);
+		}
+		else
+		{
+			docToVisible[i] = lastVI;   // folded line snaps to nearest visible before it
+			++hidden;
+		}
+	}
 	hiddenLineCount = hidden;
 }
 
