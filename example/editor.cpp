@@ -4232,6 +4232,7 @@ void Editor::renderStatusBar()
 			}
 		} else if (ln == "C#") {
 			detectToolchains();
+			pollDotnetProbe();
 			std::string label = ".NET: ";
 			label += detectedDotnetSdks.empty() ? "(none)" : detectedDotnetSdks.front().label;
 			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
