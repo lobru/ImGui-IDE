@@ -316,6 +316,18 @@ private:
 	bool         toolchainsDetected = false;
 	void         detectToolchains();
 
+	// `dotnet --list-sdks` can block for seconds; it runs on a detached thread
+	// (this shared state survives Editor destruction) and results are published
+	// into detectedDotnetSdks on the main thread by pollDotnetProbe().
+	struct DotnetProbe {
+		std::mutex                mutex;
+		std::vector<DetectedTool> sdks;
+		std::atomic<bool>         done{false};
+	};
+	std::shared_ptr<DotnetProbe> dotnetState = std::make_shared<DotnetProbe>();
+	bool dotnetPublished = false;
+	void pollDotnetProbe();
+
 	// Smart F5: locate the most-recent built exe under projectRoot's
 	// common build dirs (out/build/*, build/, bin/{Debug,Release}/) and
 	// run it. Returns empty if none found.

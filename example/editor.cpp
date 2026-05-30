@@ -2535,35 +2535,56 @@ void Editor::detectToolchains()
 	}
 #endif
 
-	// .NET SDKs via `dotnet --list-sdks`.
-#ifdef _WIN32
-	FILE* p = _popen("dotnet --list-sdks 2>NUL", "r");
-#else
-	FILE* p = popen("dotnet --list-sdks 2>/dev/null", "r");
-#endif
-	if (p) {
-		char buf[256];
-		while (fgets(buf, sizeof(buf), p)) {
-			std::string line(buf);
-			while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
-			if (line.empty()) continue;
-			// Format: "8.0.100 [C:\Program Files\dotnet\sdk]"
-			auto br = line.find('[');
-			std::string ver  = (br != std::string::npos) ? line.substr(0, br) : line;
-			while (!ver.empty() && ver.back() == ' ') ver.pop_back();
-			std::string path = (br != std::string::npos && line.back() == ']')
-				? line.substr(br + 1, line.size() - br - 2) : "";
-			detectedDotnetSdks.push_back({ ver, path });
-		}
-#ifdef _WIN32
-		_pclose(p);
-#else
-		pclose(p);
-#endif
-	}
+	if (activeMsvcPath.empty() && !detectedMsvc.empty()) activeMsvcPath = detectedMsvc.front().path;
 
-	if (activeMsvcPath.empty()   && !detectedMsvc.empty())        activeMsvcPath   = detectedMsvc.front().path;
-	if (activeDotnetPath.empty() && !detectedDotnetSdks.empty())  activeDotnetPath = "dotnet";
+	// .NET SDKs via `dotnet --list-sdks`, on a DETACHED background thread.
+	// Running it synchronously here is what hung the Settings dialog: dotnet's
+	// _popen can block for seconds, or indefinitely on first-run/telemetry
+	// prompts. Results land in detectedDotnetSdks via pollDotnetProbe() on the
+	// main thread. Captures `dotnetState` by value so it survives Editor
+	// destruction (script-runner pattern).
+	auto ds = dotnetState;
+	std::thread([ds]() {
+#ifdef _WIN32
+		FILE* p = _popen("dotnet --list-sdks 2>NUL", "r");
+#else
+		FILE* p = popen("dotnet --list-sdks 2>/dev/null", "r");
+#endif
+		std::vector<DetectedTool> found;
+		if (p) {
+			char buf[256];
+			while (fgets(buf, sizeof(buf), p)) {
+				std::string line(buf);
+				while (!line.empty() && (line.back()=='\n'||line.back()=='\r'||line.back()==' ')) line.pop_back();
+				if (line.empty()) continue;
+				auto br = line.find('[');
+				std::string ver = (br != std::string::npos) ? line.substr(0, br) : line;
+				while (!ver.empty() && ver.back() == ' ') ver.pop_back();
+				std::string path = (br != std::string::npos && line.back() == ']')
+					? line.substr(br + 1, line.size() - br - 2) : "";
+				found.push_back({ ver, path });
+			}
+#ifdef _WIN32
+			_pclose(p);
+#else
+			pclose(p);
+#endif
+		}
+		std::lock_guard<std::mutex> lock(ds->mutex);
+		ds->sdks = std::move(found);
+		ds->done = true;
+	}).detach();
+}
+
+// Publish background `dotnet --list-sdks` results into detectedDotnetSdks once
+// the probe finishes. Cheap to call every frame (an atomic check until done).
+void Editor::pollDotnetProbe()
+{
+	if (dotnetPublished || !dotnetState->done.load()) return;
+	std::lock_guard<std::mutex> lock(dotnetState->mutex);
+	detectedDotnetSdks = dotnetState->sdks;
+	if (activeDotnetPath.empty() && !detectedDotnetSdks.empty()) activeDotnetPath = "dotnet";
+	dotnetPublished = true;
 }
 
 
@@ -2571,6 +2592,7 @@ void Editor::renderSettings()
 {
 	if (!settingsVisible) return;
 	detectToolchains();
+	pollDotnetProbe();
 	ImGui::SetNextWindowSize(ImVec2(640.0f, 420.0f), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Settings##editorSettings", &settingsVisible))
 	{
