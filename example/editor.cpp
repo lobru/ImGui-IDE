@@ -3488,9 +3488,10 @@ void Editor::renderDocumentWindow(TabDocument& t)
 	ImGui::PushFont(activeFont, fontSize);
 	t.editor.SetTextContextMenuCallback([this, &t](int line, int column)
 										{
-											// Refresh the trie at right-click time so it picks up identifiers
-											// the colorizer has tokenised since the doc was opened.
-											buildAutocompleteTrie(t);
+											// Rebuild the trie only when the popup first appears, not every frame it
+											// stays open — the rebuild seeds from the whole project index now, so
+											// paying it ~60x/sec was needless.
+											if (ImGui::IsWindowAppearing()) buildAutocompleteTrie(t);
 
 											// Resolve the "operative word" for word-aware menu items:
 											//   1. If there's an active selection, use that text — respects
@@ -3562,6 +3563,14 @@ void Editor::renderDocumentWindow(TabDocument& t)
 												std::string inc = extractInclude(trimmed);
 												if (!inc.empty())
 												{
+													// MEMOIZED — this callback re-runs every frame the popup is open and the
+													// resolution below recursively walks the project tree + MSVC/Windows SDK
+													// include dirs (tens of thousands of files); running it ~60x/sec froze
+													// the app on any #include line. Recompute only when (doc,include) change.
+													std::string memoKey = t.filename + "|" + inc;
+													if (memoKey != ctxIncludeKey)
+													{
+														ctxIncludeKey = memoKey;
 													// Resolution strategy (in order):
 													//  1. <docDir>/inc                       — sibling file
 													//  2. Walk up the doc's parent directories for up to 6 levels;
@@ -3727,10 +3736,13 @@ void Editor::renderDocumentWindow(TabDocument& t)
 														}
 													}
 
+													ctxIncludeFound  = found;
+													ctxIncludeResult = candidate.string();
+												}
 													std::string label = "Go to File: " + inc;
-													if (ImGui::MenuItem(label.c_str(), nullptr, false, found))
+													if (ImGui::MenuItem(label.c_str(), nullptr, false, ctxIncludeFound))
 													{
-														openFile(candidate.string());
+														openFile(ctxIncludeResult);
 													}
 												}
 											}

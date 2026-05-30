@@ -368,6 +368,15 @@ private:
 	float        hoverDelaySec  = 0.5f;
 	void renderHoverTooltip(TabDocument& t);
 
+	// Memoized #include "Go to File" resolution. The context-menu callback
+	// re-runs every frame the popup is open, and resolving an include
+	// recursively walks the project tree + the MSVC/Windows SDK system include
+	// dirs (tens of thousands of files) — doing that ~60x/second froze the app.
+	// Cache the result keyed by "<doc>|<include>".
+	std::string  ctxIncludeKey;
+	std::string  ctxIncludeResult;
+	bool         ctxIncludeFound = false;
+
 	// Find References results panel — project-wide. Each hit records the file
 	// it was found in so clicking opens that file and jumps to the line.
 	struct RefHit { std::string file; int line; std::string text; };
