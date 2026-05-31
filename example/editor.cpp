@@ -3195,6 +3195,9 @@ void Editor::saveFile()
 		stream << t.editor.GetText();
 		stream.close();
 		t.version = t.editor.GetUndoIndex();
+		// Refresh the project symbol index so go-to-def / autocomplete pick up
+		// edits. Cheap: the build is one-at-a-time guarded + gen-superseded.
+		if (!projectRoot.empty()) rebuildProjectIndex();
 	}
 	catch (std::exception& e)
 	{
@@ -3217,6 +3220,7 @@ void Editor::saveFile(std::string& path)
 		if (t.editor.GetLanguage() == nullptr)
 			t.editor.SetLanguage(languageForPath(path));
 		t.version = t.editor.GetUndoIndex();
+		if (!projectRoot.empty()) rebuildProjectIndex();
 	}
 	catch (std::exception& e)
 	{
