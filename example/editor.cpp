@@ -3455,6 +3455,17 @@ void Editor::renderDockedDocuments()
 			ImGui::SetWindowFocus(windowLabelFor(t).c_str());
 		}
 	}
+
+	// "+" button on the central node's tab bar → new tab. AmendTabBar lets us
+	// append our own widget to a dock node's auto-generated tab bar.
+	if (central && ImGui::DockNodeBeginAmendTabBar(central))
+	{
+		if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip))
+		{
+			newFile();
+		}
+		ImGui::DockNodeEndAmendTabBar();
+	}
 }
 
 
