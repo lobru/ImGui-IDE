@@ -46,6 +46,24 @@
 
 #include "editor.h"
 
+#include <chrono>
+
+namespace {
+// Lightweight scoped timer. Logs to stderr only when a block exceeds 1ms, so
+// it is silent in the common case and surfaces real stalls. Visible in a
+// terminal (AttachConsole). Remove the threshold to log everything.
+struct ScopedTimer {
+	const char* name;
+	std::chrono::steady_clock::time_point t0;
+	explicit ScopedTimer(const char* n) : name(n), t0(std::chrono::steady_clock::now()) {}
+	~ScopedTimer() {
+		double ms = std::chrono::duration<double, std::milli>(
+			std::chrono::steady_clock::now() - t0).count();
+		if (ms > 1.0) std::fprintf(stderr, "[perf] %s: %.1f ms\n", name, ms);
+	}
+};
+} // namespace
+
 
 // Forward decls so callers above the definitions (e.g. Editor::tryToQuit)
 // can persist favourites at any quit/teardown path.
@@ -161,9 +179,12 @@ const TextEditor::Language* Editor::languageForPath(const std::string& path)
 	}
 
 	// Built-in matches take precedence; fall back to user-loaded definitions.
-	if (ext == ".c" || ext == ".h")                                          return TextEditor::Language::C();
+	// `.h` maps to C++ (a superset of C): C code still highlights correctly, but
+	// C++ headers stop losing class/namespace/template highlighting. Only `.c`
+	// stays pure C.
+	if (ext == ".c")                                                         return TextEditor::Language::C();
 	if (ext == ".cpp" || ext == ".cc" || ext == ".cxx" ||
-		ext == ".hpp" || ext == ".hxx" || ext == ".inl")                     return TextEditor::Language::Cpp();
+		ext == ".h"   || ext == ".hpp" || ext == ".hxx" || ext == ".inl")     return TextEditor::Language::Cpp();
 	if (ext == ".cs")                                                         return TextEditor::Language::Cs();
 	if (ext == ".as")                                                         return TextEditor::Language::AngelScript();
 	if (ext == ".lua")                                                        return TextEditor::Language::Lua();
@@ -243,7 +264,13 @@ Editor::TabDocument& Editor::newTab()
 	t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
 	tabs.push_back(std::move(t));
 	activeTab = tabs.size() - 1;
-	if (autocomplete) setAutocompleteMode(true);
+	// Configure autocomplete for ONLY the new tab. Do NOT call
+	// setAutocompleteMode() here: it rebuilds EVERY open tab's trie
+	// (re-scanning each doc's identifiers + re-inserting the whole project
+	// index), which produced a multi-second stall when adding a tab while a
+	// large file like imgui.cpp was open. Other tabs' tries are already built
+	// and unchanged, so only the brand-new tab needs setup.
+	if (autocomplete) configureTabAutocomplete(*tabs.back());
 	return *tabs.back();
 }
 Editor::TabDocument& Editor::newTab(const std::string& path, bool split, int index)
@@ -268,7 +295,7 @@ Editor::TabDocument& Editor::newTab(const std::string& path, bool split, int ind
 		insertedAt = tabs.size() - 1;
 	}
 	activeTab = insertedAt;
-	if (autocomplete) setAutocompleteMode(true);
+	if (autocomplete) configureTabAutocomplete(*tabs[insertedAt]);
 	return *tabs[insertedAt];
 }
 
@@ -975,6 +1002,7 @@ void Editor::openProjectFolderPicker()
 	// "Open" without selecting any file — that's how you pick a plain folder
 	// as the project root. Without this, the dialog refuses to validate
 	// unless a file is highlighted.
+	config.path = dialogStartDir();
 	config.flags = ImGuiFileDialogFlags_DontShowHiddenFiles
 	             | ImGuiFileDialogFlags_OptionalFileName;
 	populateFileDialogPlaces();
@@ -1654,7 +1682,7 @@ void Editor::rebuildProjectIndex()
 			return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
 			       n == "bin" || n == "obj" || n == "out" || n == "build" ||
 			       n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
-			       n == "__pycache__" || n == "packages";
+			       n == "__pycache__" || n == "packages" || n == "deps" || n == "vendor";
 		};
 		static const std::unordered_set<std::string> defKw = {
 			"class","struct","interface","enum","record","namespace","trait",
@@ -1710,7 +1738,16 @@ void Editor::rebuildProjectIndex()
 					else if (hashLine && prevTok == "define") score = 80;  // #define NAME
 					else {
 						size_t p = i; while (p < n && line[p] == ' ') ++p;
-						if (p < n && line[p] == '(' && !firstTok) score = 50;   // type NAME(
+						// `type NAME(` — a signature, but ONLY when a real type token
+						// precedes NAME. Without this, a constructor call / usage like
+						// `return ImVec4(` or `= Foo(` indexes the USE site as a def.
+						static const std::unordered_set<std::string> notType = {
+							"return", "new", "delete", "sizeof", "throw", "case",
+							"co_return", "co_await", "and", "or", "not", "if",
+							"while", "for", "switch", "do", "else",
+						};
+						bool typeBefore = !prevTok.empty() && !notType.count(prevTok);
+						if (p < n && line[p] == '(' && !firstTok && typeBefore) score = 50;   // type NAME(
 						else if (firstTok && s2 == lead) {                       // NAME = at col0
 							size_t q = i; while (q < n && line[q] == ' ') ++q;
 							if (q < n && line[q] == '=' && (q+1 >= n || line[q+1] != '=')) score = 30;
@@ -1808,8 +1845,139 @@ void Editor::renderHoverTooltip(TabDocument& t)
 // for C# (class/struct/interface/record/enum/method), C/C++ (struct/class/
 // typedef/method/#define), Python (def/class), Lua (function/local), JS/TS
 // (function/class/const/let).
+void Editor::openCSharpLearn(const std::string& rawSymbol)
+{
+	// C# SDK types (Console, List<T>, System.Diagnostics.Process, ...) ship as
+	// metadata-only reference assemblies -- no .cs source on disk to grep to. So
+	// "navigate to an SDK item" means open its Microsoft Learn page. Default to
+	// the Learn SEARCH endpoint (resolves for bare names, generics, locals); only
+	// deep-link to the API page when the token is rooted in a known BCL namespace.
+	std::string sym = rawSymbol;
+	if (auto lt = sym.find('<'); lt != std::string::npos) sym.erase(lt);   // drop generics
+	while (!sym.empty() && (sym.back() == ' ' || sym.back() == '.' || sym.back() == '\t')) sym.pop_back();
+	while (!sym.empty() && (sym.front() == ' ' || sym.front() == '\t')) sym.erase(sym.begin());
+	if (sym.empty()) return;
+
+	auto urlEncode = [](const std::string& s) {
+		static const char* hex = "0123456789ABCDEF";
+		std::string out;
+		for (unsigned char c : s) {
+			if (std::isalnum(c) || c == '.' || c == '_' || c == '-') out.push_back((char)c);
+			else { out.push_back('%'); out.push_back(hex[c >> 4]); out.push_back(hex[c & 0xF]); }
+		}
+		return out;
+	};
+
+	auto rootIsBcl = [&]() {
+		auto dot = sym.find('.');
+		if (dot == std::string::npos) return false;          // unqualified -> search
+		std::string root = sym.substr(0, dot);
+		return root == "System" || root == "Microsoft" || root == "Windows"
+		    || root == "Internal" || root == "Mono";
+	};
+
+	// Resolve the Learn "?view=" moniker so the docs match the version the user
+	// actually targets. Priority: (1) the project's <TargetFramework> from a
+	// nearby .csproj — the version their code references; (2) the highest .NET
+	// runtime installed locally; (3) nothing (Learn then shows its latest).
+	auto dotnetView = [this]() -> std::string {
+		auto tfmToView = [](std::string tfm) -> std::string {
+			std::transform(tfm.begin(), tfm.end(), tfm.begin(),
+				[](unsigned char c){ return (char)std::tolower(c); });
+			auto majMinAt = [](const std::string& s, size_t at) -> std::string {
+				size_t i = at; std::string maj, min;
+				while (i < s.size() && std::isdigit((unsigned char)s[i])) maj += s[i++];
+				if (i < s.size() && s[i] == '.') { ++i; while (i < s.size() && std::isdigit((unsigned char)s[i])) min += s[i++]; }
+				if (maj.empty()) return "";
+				return maj + "." + (min.empty() ? "0" : min);
+			};
+			if (tfm.rfind("netstandard", 0) == 0) { auto v = majMinAt(tfm, 11); return v.empty() ? "" : "netstandard-" + v; }
+			if (tfm.rfind("netcoreapp", 0) == 0)  { auto v = majMinAt(tfm, 10); return v.empty() ? "" : "net-" + v; }
+			if (tfm.rfind("net", 0) == 0 && tfm.size() > 3 && std::isdigit((unsigned char)tfm[3])) {
+				if (tfm.find('.') != std::string::npos) { auto v = majMinAt(tfm, 3); return v.empty() ? "" : "net-" + v; }
+				std::string d = tfm.substr(3);   // net48 -> netframework-4.8
+				if (d.size() >= 2) return "netframework-" + std::string(1, d[0]) + "." + d.substr(1);
+			}
+			return "";
+		};
+		std::error_code ec;
+		std::filesystem::path root = projectRoot;
+		if (root.empty() && !tabs.empty() && doc().filename != "untitled")
+			root = std::filesystem::path(doc().filename).parent_path();
+		// 1. nearest .csproj's TargetFramework, walking up a few levels.
+		std::filesystem::path cur = root;
+		for (int up = 0; !cur.empty() && up < 5; ++up) {
+			for (auto& e : std::filesystem::directory_iterator(cur, ec)) {
+				if (ec) break;
+				if (!e.is_regular_file(ec)) continue;
+				auto ext = e.path().extension().string();
+				std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+				if (ext != ".csproj") continue;
+				std::ifstream f(e.path());
+				std::stringstream ss; ss << f.rdbuf();
+				std::string text = ss.str();
+				auto tag = [&](const std::string& t) -> std::string {
+					auto a = text.find("<" + t + ">");
+					if (a == std::string::npos) return "";
+					a += t.size() + 2;
+					auto b = text.find("</" + t + ">", a);
+					return b == std::string::npos ? "" : text.substr(a, b - a);
+				};
+				std::string tfm = tag("TargetFramework");
+				if (tfm.empty()) { std::string m = tag("TargetFrameworks"); auto sc = m.find(';'); tfm = (sc == std::string::npos) ? m : m.substr(0, sc); }
+				while (!tfm.empty() && (tfm.back()==' '||tfm.back()=='\r'||tfm.back()=='\n'||tfm.back()=='\t')) tfm.pop_back();
+				while (!tfm.empty() && (tfm.front()==' '||tfm.front()=='\t')) tfm.erase(tfm.begin());
+				auto view = tfmToView(tfm);
+				if (!view.empty()) return view;
+			}
+			if (cur.has_parent_path() && cur.parent_path() != cur) cur = cur.parent_path(); else break;
+		}
+#ifdef _WIN32
+		// 2. highest installed runtime under the shared framework folder.
+		std::filesystem::path shared = "C:/Program Files/dotnet/shared/Microsoft.NETCore.App";
+		int bestMaj = -1, bestMin = -1;
+		for (auto& e : std::filesystem::directory_iterator(shared, ec)) {
+			if (ec) break;
+			if (!e.is_directory(ec)) continue;
+			std::string nm = e.path().filename().string();
+			size_t i = 0; std::string a, b;
+			while (i < nm.size() && std::isdigit((unsigned char)nm[i])) a += nm[i++];
+			if (i < nm.size() && nm[i] == '.') { ++i; while (i < nm.size() && std::isdigit((unsigned char)nm[i])) b += nm[i++]; }
+			if (a.empty() || b.empty()) continue;
+			int maj = std::atoi(a.c_str()), min = std::atoi(b.c_str());
+			if (maj > bestMaj || (maj == bestMaj && min > bestMin)) { bestMaj = maj; bestMin = min; }
+		}
+		if (bestMaj >= 0) return "net-" + std::to_string(bestMaj) + "." + std::to_string(bestMin);
+#endif
+		return "";
+	};
+
+	std::string url;
+	if (rootIsBcl()) {
+		std::string lower = sym;
+		std::transform(lower.begin(), lower.end(), lower.begin(),
+			[](unsigned char c){ return (char)std::tolower(c); });
+		url = "https://learn.microsoft.com/en-us/dotnet/api/" + urlEncode(lower);
+		std::string view = dotnetView();
+		if (!view.empty()) url += "?view=" + view;
+	} else {
+		url = "https://learn.microsoft.com/en-us/search/?terms=" + urlEncode(sym)
+		    + "&category=Reference";
+	}
+
+#ifdef _WIN32
+	ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#elif defined(__APPLE__)
+	(void)std::system(("open \"" + url + "\"").c_str());
+#else
+	(void)std::system(("xdg-open \"" + url + "\"").c_str());
+#endif
+}
+
+
 void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration)
 {
+	ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
 	if (word.empty()) return;
 
 	// Qualified names (System.Diagnostics.Process, std::vector, foo->bar): grep
@@ -1835,15 +2003,22 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 	if (root.empty()) root = std::filesystem::current_path();
 
 	// Fast path: the prebuilt project index already knows the definition sites.
-	// (Definition mode only — the grep fallback below applies the header/body
-	// bias that "Go to Declaration" relies on.)
+	// Definition mode only — the index can't tell a declaration (header
+	// prototype) from a definition (body), so "Go to Declaration" must fall
+	// through to the grep below, which applies the header/body bias. The grep
+	// is now fast for declarations too because deps/ is excluded from the walk.
 	if (!declaration) {
 		if (auto idx = indexSnapshot()) {
 			auto it = idx->defs.find(symbol);
 			if (it != idx->defs.end() && !it->second.empty()) {
 				const DefSite* best = nullptr;
 				for (auto& d : it->second) if (!best || d.score > best->score) best = &d;
-				if (best) {
+				// Only trust a STRONG index hit (a real definition keyword, score
+				// 100). A weak hit (heuristic `type NAME(` / `NAME =`, score < 100)
+				// can be a usage mis-scored as a def, so fall through to the grep +
+				// deps-fallback below, which scores more carefully and can reach
+				// bundled libraries.
+				if (best && best->score >= 100) {
 					openFile(best->file);
 					if (!tabs.empty()) {
 						auto& e = doc().editor;
@@ -1878,10 +2053,17 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 			".lua", ".sh", ".ps1", ".psm1",
 			".sql", ".r", ".jl", ".dart",
 			".cmake", ".txt",
+			".xaml", ".axaml", ".xml",   // XAML/XML — lets C#↔XAML jump by x:Name / x:Class
 		};
 		return ok.count(e) != 0;
 	};
-	auto skipDir = [](const std::string& name) {
+	// deps/vendor are skipped on the FIRST pass (keeps project go-to-def fast and
+	// out of library internals). If nothing is found we retry WITH them included
+	// (two-pass call below), so a symbol that lives only in a bundled dependency
+	// — e.g. ImVector in deps/imgui/imgui.h — is still reachable.
+	bool includeDeps = false;
+	auto skipDir = [&includeDeps](const std::string& name) {
+		if (!includeDeps && (name == "deps" || name == "vendor")) return true;
 		return name == ".git" || name == ".svn" || name == ".hg"
 			|| name == "node_modules" || name == "bin" || name == "obj"
 			|| name == "out" || name == "build" || name == "target"
@@ -1897,6 +2079,11 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 	struct Hit { std::filesystem::path path; int line; int score; std::string preview; };
 	std::vector<Hit> hits;
 	std::error_code ec;
+
+	// One full directory walk + scan. Wrapped in a lambda so we can run it twice:
+	// once with deps excluded (fast, project-only) and, if that finds nothing,
+	// again with deps included (reaches symbols defined only in bundled libs).
+	auto runScan = [&]() {
 	int budget = 8000;   // file budget — keep walks bounded on huge projects
 
 	for (auto it = std::filesystem::recursive_directory_iterator(
@@ -1962,11 +2149,55 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 				if (score == 0 && s < line.size() && line[s] == '#') {
 					if (line.find("#define", s) == s) score = 80;
 				}
+				// XAML/XML named element: `x:Name="symbol"`, `x:Key="symbol"`,
+				// `x:Class="…symbol"`, or a bare `Name="symbol"`. The symbol is the
+				// quoted value, so look just left of the match for `="` and an
+				// attribute name. This is what lets Go-to-Definition jump from a
+				// C# member to the XAML element that declares it (and back).
+				if (score == 0 && pos >= 2 && (line[pos - 1] == '"' || line[pos - 1] == '\'')
+					&& line[pos - 2] == '=')
+				{
+					size_t a = (pos >= 2) ? pos - 2 : 0;   // at '='
+					size_t e2 = a;                          // walk back over attr name
+					while (e2 > 0 && (std::isalnum((unsigned char) line[e2 - 1]) ||
+						line[e2 - 1] == ':' || line[e2 - 1] == '_' || line[e2 - 1] == '.' ||
+						line[e2 - 1] == '-')) --e2;
+					std::string attr = line.substr(e2, a - e2);
+					if (attr == "x:Name" || attr == "Name" || attr == "x:Key" ||
+						attr == "x:Class" || attr == "x:Uid")
+						score = 90;
+				}
 				// Medium-weak: `<type> <symbol>(` — a method/function signature.
+				// Require a type-like token immediately before the symbol so a
+				// constructor CALL or type usage (`= ImVec4(`, `return Foo(`,
+				// `, Bar(`) is NOT mistaken for a definition. Qualified method
+				// defs (`Ret Class::Method(`) and pointer/ref/template returns
+				// (`Foo* f(`, `vector<int> g(`) still count.
 				if (score == 0) {
 					size_t p = pos + symbol.size();
 					while (p < line.size() && line[p] == ' ') ++p;
-					if (p < line.size() && line[p] == '(' && pos > 0) score = 50;
+					if (p < line.size() && line[p] == '(' && pos > 0) {
+						size_t b = pos;
+						while (b > 0 && line[b - 1] == ' ') --b;
+						bool typeBefore = false;
+						if (b > 0) {
+							char pc = line[b - 1];
+							if (pc == '*' || pc == '&' || pc == '>' || pc == ':') {
+								typeBefore = true;
+							} else if (std::isalnum((unsigned char) pc) || pc == '_') {
+								size_t s3 = b;
+								while (s3 > 0 && (std::isalnum((unsigned char) line[s3 - 1]) || line[s3 - 1] == '_')) --s3;
+								std::string prev = line.substr(s3, b - s3);
+								static const std::unordered_set<std::string> notType = {
+									"return", "new", "delete", "sizeof", "throw", "case",
+									"co_return", "co_await", "and", "or", "not", "if",
+									"while", "for", "switch", "do",
+								};
+								typeBefore = !notType.count(prev);
+							}
+						}
+						if (typeBefore) score = 50;
+					}
 				}
 				// Weak: `<symbol> = ` top-level assignment.
 				if (score == 0 && pos == s) {
@@ -1999,6 +2230,18 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 				pos += symbol.size();
 			}
 		}
+	}
+	};   // end runScan
+
+	// First pass: project source only (deps excluded → fast, no library noise).
+	runScan();
+	// Fallback: if the project has no hit, widen to bundled deps/vendor. This is
+	// the only path that reaches a symbol like ImVector that lives solely in
+	// deps/imgui/imgui.h, while keeping the common case off the library tree.
+	if (hits.empty()) {
+		includeDeps = true;
+		ec.clear();
+		runScan();
 	}
 
 	if (hits.empty()) {
@@ -2054,6 +2297,20 @@ void Editor::findReferencesOf(TabDocument& t, const std::string& word)
 			++ln;
 		}
 	};
+
+	// Remember which tab this search ran against so the panel's "Search all
+	// files" checkbox can re-run the same query at a wider scope.
+	referencesTab = &t;
+
+	// Default scope is the ACTIVE FILE only (its live buffer, so unsaved edits
+	// count). The user widens to the whole project via the panel checkbox, which
+	// sets referencesAllFiles and re-runs. Current-file scan is always cheap.
+	if (!referencesAllFiles) {
+		std::istringstream ss(t.editor.GetText());
+		scanText(t.filename == "untitled" ? "(untitled)" : t.filename, ss);
+		referencesVisible = true;
+		return;
+	}
 
 	// Project-wide when we have a root (or the active doc's dir); the active
 	// doc is scanned from its live buffer so unsaved edits are reflected.
@@ -2121,6 +2378,15 @@ void Editor::renderReferencesPanel()
 		ImGui::TextDisabled("%zu match%s across %d file%s",
 			referencesHits.size(), referencesHits.size() == 1 ? "" : "es",
 			referencesFileCount, referencesFileCount == 1 ? "" : "s");
+		// Scope toggle: default is the active file; tick to widen to the whole
+		// project and re-run the same query against the tab it came from.
+		if (ImGui::Checkbox("Search all files", &referencesAllFiles)) {
+			// Guard the stored pointer: the source tab may have been closed since
+			// the search ran. Only re-run if it's still a live tab.
+			bool alive = false;
+			for (auto& up : tabs) if (up.get() == referencesTab) { alive = true; break; }
+			if (alive) findReferencesOf(*referencesTab, referencesWord);
+		}
 		ImGui::Separator();
 
 		std::string lastFile;
@@ -3503,10 +3769,8 @@ void Editor::renderDocumentWindow(TabDocument& t)
 	ImGui::PushFont(activeFont, fontSize);
 	t.editor.SetTextContextMenuCallback([this, &t](int line, int column)
 										{
-											// Rebuild the trie only when the popup first appears, not every frame it
-											// stays open — the rebuild seeds from the whole project index now, so
-											// paying it ~60x/sec was needless.
-											if (ImGui::IsWindowAppearing()) buildAutocompleteTrie(t);
+											// (removed) per-open trie rebuild was dead work: nothing in this menu
+											// reads the trie, and autocomplete maintains its own trie on tab open + edit.
 
 											// Resolve the "operative word" for word-aware menu items:
 											//   1. If there's an active selection, use that text — respects
@@ -3792,6 +4056,12 @@ void Editor::renderDocumentWindow(TabDocument& t)
 													{
 														goToDefinitionProjectWide(qualified, true);
 													}
+												// C# SDK symbols have no on-disk source (ref assemblies); offer a
+												// jump to their Microsoft Learn documentation page instead.
+												if (lang && lang->name == "C#" && ImGui::MenuItem("Look up in Microsoft Learn"))
+												{
+													openCSharpLearn(qualified);
+												}
 												}
 												if (ImGui::MenuItem("Find References"))
 												{
@@ -3918,6 +4188,9 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Copy File Path", nullptr, false, hasPath)) {
 				ImGui::SetClipboardText(doc().filename.c_str());
 			}
+			ImGui::Separator();
+			// Close the application (respects unsaved-changes confirmation).
+			if (ImGui::MenuItem("Exit", SHORTCUT "Q")) { tryToQuit(); }
 			// "Switch Header/Source" only really applies to C/C++ files — hide
 			// it for other languages so the menu stays focused.
 			bool isCxxDoc = false;
@@ -3992,6 +4265,7 @@ void Editor::renderMenuBar()
 			flag = e.IsShowTabsEnabled();               if (ImGui::MenuItem("Show Tabs",                 nullptr, &flag)) { e.SetShowTabsEnabled(flag); }
 			flag = e.IsShowingMatchingBrackets();       if (ImGui::MenuItem("Show Matching Brackets",    nullptr, &flag)) { e.SetShowMatchingBrackets(flag); }
 			flag = e.IsShowPanScrollIndicatorEnabled(); if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag)) { e.SetShowPanScrollIndicatorEnabled(flag); }
+			flag = e.IsMiddleMousePanMode();            if (ImGui::MenuItem("Middle Mouse Pan",          nullptr, &flag)) { if (flag) e.SetMiddleMousePanMode(); else e.SetMiddleMouseScrollMode(); }
 			if (ImGui::MenuItem("Word Wrap", nullptr, &prefWordWrap)) {
 				for (auto& up : tabs) up->editor.SetWordWrap(prefWordWrap);
 			}
@@ -4033,8 +4307,6 @@ void Editor::renderMenuBar()
 			flag = e.IsCompletingPairedGlyphs(); if (ImGui::MenuItem("Auto-complete Brackets", nullptr, &flag)) { e.SetCompletePairedGlyphs(flag); prefCompletePairs = flag; }
 			flag = e.IsAutoIndentEnabled();      if (ImGui::MenuItem("Auto-indent",            nullptr, &flag)) { e.SetAutoIndentEnabled(flag); prefAutoIndent = flag; }
 			if (ImGui::MenuItem("Autocomplete (Trie)", nullptr, &autocomplete)) { setAutocompleteMode(autocomplete); }
-			ImGui::Separator();
-			flag = e.IsMiddleMousePanMode();     if (ImGui::MenuItem("Middle Mouse Pan", nullptr, &flag)) { if (flag) e.SetMiddleMousePanMode(); else e.SetMiddleMouseScrollMode(); }
 			ImGui::EndMenu();
 		}
 
@@ -4448,6 +4720,22 @@ static void saveFileDialogPlaces()
 }
 
 
+// Where file/project dialogs should start. Prefer the active document's folder,
+// then the open project root, then the process cwd — NOT wherever the app
+// happened to be launched from. IGFD treats an empty path as "last/cwd", so we
+// pass an explicit directory.
+std::string Editor::dialogStartDir() const
+{
+	std::error_code ec;
+	if (!tabs.empty() && doc().filename != "untitled") {
+		auto p = std::filesystem::path(doc().filename).parent_path();
+		if (!p.empty() && std::filesystem::is_directory(p, ec)) return p.string();
+	}
+	if (!projectRoot.empty() && std::filesystem::is_directory(projectRoot, ec))
+		return projectRoot.string();
+	return std::filesystem::current_path(ec).string();
+}
+
 void Editor::showFileOpen()
 {
 	if (auto* vp = ImGui::GetWindowViewport()) dialogViewportId = vp->ID;
@@ -4455,6 +4743,7 @@ void Editor::showFileOpen()
 	dialogNeedsPlacement = true;
 	populateFileDialogPlaces();
 	IGFD::FileDialogConfig config;
+	config.path = dialogStartDir();
 	config.countSelectionMax = 1;
 	config.flags =
 		ImGuiFileDialogFlags_DontShowHiddenFiles |
@@ -4474,6 +4763,7 @@ void Editor::showSaveFileAs()
 	else dialogViewportId = ImGui::GetMainViewport()->ID;
 	dialogNeedsPlacement = true;
 	IGFD::FileDialogConfig config;
+	config.path = dialogStartDir();
 	config.countSelectionMax = 1;
 	config.flags =
 		ImGuiFileDialogFlags_DontShowHiddenFiles |
@@ -4863,21 +5153,53 @@ void Editor::renderGotoLine()
 //	Editor::setAutocompleteMode
 //
 
+void Editor::configureTabAutocomplete(TabDocument& t)
+{
+	// Wire the autocomplete callback + debounced rebuild for a SINGLE tab and
+	// build its trie once. Split out of setAutocompleteMode() so newTab() can
+	// set up only the new tab instead of rebuilding EVERY open tab's trie
+	// (which re-scanned big docs + re-inserted the whole project index on every
+	// "+" press — the multi-second new-tab stall).
+	TabDocument* tptr = &t;
+	TextEditor::AutoCompleteConfig config;
+	config.callback = [this, tptr](TextEditor::AutoCompleteState& state)
+		{
+			// Merge this file's identifiers with the shared project-wide trie.
+			// Queried separately because findSuggestions() clears its output
+			// vector. File-local matches rank first; project matches fill the
+			// rest, deduped, capped at 20.
+			if (projectTrieGen != indexState->gen.load()) buildProjectTrie();
+			std::vector<std::string> local, proj;
+			tptr->trie.findSuggestions(local, state.searchTerm);
+			projectTrie.findSuggestions(proj, state.searchTerm);
+			state.suggestions.clear();
+			std::unordered_set<std::string> seen;
+			for (auto& s : local) {
+				if (state.suggestions.size() >= 20) break;
+				if (seen.insert(s).second) state.suggestions.push_back(s);
+			}
+			for (auto& s : proj) {
+				if (state.suggestions.size() >= 20) break;
+				if (seen.insert(s).second) state.suggestions.push_back(s);
+			}
+		};
+	t.editor.SetAutoCompleteConfig(&config);
+	t.editor.SetChangeCallback([this, tptr]() { buildAutocompleteTrie(*tptr); }, 3000);
+	buildAutocompleteTrie(t);
+}
+
 void Editor::setAutocompleteMode(bool flag)
 {
+	// Global toggle: (re)configure or tear down autocomplete on ALL tabs. The
+	// per-tab path lives in configureTabAutocomplete(); adding a tab must NOT
+	// call this (use that helper for just the new tab) or it rebuilds every
+	// trie.
 	for (auto& tp : tabs)
 	{
 		auto& t = *tp;
 		if (flag)
 		{
-			TextEditor::AutoCompleteConfig config;
-			TabDocument* tptr = &t;
-			config.callback = [tptr](TextEditor::AutoCompleteState& state)
-				{
-					tptr->trie.findSuggestions(state.suggestions, state.searchTerm);
-				};
-			t.editor.SetAutoCompleteConfig(&config);
-			t.editor.SetChangeCallback([this, tptr]() { buildAutocompleteTrie(*tptr); }, 3000);
+			configureTabAutocomplete(t);
 		}
 		else
 		{
@@ -4885,10 +5207,27 @@ void Editor::setAutocompleteMode(bool flag)
 			t.editor.SetChangeCallback(nullptr);
 		}
 	}
-	if (flag)
-	{
-		for (auto& tp : tabs) buildAutocompleteTrie(*tp);
+}
+
+
+//
+//	Editor::buildProjectTrie
+//
+
+// One shared project-wide identifier trie for the whole editor, rebuilt once
+// per index generation (NOT once per tab). Previously every tab kept its own
+// full copy of the project index inside its trie; opening N tabs allocated N
+// giant tries and froze the app. Now each tab's trie is file-local only and
+// this single shared trie carries the project-wide identifiers.
+void Editor::buildProjectTrie()
+{
+	ScopedTimer _t("buildProjectTrie");
+	int g = indexState->gen.load();
+	projectTrie.clear();
+	if (auto idx = indexSnapshot()) {
+		for (auto& id : idx->identifiers) projectTrie.insert(id);
 	}
+	projectTrieGen = g;
 }
 
 
@@ -4898,6 +5237,7 @@ void Editor::setAutocompleteMode(bool flag)
 
 void Editor::buildAutocompleteTrie(TabDocument& t)
 {
+	ScopedTimer _t("buildAutocompleteTrie");
 	t.trie.clear();
 	auto language = t.editor.GetLanguage();
 	if (language)
@@ -4907,9 +5247,4 @@ void Editor::buildAutocompleteTrie(TabDocument& t)
 		for (auto& word : language->identifiers)  t.trie.insert(word);
 	}
 	t.editor.IterateIdentifiers([&](const std::string& id) { t.trie.insert(id); });
-	// Project-wide identifiers from the background index — so autocomplete
-	// suggests symbols defined anywhere in the project, not just this file.
-	if (auto idx = indexSnapshot()) {
-		for (auto& id : idx->identifiers) t.trie.insert(id);
-	}
 }

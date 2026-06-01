@@ -38,16 +38,29 @@
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
-	// Hide the console window that Windows pops up for a console-subsystem app
-	// when launched from Explorer — but ONLY if we own it. If the editor was
-	// started from a real terminal (>1 process attached to the console), leave
-	// that terminal alone. FreeConsole detaches us; the popup console then
-	// closes since nothing else is attached.
-	{
-		DWORD pids[4];
-		DWORD attached = GetConsoleProcessList(pids, 4);
-		if (attached <= 1)
-			FreeConsole();
+	// We link as a /SUBSYSTEM:WINDOWS app so launching from Explorer never
+	// flashes a console window. Two cases:
+	//   1. Launched from a real terminal → attach to the parent's console so
+	//      printf/fprintf appear there.
+	//   2. Launched from Explorer (no parent console) → allocate our OWN console
+	//      but keep its window HIDDEN. This matters because child processes we
+	//      spawn via _popen / std::system (the `dotnet --list-sdks` probe, build
+	//      and run commands, the script runner) inherit our console. Without one,
+	//      EACH child's cmd.exe allocates and SHOWS its own console window — the
+	//      "a console pops up when opening a project" regression. Giving them a
+	//      hidden console to inherit keeps them silent.
+	if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+		FILE* fp = nullptr;
+		freopen_s(&fp, "CONOUT$", "w", stdout);
+		freopen_s(&fp, "CONOUT$", "w", stderr);
+	} else if (AllocConsole()) {
+		// Hide the window we just created; we only want the console *object* so
+		// children have something to inherit, not a visible terminal.
+		if (HWND hc = GetConsoleWindow()) ShowWindow(hc, SW_HIDE);
+		FILE* fp = nullptr;
+		freopen_s(&fp, "CONOUT$", "w", stdout);
+		freopen_s(&fp, "CONOUT$", "w", stderr);
+		freopen_s(&fp, "CONIN$",  "r", stdin);
 	}
 #endif
 	// Parse --project <dir> and positional args. Positionals are sorted into

@@ -59,6 +59,27 @@ target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imgu
 # The example executable owns main(); the editor library doesn't.
 target_compile_definitions(example PRIVATE STANDALONE=1)
 
+# Link as a GUI (WINDOWS) subsystem app so no console window appears when the
+# editor is launched from Explorer / a shortcut. main() stays the entry point
+# via /ENTRY:mainCRTStartup (the WINDOWS subsystem would otherwise want WinMain).
+# main.cpp re-attaches to a parent terminal's console at runtime so command-line
+# launches keep their stdout/stderr.
+if(WIN32 AND MSVC)
+	set_target_properties(example PROPERTIES WIN32_EXECUTABLE ON)
+	target_link_options(example PRIVATE /ENTRY:mainCRTStartup)
+endif()
+
 target_compile_options(example PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
+# Sync the runtime language definitions (languages/*.lang) next to the built
+# executable after every build. loadRuntimeLanguages() looks in <exe-dir>/languages
+# first, so without this the deployed copy goes stale — newly added .lang files
+# (xaml, xml, cmake, …) silently never load. copy_directory_if_different only
+# touches changed files, so it's cheap on no-op rebuilds.
+add_custom_command(TARGET example POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+		"${CMAKE_CURRENT_SOURCE_DIR}/languages"
+		"$<TARGET_FILE_DIR:example>/languages"
+	COMMENT "Syncing languages/ next to example.exe")

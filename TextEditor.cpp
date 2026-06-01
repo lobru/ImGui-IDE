@@ -1686,9 +1686,13 @@ void TextEditor::handleMouseInteractions()
 		}
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		// Damp horizontal pan — reading is overwhelmingly vertical, so vertical
-		// scroll stays easy and sideways needs a more deliberate drag.
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f);
+		// Bias strongly toward vertical: only apply horizontal scroll when the
+		// drag is within ~27° of horizontal (|dx| > 2*|dy|). A near-diagonal or
+		// vertical gesture contributes NO sideways motion, so reading down a
+		// file never drifts left/right. A constant damping factor can't express
+		// this — the gate has to depend on the dx/dy ratio.
+		float hGateP = (std::fabs(mouseDelta.x) > std::fabs(mouseDelta.y) * 2.0f) ? 1.0f : 0.0f;
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f * hGateP);
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
 	}
@@ -1706,7 +1710,10 @@ void TextEditor::handleMouseInteractions()
 		offset *= scrollFactor;
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * 0.35f);
+		// Same angle gate as the pan path: horizontal only when the cursor offset
+		// from the anchor is within ~27° of horizontal (|dx| > 2*|dy|).
+		float hGateS = (std::fabs(offset.x) > std::fabs(offset.y) * 2.0f) ? 1.0f : 0.0f;
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * 0.35f * hGateS);
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y);
 
 		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
@@ -3432,13 +3439,21 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	bool useIndentFolding = false;
 	bool useLuaFolding = false;
 	bool useIniFolding = false;
+	bool useTagFolding = false;   // XML/XAML/HTML element nesting
 	if (auto lang = document.getLanguage())
 	{
 		const std::string& name = lang->name;
 		useIndentFolding = (name == "Python");
 		useLuaFolding = (name == "Lua");
 		useIniFolding = (name == "INI");
+		useTagFolding = (name == "XML" || name == "XAML" || name == "HTML");
 	}
+
+	// --- XML/XAML/HTML element folds: <Tag ...> … </Tag> ---
+	// Stack of (tagName, openCoordinate). Self-closing <Tag/>, declarations
+	// (<?xml?>, <!-- -->, <!DOCTYPE>) and HTML void elements don't push.
+	struct XmlTag { std::string name; Coordinate start; };
+	std::vector<XmlTag> tagStack;
 
 	// --- Lua keyword blocks (function/if/do/repeat … end/until) ---
 	// Stack of opener positions; each closer pops and produces a fold.
@@ -3527,6 +3542,59 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 						push_back(FoldRange(start, Coordinate(line, it), Braces));
 					}
 				}
+			}
+		}
+
+		// XML / XAML / HTML element folds. Scan every '<' on the line: an
+		// opening tag pushes, a matching </close> pops and emits a fold spanning
+		// the two lines. Self-closing <Tag/>, processing instructions <?…?>,
+		// comments <!-- … -->, and declarations <!…> never push.
+		if (useTagFolding)
+		{
+			size_t p = 0;
+			while ((p = text.find('<', p)) != std::string::npos)
+			{
+				if (p + 1 >= text.size()) break;
+				char c1 = text[p + 1];
+				if (c1 == '?' || c1 == '!')   // <?xml?>, <!-- -->, <!DOCTYPE>
+				{
+					p += 1;
+					continue;
+				}
+				bool closing = (c1 == '/');
+				size_t nameStart = p + (closing ? 2 : 1);
+				size_t q = nameStart;
+				while (q < text.size() &&
+				       (std::isalnum((unsigned char) text[q]) || text[q] == '_' ||
+				        text[q] == '-' || text[q] == ':' || text[q] == '.'))
+					++q;
+				std::string tagName = text.substr(nameStart, q - nameStart);
+				if (tagName.empty()) { p = nameStart; continue; }
+
+				// Find this tag's terminating '>' to detect self-closing "/>".
+				size_t gt = text.find('>', q);
+				bool selfClose = (gt != std::string::npos && gt > 0 && text[gt - 1] == '/');
+
+				if (closing)
+				{
+					// Pop until we match (tolerates unbalanced/void tags).
+					for (size_t k = tagStack.size(); k-- > 0; )
+					{
+						if (tagStack[k].name == tagName)
+						{
+							Coordinate start = tagStack[k].start;
+							tagStack.resize(k);
+							if (start.line < line)
+								push_back(FoldRange(start, Coordinate(line, (int) p), Region));
+							break;
+						}
+					}
+				}
+				else if (!selfClose)
+				{
+					tagStack.push_back({ tagName, Coordinate(line, (int) p) });
+				}
+				p = (gt != std::string::npos) ? gt + 1 : q;
 			}
 		}
 

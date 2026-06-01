@@ -108,6 +108,7 @@ class Editor {
 	void showDiff();
 	void showFileOpen();
 	void showSaveFileAs();
+	std::string dialogStartDir() const;   // start dir for open/save dialogs (active doc → project → cwd)
 	void showConfirmClose(std::function<void()> callback);
 	void showConfirmQuit();
 	void showError(const std::string& message);
@@ -121,6 +122,7 @@ class Editor {
 
 	void setAutocompleteMode(bool flag);
 	void buildAutocompleteTrie(TabDocument& t);
+	void configureTabAutocomplete(TabDocument& t);   // wire autocomplete + build trie for ONE tab
 
 	static const TextEditor::Language* languageForPath(const std::string& path);
 
@@ -203,6 +205,9 @@ private:
 	std::shared_ptr<IndexState> indexState = std::make_shared<IndexState>();
 	void rebuildProjectIndex();                              // spawn background build
 	std::shared_ptr<const ProjectIndex> indexSnapshot();     // thread-safe read
+	TextEditor::Trie projectTrie;        // shared project-wide identifier trie (one copy, not per-tab)
+	int projectTrieGen = -1;             // index gen projectTrie was built from (-1 = never)
+	void buildProjectTrie();             // (re)build projectTrie from the current index snapshot
 	// F6: walk up from the active doc to find a project build script
 	// (build.bat / build.ps1 / build.sh / Makefile / CMakeLists.txt) and run it.
 	void runProjectBuild();
@@ -384,6 +389,8 @@ private:
 	std::string                     referencesWord;
 	std::vector<RefHit>             referencesHits;
 	int                             referencesFileCount = 0;
+	bool                            referencesAllFiles = false;   // false = active file only (default), true = whole project
+	TabDocument*                    referencesTab = nullptr;      // tab the last search ran against (for the All-files re-run)
 	void findReferencesOf(TabDocument& t, const std::string& word);
 	void renderReferencesPanel();
 
@@ -393,6 +400,7 @@ private:
 	// the matching line. Works for languages the in-file trie doesn't cover
 	// (notably C# cross-file lookups).
 	void goToDefinitionProjectWide(const std::string& word, bool declaration = false);
+	void openCSharpLearn(const std::string& rawSymbol);   // C# SDK types -> Microsoft Learn docs (no on-disk source)
 
 	// Recents — MRU lists of recently opened files and projects.
 	// Capped at 20 entries each, persisted in settings.
