@@ -2077,6 +2077,7 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 					if (!tabs.empty()) {
 						auto& e = doc().editor;
 						e.SetCursor(best->line, 0);
+						e.SelectLine(best->line);   // highlight the whole line, not just the gutter
 						e.ScrollToLine(best->line, TextEditor::Scroll::alignMiddle);
 					}
 					return;
@@ -2312,6 +2313,7 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 	if (!tabs.empty()) {
 		auto& e = doc().editor;
 		e.SetCursor(best.line, 0);
+		e.SelectLine(best.line);   // highlight the whole line, not just the gutter
 		e.ScrollToLine(best.line, TextEditor::Scroll::alignMiddle);
 	}
 }
@@ -2462,6 +2464,7 @@ void Editor::renderReferencesPanel()
 				if (!tabs.empty()) {
 					auto& ed = doc().editor;
 					ed.SetCursor(hit.line, 0);
+					ed.SelectLine(hit.line);   // highlight the whole line, not just the gutter
 					ed.ScrollToLine(hit.line, TextEditor::Scroll::alignMiddle);
 				}
 			}
