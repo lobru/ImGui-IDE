@@ -4652,15 +4652,23 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("New Tab", SHORTCUT "N")) { newFile(); }
 			if (ImGui::MenuItem("Open...", SHORTCUT "O")) { openFile(); }
 			if (ImGui::MenuItem("Open Project...")) { openProjectFolderPicker(); }
+			// Recent lists: show the FILENAME as the menu label (full absolute
+			// paths made the submenu hundreds of px wide, overflowing back over
+			// the parent menu). The full path goes in a hover tooltip.
+			auto recentRow = [](const std::string& path) -> bool {
+				std::string leaf = std::filesystem::path(path).filename().string();
+				if (leaf.empty()) leaf = path;
+				bool clicked = ImGui::MenuItem(leaf.c_str());
+				if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
+					ImGui::SetTooltip("%s", path.c_str());
+				return clicked;
+			};
 			if (ImGui::BeginMenu("Open Recent File", !recentFiles.empty())) {
-				// PushID per row — repeated paths in the list (or paths
-				// containing ## metacharacters) would otherwise alias to the
-				// same ImGui widget ID and trip the duplicate-ID assert.
+				// PushID per row — repeated leaf names (or paths containing ##
+				// metacharacters) would otherwise alias to the same widget ID.
 				for (size_t i = 0; i < recentFiles.size(); ++i) {
 					ImGui::PushID((int) i);
-					if (ImGui::MenuItem(recentFiles[i].c_str())) {
-						openFile(recentFiles[i]);
-					}
+					if (recentRow(recentFiles[i])) openFile(recentFiles[i]);
 					ImGui::PopID();
 				}
 				ImGui::Separator();
@@ -4670,9 +4678,12 @@ void Editor::renderMenuBar()
 			if (ImGui::BeginMenu("Open Recent Project", !recentProjects.empty())) {
 				for (size_t i = 0; i < recentProjects.size(); ++i) {
 					ImGui::PushID((int) i);
-					if (ImGui::MenuItem(recentProjects[i].c_str())) {
-						setProjectRoot(recentProjects[i]);
-					}
+					// Projects are directories — show the folder name.
+					std::string leaf = std::filesystem::path(recentProjects[i]).filename().string();
+					if (leaf.empty()) leaf = recentProjects[i];
+					if (ImGui::MenuItem(leaf.c_str())) setProjectRoot(recentProjects[i]);
+					if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
+						ImGui::SetTooltip("%s", recentProjects[i].c_str());
 					ImGui::PopID();
 				}
 				ImGui::Separator();
