@@ -156,6 +156,17 @@ public:
 	inline void Paste() { if (!readOnly) paste(); }
 	inline void Undo() { if (!readOnly) undo(); }
 	inline void Redo() { if (!readOnly) redo(); }
+
+	// Keybinding remap for editor-internal actions. The host app sets a chord
+	// string (e.g. "Ctrl+Shift+U") for an action id; when that chord is pressed
+	// and this editor has focus, the action runs instead of (or in addition to)
+	// its default. Recognised ids: "undo", "redo", "cut", "copy", "paste",
+	// "selectAll", "toggleComments", "foldAll", "unfoldAll", "foldCurrent",
+	// "unfoldCurrent", "upperCase", "lowerCase", "indent", "deindent",
+	// "addNextOccurrence". An empty chord clears the override. Defaults still
+	// apply for any action without an override.
+	void SetKeyChordOverride(const std::string& action, const std::string& chord);
+	inline void ClearKeyChordOverrides() { keyChordOverrides.clear(); }
 	inline bool CanUndo() const { return !readOnly && transactions.canUndo(); };
 	inline bool CanRedo() const { return !readOnly && transactions.canRedo(); };
 	inline size_t GetUndoIndex() const { return transactions.getUndoIndex(); };
@@ -1458,6 +1469,13 @@ protected:
 	// keyboard and mouse interactions
 	void handleKeyboardInputs();
 	void handleMouseInteractions();
+
+	// Host-app remap of editor-internal actions: action id -> chord string.
+	// Consulted at the top of handleKeyboardInputs (see tryKeyChordOverrides).
+	std::unordered_map<std::string, std::string> keyChordOverrides;
+	// Returns true if an override chord fired this frame (and ran its action),
+	// so the default keyboard handling should be skipped for this frame.
+	bool tryKeyChordOverrides();
 
 	// manipulate selections/cursors
 	void selectAll();

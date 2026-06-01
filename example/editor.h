@@ -296,6 +296,12 @@ private:
 	// Resolve a bind id to its active chord string (override or default), then
 	// test it this frame. defaultChord is used when no override exists.
 	bool keybindPressed(const char* id, const char* defaultChord) const;
+	// Push the editor-internal keybind overrides (edit.*/code.* with a widget
+	// action id) into every open tab's TextEditor via SetKeyChordOverride, so a
+	// rebind of e.g. "to UPPERCASE" actually takes effect inside the widget.
+	// Called after settings load, on new tabs, and whenever a chord is recorded.
+	void applyKeybindOverridesToEditors();
+	void applyKeybindOverridesToEditor(TextEditor& ed) const;
 	bool   prefAutoIndent      = true;
 	bool   prefCompletePairs   = true;
 	bool   prefShowFps         = false;   // FPS readout on the status bar

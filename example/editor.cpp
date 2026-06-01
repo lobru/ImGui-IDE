@@ -262,6 +262,7 @@ Editor::TabDocument& Editor::newTab()
 	t->editor.SetPanInverted(prefInvertPan);
 	t->editor.SetWordWrap(prefWordWrap);
 	t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
+	applyKeybindOverridesToEditor(t->editor);   // user keybind remaps into this editor
 	tabs.push_back(std::move(t));
 	activeTab = tabs.size() - 1;
 	// Configure autocomplete for ONLY the new tab. Do NOT call
@@ -295,6 +296,7 @@ Editor::TabDocument& Editor::newTab(const std::string& path, bool split, int ind
 		insertedAt = tabs.size() - 1;
 	}
 	activeTab = insertedAt;
+	applyKeybindOverridesToEditor(tabs[insertedAt]->editor);   // user keybind remaps into this editor
 	if (autocomplete) configureTabAutocomplete(*tabs[insertedAt]);
 	return *tabs[insertedAt];
 }
@@ -2029,6 +2031,54 @@ bool Editor::keybindPressed(const char* id, const char* defaultChord) const
 	return keyChordPressed(chord);
 }
 
+namespace {
+	// Catalogue ids that map to a TextEditor-internal action, paired with the
+	// widget action id and the editor's DEFAULT chord. Single source of truth
+	// for pushing overrides into the widget; mirrors the Settings → Keybinds
+	// catalogue rows whose widgetAction is non-null. Default chord is applied
+	// when the user has no override, so a rebind cleanly reverts on reset.
+	struct WidgetBind { const char* id; const char* widgetAction; const char* defaultChord; };
+	static const WidgetBind kWidgetBinds[] = {
+		{ "edit.undo",     "undo",              "Ctrl+Z" },
+		{ "edit.redo",     "redo",              "Ctrl+Y" },
+		{ "edit.cut",      "cut",               "Ctrl+X" },
+		{ "edit.copy",     "copy",              "Ctrl+C" },
+		{ "edit.paste",    "paste",             "Ctrl+V" },
+		{ "edit.selAll",   "selectAll",         "Ctrl+A" },
+		{ "edit.addOcc",   "addNextOccurrence", "Ctrl+D" },
+		{ "edit.indent",   "indent",            "Ctrl+]" },
+		{ "edit.deindent", "deindent",          "Ctrl+[" },
+		{ "edit.comment",  "toggleComments",    "Ctrl+/" },
+		{ "code.foldAll",  "foldAll",           "Ctrl+0" },
+		{ "code.unfoldAll","unfoldAll",         "Ctrl+J" },
+		{ "code.foldCur",  "foldCurrent",       "Ctrl+Shift+[" },
+		{ "code.unfoldCur","unfoldCurrent",     "Ctrl+Shift+]" },
+		// upperCase/lowerCase default to two-stroke Ctrl+K chords, which the
+		// widget's single-combo override can't express. Only push an override
+		// when the user actually rebinds them to a single chord; otherwise leave
+		// the widget's built-in Ctrl+K Ctrl+U / Ctrl+K Ctrl+L default in place.
+		{ "code.upper",    "upperCase",         "" },
+		{ "code.lower",    "lowerCase",         "" },
+	};
+}
+
+void Editor::applyKeybindOverridesToEditor(TextEditor& ed) const
+{
+	for (auto& wb : kWidgetBinds) {
+		auto it = keybindOverrides.find(wb.id);
+		bool haveOverride = (it != keybindOverrides.end() && !it->second.empty());
+		// Push the override when set; otherwise push the default (or clear, for
+		// the two-stroke-default actions whose defaultChord is empty).
+		std::string chord = haveOverride ? it->second : std::string(wb.defaultChord);
+		ed.SetKeyChordOverride(wb.widgetAction, chord);
+	}
+}
+
+void Editor::applyKeybindOverridesToEditors()
+{
+	for (auto& tp : tabs) applyKeybindOverridesToEditor(tp->editor);
+}
+
 void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration)
 {
 	ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
@@ -3142,50 +3192,50 @@ void Editor::renderSettings()
 				// fallback so user overrides can be diffed/reset. Overrides go
 				// into `keybindOverrides` (in-memory only for now — persist in a
 				// follow-up if the user actually rebinds anything).
-				struct Bind { const char* id; const char* action; const char* defaultCombo; const char* group; bool rebindable; };
+				struct Bind { const char* id; const char* action; const char* defaultCombo; const char* group; bool rebindable; const char* widgetAction; };
 				static const Bind binds[] = {
-					{ "file.new",        "New tab",                  "Ctrl+N",        "File", true },
-					{ "file.open",       "Open file...",             "Ctrl+O",        "File", true },
-					{ "file.save",       "Save",                     "Ctrl+S",        "File", true },
-					{ "file.saveAs",     "Save As...",               "Ctrl+Shift+S",  "File", true },
-					{ "file.close",      "Close tab",                "Ctrl+W",        "File", true },
-					{ "file.reopen",     "Reopen last closed tab",   "Ctrl+Shift+T",  "File", true },
-					{ "file.history",    "File History",             "Ctrl+I",        "File", true },
+					{ "file.new",        "New tab",                  "Ctrl+N",        "File", true, nullptr },
+					{ "file.open",       "Open file...",             "Ctrl+O",        "File", true, nullptr },
+					{ "file.save",       "Save",                     "Ctrl+S",        "File", true, nullptr },
+					{ "file.saveAs",     "Save As...",               "Ctrl+Shift+S",  "File", true, nullptr },
+					{ "file.close",      "Close tab",                "Ctrl+W",        "File", true, nullptr },
+					{ "file.reopen",     "Reopen last closed tab",   "Ctrl+Shift+T",  "File", true, nullptr },
+					{ "file.history",    "File History",             "Ctrl+I",        "File", true, nullptr },
 
-					{ "edit.undo",       "Undo",                     "Ctrl+Z",        "Edit", false },
-					{ "edit.redo",       "Redo",                     "Ctrl+Y",        "Edit", false },
-					{ "edit.cut",        "Cut",                      "Ctrl+X",        "Edit", false },
-					{ "edit.copy",       "Copy",                     "Ctrl+C",        "Edit", false },
-					{ "edit.paste",      "Paste",                    "Ctrl+V",        "Edit", false },
-					{ "edit.selAll",     "Select all",               "Ctrl+A",        "Edit", false },
-					{ "edit.addOcc",     "Add next occurrence",      "Ctrl+D",        "Edit", false },
-					{ "edit.selAllOcc",  "Select all occurrences",   "Ctrl+Shift+D",  "Edit", false },
-					{ "edit.indent",     "Indent line(s)",           "Ctrl+]",        "Edit", false },
-					{ "edit.deindent",   "De-indent line(s)",        "Ctrl+[",        "Edit", false },
-					{ "edit.comment",    "Toggle comments",          "Ctrl+/",        "Edit", false },
-					{ "edit.moveLine",   "Move line(s)",             "Alt+Up/Down",   "Edit", false },
+					{ "edit.undo",       "Undo",                     "Ctrl+Z",        "Edit", true, "undo" },
+					{ "edit.redo",       "Redo",                     "Ctrl+Y",        "Edit", true, "redo" },
+					{ "edit.cut",        "Cut",                      "Ctrl+X",        "Edit", true, "cut" },
+					{ "edit.copy",       "Copy",                     "Ctrl+C",        "Edit", true, "copy" },
+					{ "edit.paste",      "Paste",                    "Ctrl+V",        "Edit", true, "paste" },
+					{ "edit.selAll",     "Select all",               "Ctrl+A",        "Edit", true, "selectAll" },
+					{ "edit.addOcc",     "Add next occurrence",      "Ctrl+D",        "Edit", true, "addNextOccurrence" },
+					{ "edit.selAllOcc",  "Select all occurrences",   "Ctrl+Shift+D",  "Edit", false, nullptr },
+					{ "edit.indent",     "Indent line(s)",           "Ctrl+]",        "Edit", true, "indent" },
+					{ "edit.deindent",   "De-indent line(s)",        "Ctrl+[",        "Edit", true, "deindent" },
+					{ "edit.comment",    "Toggle comments",          "Ctrl+/",        "Edit", true, "toggleComments" },
+					{ "edit.moveLine",   "Move line(s)",             "Alt+Up/Down",   "Edit", false, nullptr },
 
-					{ "find.find",       "Find",                     "Ctrl+F",        "Find", false },
-					{ "find.next",       "Find next",                "F3",            "Find", false },
-					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find", false },
-					{ "find.goto",       "Go to Line...",            "Ctrl+G",        "Find", true },
+					{ "find.find",       "Find",                     "Ctrl+F",        "Find", false, nullptr },
+					{ "find.next",       "Find next",                "F3",            "Find", false, nullptr },
+					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find", false, nullptr },
+					{ "find.goto",       "Go to Line...",            "Ctrl+G",        "Find", true, nullptr },
 
-					{ "code.foldAll",    "Fold all",                 "Ctrl+0",        "Code", false },
-					{ "code.unfoldAll",  "Unfold all",               "Ctrl+J",        "Code", false },
-					{ "code.foldCur",    "Fold current",             "Ctrl+Shift+[",  "Code", false },
-					{ "code.unfoldCur",  "Unfold current",           "Ctrl+Shift+]",  "Code", false },
-					{ "code.upper",      "Selection -> UPPERCASE",   "Ctrl+K Ctrl+U", "Code", false },
-					{ "code.lower",      "Selection -> lowercase",   "Ctrl+K Ctrl+L", "Code", false },
-					{ "code.hSrc",       "Switch Header / Source",   "Alt+O",         "Code", true },
+					{ "code.foldAll",    "Fold all",                 "Ctrl+0",        "Code", true, "foldAll" },
+					{ "code.unfoldAll",  "Unfold all",               "Ctrl+J",        "Code", true, "unfoldAll" },
+					{ "code.foldCur",    "Fold current",             "Ctrl+Shift+[",  "Code", true, "foldCurrent" },
+					{ "code.unfoldCur",  "Unfold current",           "Ctrl+Shift+]",  "Code", true, "unfoldCurrent" },
+					{ "code.upper",      "Selection -> UPPERCASE",   "Ctrl+K Ctrl+U", "Code", true, "upperCase" },
+					{ "code.lower",      "Selection -> lowercase",   "Ctrl+K Ctrl+L", "Code", true, "lowerCase" },
+					{ "code.hSrc",       "Switch Header / Source",   "Alt+O",         "Code", true, nullptr },
 
-					{ "view.splitR",     "Split tab right",          "Ctrl+\\",       "View", true },
-					{ "view.zoomIn",     "Zoom in",                  "Ctrl++",        "View", true },
-					{ "view.zoomOut",    "Zoom out",                 "Ctrl+-",        "View", true },
-					{ "view.cycleNext",  "Cycle tabs forward",       "Ctrl+Tab",      "View", false },
-					{ "view.cyclePrev",  "Cycle tabs backward",      "Ctrl+Shift+Tab","View", false },
+					{ "view.splitR",     "Split tab right",          "Ctrl+\\",       "View", true, nullptr },
+					{ "view.zoomIn",     "Zoom in",                  "Ctrl++",        "View", true, nullptr },
+					{ "view.zoomOut",    "Zoom out",                 "Ctrl+-",        "View", true, nullptr },
+					{ "view.cycleNext",  "Cycle tabs forward",       "Ctrl+Tab",      "View", false, nullptr },
+					{ "view.cyclePrev",  "Cycle tabs backward",      "Ctrl+Shift+Tab","View", false, nullptr },
 
-					{ "proj.run",        "Run",                      "F5",            "Project", true },
-					{ "proj.build",      "Build project",            "F6",            "Project", true },
+					{ "proj.run",        "Run",                      "F5",            "Project", true, nullptr },
+					{ "proj.build",      "Build project",            "F6",            "Project", true, nullptr },
 				};
 
 				static std::string capturingId;       // id of the row currently waiting for a chord
@@ -3217,6 +3267,7 @@ void Editor::renderSettings()
 					}
 					if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
 						keybindOverrides.erase(targetId);
+						applyKeybindOverridesToEditors();
 						saveSettings();
 						capturingId.clear();
 						return;
@@ -3253,6 +3304,7 @@ void Editor::renderSettings()
 						if (!name || !name[0]) continue;   // unnamed key — ignore
 						chord += name;
 						keybindOverrides[targetId] = chord;
+						applyKeybindOverridesToEditors();
 						saveSettings();
 						capturingId.clear();
 						return;
@@ -3293,7 +3345,7 @@ void Editor::renderSettings()
 								}
 								ImGui::TableNextColumn();
 								if (b.rebindable && keybindOverrides.count(b.id) != 0) {
-									if (ImGui::SmallButton("reset")) { keybindOverrides.erase(b.id); saveSettings(); }
+									if (ImGui::SmallButton("reset")) { keybindOverrides.erase(b.id); applyKeybindOverridesToEditors(); saveSettings(); }
 								}
 							ImGui::PopID();
 						}
@@ -4242,7 +4294,7 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("File History…",      " " SHORTCUT "I")) { showDiff(); }
 			if (ImGui::MenuItem("Diff Against File…"))                  { openDiffOtherDialog(); }
 			ImGui::Separator();
-			if (ImGui::MenuItem("Settings...")) { loadSettings(); settingsVisible = true; }
+			if (ImGui::MenuItem("Settings...")) { loadSettings(); applyKeybindOverridesToEditors(); settingsVisible = true; }
 			ImGui::Separator();
 			// Path utilities — handy when the current doc lives on disk.
 			bool hasPath = !tabs.empty() && doc().filename != "untitled";

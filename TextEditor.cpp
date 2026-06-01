@@ -1363,6 +1363,79 @@ void TextEditor::renderPanScrollIndicator()
 //	TextEditor::handleKeyboardInputs
 //
 
+void TextEditor::SetKeyChordOverride(const std::string& action, const std::string& chord)
+{
+	if (chord.empty()) keyChordOverrides.erase(action);
+	else               keyChordOverrides[action] = chord;
+}
+
+// Test a single-combo chord string ("Ctrl+Shift+U") against the live key state:
+// exact modifier set + the named key pressed this frame. Multi-stroke chords
+// (containing a space) are not matched here. Mirrors the host app's matcher so
+// chords round-trip with what the Settings recorder produces.
+static bool teChordPressed(const std::string& chord)
+{
+	if (chord.empty() || chord.find(' ') != std::string::npos) return false;
+	bool needCtrl = false, needShift = false, needAlt = false, needSuper = false;
+	std::string keyName;
+	size_t pos = 0;
+	while (pos < chord.size())
+	{
+		size_t plus = chord.find('+', pos);
+		std::string tok = (plus == std::string::npos) ? chord.substr(pos) : chord.substr(pos, plus - pos);
+		if      (tok == "Ctrl")  needCtrl  = true;
+		else if (tok == "Shift") needShift = true;
+		else if (tok == "Alt")   needAlt   = true;
+		else if (tok == "Super") needSuper = true;
+		else if (!tok.empty())   keyName   = tok;
+		if (plus == std::string::npos) break;
+		pos = plus + 1;
+		if (pos < chord.size() && chord[pos] == '+') { keyName = "+"; break; }
+	}
+	if (keyName.empty()) return false;
+	ImGuiIO& io = ImGui::GetIO();
+	if (io.KeyCtrl != needCtrl || io.KeyShift != needShift ||
+	    io.KeyAlt != needAlt || io.KeySuper != needSuper)
+		return false;
+	for (ImGuiKey k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; k = (ImGuiKey)(k + 1))
+	{
+		const char* n = ImGui::GetKeyName(k);
+		if (n && n[0] && keyName == n)
+			return ImGui::IsKeyPressed(k, false);
+	}
+	return false;
+}
+
+bool TextEditor::tryKeyChordOverrides()
+{
+	if (keyChordOverrides.empty()) return false;
+	// Map action id -> the action to run. Checked before the default keyboard
+	// chain; first matching override wins and suppresses default handling.
+	for (auto& [action, chord] : keyChordOverrides)
+	{
+		if (!teChordPressed(chord)) continue;
+		if      (action == "undo")           { if (!readOnly) undo(); }
+		else if (action == "redo")           { if (!readOnly) redo(); }
+		else if (action == "cut")            { if (!readOnly) cut(); }
+		else if (action == "copy")           { copy(); }
+		else if (action == "paste")          { if (!readOnly) paste(); }
+		else if (action == "selectAll")      { selectAll(); }
+		else if (action == "addNextOccurrence") { if (cursors.currentCursorHasSelection()) addNextOccurrence(); }
+		else if (action == "toggleComments") { if (!readOnly && language) toggleComments(); }
+		else if (action == "indent")         { if (!readOnly) indentLines(); }
+		else if (action == "deindent")       { if (!readOnly) deindentLines(); }
+		else if (action == "upperCase")      { if (!readOnly) selectionToUpperCase(); }
+		else if (action == "lowerCase")      { if (!readOnly) selectionToLowerCase(); }
+		else if (action == "foldAll")        { if (foldRanges.foldingEnabled) FoldAll(); }
+		else if (action == "unfoldAll")      { if (foldRanges.foldingEnabled) UnfoldAll(); }
+		else if (action == "foldCurrent")    { if (foldRanges.foldingEnabled) FoldCurrent(); }
+		else if (action == "unfoldCurrent")  { if (foldRanges.foldingEnabled) UnfoldCurrent(); }
+		else continue;   // unknown id — ignore, keep scanning
+		return true;
+	}
+	return false;
+}
+
 void TextEditor::handleKeyboardInputs()
 {
 
@@ -1379,6 +1452,10 @@ void TextEditor::handleKeyboardInputs()
 		io.WantCaptureKeyboard = true;
 		io.WantTextInput = true;
 		static std::vector<ImGuiKey> shortcutKeysQueue{};
+
+		// Host-app keybinding overrides take precedence over the built-in chords.
+		// If one fires this frame, skip default handling so the rebinding wins.
+		if (tryKeyChordOverrides()) return;
 
 		// get state of modifier keys
 		auto shift = ImGui::IsKeyDown(ImGuiMod_Shift);
