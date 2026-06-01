@@ -1983,6 +1983,29 @@ void Editor::openCSharpLearn(const std::string& rawSymbol)
 // ImGui::GetKeyName so it round-trips with the recorder, which builds chords
 // the same way. Multi-stroke chords (containing a space, e.g. "Ctrl+K Ctrl+U")
 // are widget-internal and intentionally not handled here.
+// Map a single key token to the name ImGui::GetKeyName returns. Chord strings
+// are authored with glyphs ("=", "-", "\\", "/", "[", "]", ";", "'", ",", ".",
+// "`") but GetKeyName yields words ("Equal", "Minus", "Backslash", …). Without
+// this, every punctuation binding silently fails to match — which is what broke
+// Ctrl+= / Ctrl+- / Ctrl+\ (zoom in/out, split right). Letter/digit/F-key/named
+// tokens already match GetKeyName verbatim, so they pass through unchanged.
+static std::string normalizeKeyToken(const std::string& tok)
+{
+	if (tok == "=")  return "Equal";
+	if (tok == "-")  return "Minus";
+	if (tok == "\\") return "Backslash";
+	if (tok == "/")  return "Slash";
+	if (tok == "[")  return "LeftBracket";
+	if (tok == "]")  return "RightBracket";
+	if (tok == ";")  return "Semicolon";
+	if (tok == "'")  return "Apostrophe";
+	if (tok == ",")  return "Comma";
+	if (tok == ".")  return "Period";
+	if (tok == "`")  return "GraveAccent";
+	if (tok == "+")  return "KeypadAdd";   // bare '+' captured from the keypad
+	return tok;
+}
+
 bool Editor::keyChordPressed(const std::string& chord) const
 {
 	if (chord.empty() || chord.find(' ') != std::string::npos) return false;
@@ -2007,6 +2030,7 @@ bool Editor::keyChordPressed(const std::string& chord) const
 		if (pos < chord.size() && chord[pos] == '+') { keyName = "+"; break; }
 	}
 	if (keyName.empty()) return false;
+	keyName = normalizeKeyToken(keyName);
 
 	ImGuiIO& io = ImGui::GetIO();
 	if (io.KeyCtrl != needCtrl || io.KeyShift != needShift ||
@@ -2049,6 +2073,12 @@ namespace {
 		{ "edit.indent",   "indent",            "Ctrl+]" },
 		{ "edit.deindent", "deindent",          "Ctrl+[" },
 		{ "edit.comment",  "toggleComments",    "Ctrl+/" },
+		{ "edit.selAllOcc","selectAllOccurrences","Ctrl+Shift+D" },
+		{ "edit.moveUp",   "moveLineUp",        "Alt+UpArrow" },
+		{ "edit.moveDown", "moveLineDown",      "Alt+DownArrow" },
+		{ "find.find",     "find",              "Ctrl+F" },
+		{ "find.next",     "findNext",          "F3" },
+		{ "find.findAll",  "findAll",           "Ctrl+Shift+G" },
 		{ "code.foldAll",  "foldAll",           "Ctrl+0" },
 		{ "code.unfoldAll","unfoldAll",         "Ctrl+J" },
 		{ "code.foldCur",  "foldCurrent",       "Ctrl+Shift+[" },
@@ -2272,13 +2302,30 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 						attr == "x:Class" || attr == "x:Uid")
 						score = 90;
 				}
+				// Is `pos` inside a "..." or '...' string literal on this line?
+				// Count unescaped quotes before pos; an odd count = inside a string.
+				// Definitions never live inside string literals, so the loose
+				// `type NAME(` / `NAME =` heuristics below must NOT fire there —
+				// otherwise text like Content="...with Windows (user mode)" scores
+				// `Windows` as a fake definition. (The XAML attr="value" rule above
+				// is deliberately exempt: it matches the quoted value on purpose.)
+				bool insideString = false;
+				{
+					char q = 0;
+					for (size_t ci = 0; ci < pos && ci < line.size(); ++ci) {
+						char c = line[ci];
+						if (q) { if (c == q && line[ci - 1] != '\\') q = 0; }
+						else if (c == '"' || c == '\'') q = c;
+					}
+					insideString = (q != 0);
+				}
 				// Medium-weak: `<type> <symbol>(` — a method/function signature.
 				// Require a type-like token immediately before the symbol so a
 				// constructor CALL or type usage (`= ImVec4(`, `return Foo(`,
 				// `, Bar(`) is NOT mistaken for a definition. Qualified method
 				// defs (`Ret Class::Method(`) and pointer/ref/template returns
 				// (`Foo* f(`, `vector<int> g(`) still count.
-				if (score == 0) {
+				if (score == 0 && !insideString) {
 					size_t p = pos + symbol.size();
 					while (p < line.size() && line[p] == ' ') ++p;
 					if (p < line.size() && line[p] == '(' && pos > 0) {
@@ -2305,7 +2352,7 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 					}
 				}
 				// Weak: `<symbol> = ` top-level assignment.
-				if (score == 0 && pos == s) {
+				if (score == 0 && !insideString && pos == s) {
 					size_t p = pos + symbol.size();
 					while (p < line.size() && line[p] == ' ') ++p;
 					if (p < line.size() && line[p] == '=' &&
@@ -3209,15 +3256,16 @@ void Editor::renderSettings()
 					{ "edit.paste",      "Paste",                    "Ctrl+V",        "Edit", true, "paste" },
 					{ "edit.selAll",     "Select all",               "Ctrl+A",        "Edit", true, "selectAll" },
 					{ "edit.addOcc",     "Add next occurrence",      "Ctrl+D",        "Edit", true, "addNextOccurrence" },
-					{ "edit.selAllOcc",  "Select all occurrences",   "Ctrl+Shift+D",  "Edit", false, nullptr },
+					{ "edit.selAllOcc",  "Select all occurrences",   "Ctrl+Shift+D",  "Edit", true, "selectAllOccurrences" },
 					{ "edit.indent",     "Indent line(s)",           "Ctrl+]",        "Edit", true, "indent" },
 					{ "edit.deindent",   "De-indent line(s)",        "Ctrl+[",        "Edit", true, "deindent" },
 					{ "edit.comment",    "Toggle comments",          "Ctrl+/",        "Edit", true, "toggleComments" },
-					{ "edit.moveLine",   "Move line(s)",             "Alt+Up/Down",   "Edit", false, nullptr },
+					{ "edit.moveUp",     "Move line(s) up",          "Alt+UpArrow",   "Edit", true, "moveLineUp" },
+					{ "edit.moveDown",   "Move line(s) down",        "Alt+DownArrow", "Edit", true, "moveLineDown" },
 
-					{ "find.find",       "Find",                     "Ctrl+F",        "Find", false, nullptr },
-					{ "find.next",       "Find next",                "F3",            "Find", false, nullptr },
-					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find", false, nullptr },
+					{ "find.find",       "Find",                     "Ctrl+F",        "Find", true, "find" },
+					{ "find.next",       "Find next",                "F3",            "Find", true, "findNext" },
+					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find", true, "findAll" },
 					{ "find.goto",       "Go to Line...",            "Ctrl+G",        "Find", true, nullptr },
 
 					{ "code.foldAll",    "Fold all",                 "Ctrl+0",        "Code", true, "foldAll" },
@@ -3231,8 +3279,8 @@ void Editor::renderSettings()
 					{ "view.splitR",     "Split tab right",          "Ctrl+\\",       "View", true, nullptr },
 					{ "view.zoomIn",     "Zoom in",                  "Ctrl++",        "View", true, nullptr },
 					{ "view.zoomOut",    "Zoom out",                 "Ctrl+-",        "View", true, nullptr },
-					{ "view.cycleNext",  "Cycle tabs forward",       "Ctrl+Tab",      "View", false, nullptr },
-					{ "view.cyclePrev",  "Cycle tabs backward",      "Ctrl+Shift+Tab","View", false, nullptr },
+					{ "view.cycleNext",  "Cycle tabs forward",       "Ctrl+Tab",      "View", true, nullptr },
+					{ "view.cyclePrev",  "Cycle tabs backward",      "Ctrl+Shift+Tab","View", true, nullptr },
 
 					{ "proj.run",        "Run",                      "F5",            "Project", true, nullptr },
 					{ "proj.build",      "Build project",            "F6",            "Project", true, nullptr },
@@ -4483,18 +4531,18 @@ void Editor::renderMenuBar()
 		else if (keybindPressed("proj.run",    "F5"))           { runProjectExeOrScript(); }
 		else if (keybindPressed("proj.build",  "F6"))           { runProjectBuild(); }
 
-		// Tab cycling stays special-cased: it's two chords on one key (Ctrl+Tab /
-		// Ctrl+Shift+Tab) and not exposed as a single rebindable action.
-		if (ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyPressed(ImGuiKey_Tab, false))
+		// Tab cycling — now individually rebindable. Check the backward (Shift)
+		// binding first so the default Ctrl+Shift+Tab isn't swallowed by the
+		// forward Ctrl+Tab match.
+		if (!tabs.empty() && keybindPressed("view.cyclePrev", "Ctrl+Shift+Tab"))
 		{
-			if (!tabs.empty())
-			{
-				if (ImGui::IsKeyDown(ImGuiMod_Shift))
-					activeTab = (activeTab == 0) ? tabs.size() - 1 : activeTab - 1;
-				else
-					activeTab = (activeTab + 1) % tabs.size();
-				tabs[activeTab]->wantFocus = true;
-			}
+			activeTab = (activeTab == 0) ? tabs.size() - 1 : activeTab - 1;
+			tabs[activeTab]->wantFocus = true;
+		}
+		else if (!tabs.empty() && keybindPressed("view.cycleNext", "Ctrl+Tab"))
+		{
+			activeTab = (activeTab + 1) % tabs.size();
+			tabs[activeTab]->wantFocus = true;
 		}
 		// Ctrl+Alt viewport control: pop the active doc out to its own OS window
 		// (←/→) or merge windows back in (M = current, Shift+M = all). Fixed

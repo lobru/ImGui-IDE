@@ -1369,6 +1369,26 @@ void TextEditor::SetKeyChordOverride(const std::string& action, const std::strin
 	else               keyChordOverrides[action] = chord;
 }
 
+// Map a glyph key token to the word ImGui::GetKeyName returns ("=" -> "Equal").
+// Must mirror the host app's normalizer so overrides round-trip; without it,
+// punctuation chords (Ctrl+], Ctrl+/) never match.
+static std::string teNormalizeKeyToken(const std::string& tok)
+{
+	if (tok == "=")  return "Equal";
+	if (tok == "-")  return "Minus";
+	if (tok == "\\") return "Backslash";
+	if (tok == "/")  return "Slash";
+	if (tok == "[")  return "LeftBracket";
+	if (tok == "]")  return "RightBracket";
+	if (tok == ";")  return "Semicolon";
+	if (tok == "'")  return "Apostrophe";
+	if (tok == ",")  return "Comma";
+	if (tok == ".")  return "Period";
+	if (tok == "`")  return "GraveAccent";
+	if (tok == "+")  return "KeypadAdd";
+	return tok;
+}
+
 // Test a single-combo chord string ("Ctrl+Shift+U") against the live key state:
 // exact modifier set + the named key pressed this frame. Multi-stroke chords
 // (containing a space) are not matched here. Mirrors the host app's matcher so
@@ -1393,6 +1413,7 @@ static bool teChordPressed(const std::string& chord)
 		if (pos < chord.size() && chord[pos] == '+') { keyName = "+"; break; }
 	}
 	if (keyName.empty()) return false;
+	keyName = teNormalizeKeyToken(keyName);
 	ImGuiIO& io = ImGui::GetIO();
 	if (io.KeyCtrl != needCtrl || io.KeyShift != needShift ||
 	    io.KeyAlt != needAlt || io.KeySuper != needSuper)
@@ -1424,6 +1445,12 @@ bool TextEditor::tryKeyChordOverrides()
 		else if (action == "toggleComments") { if (!readOnly && language) toggleComments(); }
 		else if (action == "indent")         { if (!readOnly) indentLines(); }
 		else if (action == "deindent")       { if (!readOnly) deindentLines(); }
+		else if (action == "selectAllOccurrences") { selectAllOccurrences(); }
+		else if (action == "moveLineUp")     { if (!readOnly) moveUpLines(); }
+		else if (action == "moveLineDown")   { if (!readOnly) moveDownLines(); }
+		else if (action == "find")           { openFindReplace(); }
+		else if (action == "findNext")       { findNext(); }
+		else if (action == "findAll")        { findAll(); }
 		else if (action == "upperCase")      { if (!readOnly) selectionToUpperCase(); }
 		else if (action == "lowerCase")      { if (!readOnly) selectionToLowerCase(); }
 		else if (action == "foldAll")        { if (foldRanges.foldingEnabled) FoldAll(); }
