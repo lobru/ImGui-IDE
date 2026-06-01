@@ -4203,10 +4203,41 @@ void Editor::renderDocumentWindow(TabDocument& t)
 												std::string qualified = t.editor.GetQualifiedWordAt(line, column);
 												if (qualified.empty()) qualified = word;
 
+												// Cheap gate for the navigation items: only show Go to
+												// Definition / Declaration when the (last-segment) symbol is
+												// actually navigable. Uses data we ALREADY have — no extra
+												// scanning:
+												//   * a language keyword/declaration (if/for/class/int/...) is
+												//     never a definition target → hide;
+												//   * otherwise it must be known: in this file's identifier trie
+												//     OR have a recorded definition site in the project index.
+												// This keeps the menu honest (no "Go to Definition" that just
+												// pops "not found") and is O(keywords)+O(1), only while the
+												// popup is open.
+												const auto* lang = t.editor.GetLanguage();
+												std::string seg = qualified;
+												{
+													size_t cut = seg.size();
+													for (size_t i = 0; i < seg.size(); ++i) {
+														if (seg[i] == '.') cut = i + 1;
+														else if (seg[i] == ':' && i + 1 < seg.size() && seg[i+1] == ':') cut = i + 2;
+														else if (seg[i] == '-' && i + 1 < seg.size() && seg[i+1] == '>') cut = i + 2;
+													}
+													if (cut < seg.size()) seg = seg.substr(cut);
+												}
+												bool isKeyword = false;
+												if (lang) {
+													for (auto& kw : lang->keywords)     if (kw == seg) { isKeyword = true; break; }
+													if (!isKeyword) for (auto& kw : lang->declarations) if (kw == seg) { isKeyword = true; break; }
+												}
+												bool known = !seg.empty() && t.trie.contains(seg);
+												if (!known && !seg.empty()) if (auto idx = indexSnapshot()) known = idx->defs.count(seg) != 0;
+												bool navigable = known && !isKeyword;
+
 												// Definition = where it's defined (bodies / .cpp). Declaration =
 												// where it's declared (prototypes / headers). Both project-wide,
 												// both handle namespaced/qualified names.
-												if (ImGui::MenuItem("Go to Definition"))
+												if (navigable && ImGui::MenuItem("Go to Definition"))
 												{
 													goToDefinitionProjectWide(qualified, false);
 												}
@@ -4214,15 +4245,16 @@ void Editor::renderDocumentWindow(TabDocument& t)
 												// headers exist (C/C++); other languages have a single
 												// definition site, so don't show it for them.
 												{
-													const auto* lang = t.editor.GetLanguage();
 													bool hasDecl = lang && (lang->name == "C" || lang->name == "C++");
-													if (hasDecl && ImGui::MenuItem("Go to Declaration"))
+													if (navigable && hasDecl && ImGui::MenuItem("Go to Declaration"))
 													{
 														goToDefinitionProjectWide(qualified, true);
 													}
 												// C# SDK symbols have no on-disk source (ref assemblies); offer a
-												// jump to their Microsoft Learn documentation page instead.
-												if (lang && lang->name == "C#" && ImGui::MenuItem("Look up in Microsoft Learn"))
+												// jump to their Microsoft Learn documentation page instead. Shown
+												// for any non-keyword word, since SDK types aren't in our trie.
+												if (lang && lang->name == "C#" && !isKeyword && !seg.empty()
+													&& ImGui::MenuItem("Look up in Microsoft Learn"))
 												{
 													openCSharpLearn(qualified);
 												}
