@@ -1473,6 +1473,10 @@ protected:
 	// Host-app remap of editor-internal actions: action id -> chord string.
 	// Consulted at the top of handleKeyboardInputs (see tryKeyChordOverrides).
 	std::unordered_map<std::string, std::string> keyChordOverrides;
+	// Two-stroke pending state for override chords ("Ctrl+K Ctrl+U"): the second
+	// combo we're waiting for, plus its age for timeout. Mirrors the host app.
+	std::string keyChordPending;
+	float       keyChordPendingAge = 0.0f;
 	// Returns true if an override chord fired this frame (and ran its action),
 	// so the default keyboard handling should be skipped for this frame.
 	bool tryKeyChordOverrides();

@@ -290,6 +290,12 @@ private:
 	// internal chords (undo/cut/fold/Ctrl+K…) live in the TextEditor widget and
 	// are not remappable here. Empty/absent = use the action's default chord.
 	std::unordered_map<std::string, std::string> keybindOverrides;
+	// Two-stroke chord state for the app-level matcher: when a chord string has
+	// two combos ("Ctrl+K Ctrl+U"), the first combo arms this prefix; the second
+	// must arrive within a short window. Reset on timeout / Escape / mismatch.
+	mutable std::string keyChordPending;   // first stroke already seen this sequence, or empty
+	mutable float       keyChordPendingAge = 0.0f;   // seconds since the prefix armed
+	void tickKeyChordPending();            // per-frame decay/cancel of the pending prefix
 	// True if the live keyboard state this frame matches `chord` (e.g.
 	// "Ctrl+Shift+N"): exact modifier set + the named key just pressed.
 	bool keyChordPressed(const std::string& chord) const;

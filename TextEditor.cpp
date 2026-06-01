@@ -1429,12 +1429,33 @@ static bool teChordPressed(const std::string& chord)
 
 bool TextEditor::tryKeyChordOverrides()
 {
-	if (keyChordOverrides.empty()) return false;
+	if (keyChordOverrides.empty()) { keyChordPending.clear(); return false; }
+
+	// Age out / cancel a half-entered two-stroke prefix (mirrors the host app).
+	if (!keyChordPending.empty()) {
+		keyChordPendingAge += ImGui::GetIO().DeltaTime;
+		if (keyChordPendingAge > 1.2f || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+			keyChordPending.clear();
+	}
+
+	// Match a chord that may be single ("Ctrl+U") or two-stroke ("Ctrl+K Ctrl+U").
+	// For two-stroke: the first combo arms keyChordPending (the awaited second
+	// combo) and returns false; the second combo completes it.
+	auto matches = [&](const std::string& chord) -> bool {
+		auto sp = chord.find(' ');
+		if (sp == std::string::npos) return teChordPressed(chord);
+		std::string first = chord.substr(0, sp), second = chord.substr(sp + 1);
+		if (!keyChordPending.empty() && keyChordPending == second)
+			return teChordPressed(second) ? (keyChordPending.clear(), true) : false;
+		if (teChordPressed(first)) { keyChordPending = second; keyChordPendingAge = 0.0f; }
+		return false;
+	};
+
 	// Map action id -> the action to run. Checked before the default keyboard
 	// chain; first matching override wins and suppresses default handling.
 	for (auto& [action, chord] : keyChordOverrides)
 	{
-		if (!teChordPressed(chord)) continue;
+		if (!matches(chord)) continue;
 		if      (action == "undo")           { if (!readOnly) undo(); }
 		else if (action == "redo")           { if (!readOnly) redo(); }
 		else if (action == "cut")            { if (!readOnly) cut(); }

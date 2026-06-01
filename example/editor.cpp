@@ -2008,43 +2008,75 @@ static std::string normalizeKeyToken(const std::string& tok)
 
 bool Editor::keyChordPressed(const std::string& chord) const
 {
-	if (chord.empty() || chord.find(' ') != std::string::npos) return false;
+	if (chord.empty()) return false;
 
-	bool needCtrl = false, needShift = false, needAlt = false, needSuper = false;
-	std::string keyName;
-	size_t pos = 0;
-	while (pos < chord.size()) {
-		size_t plus = chord.find('+', pos);
-		// A trailing token like the '+' key itself ("Ctrl++") leaves the final
-		// segment as the key name; treat the last segment (no following '+') as key.
-		std::string tok = (plus == std::string::npos) ? chord.substr(pos)
-		                                              : chord.substr(pos, plus - pos);
-		if      (tok == "Ctrl")  needCtrl  = true;
-		else if (tok == "Shift") needShift = true;
-		else if (tok == "Alt")   needAlt   = true;
-		else if (tok == "Super") needSuper = true;
-		else if (!tok.empty())   keyName   = tok;   // the non-modifier token is the key
-		if (plus == std::string::npos) break;
-		pos = plus + 1;
-		// Handle "++" (the literal '+' key): next char is the key, not a separator.
-		if (pos < chord.size() && chord[pos] == '+') { keyName = "+"; break; }
-	}
-	if (keyName.empty()) return false;
-	keyName = normalizeKeyToken(keyName);
-
-	ImGuiIO& io = ImGui::GetIO();
-	if (io.KeyCtrl != needCtrl || io.KeyShift != needShift ||
-	    io.KeyAlt != needAlt || io.KeySuper != needSuper)
+	// Single-combo matcher ("Ctrl+Shift+U"): exact modifier set + named key
+	// pressed this frame. Used directly for one-stroke binds and as each half of
+	// a two-stroke chord.
+	auto matchCombo = [](const std::string& combo) -> bool {
+		if (combo.empty()) return false;
+		bool needCtrl = false, needShift = false, needAlt = false, needSuper = false;
+		std::string keyName;
+		size_t pos = 0;
+		while (pos < combo.size()) {
+			size_t plus = combo.find('+', pos);
+			std::string tok = (plus == std::string::npos) ? combo.substr(pos)
+			                                              : combo.substr(pos, plus - pos);
+			if      (tok == "Ctrl")  needCtrl  = true;
+			else if (tok == "Shift") needShift = true;
+			else if (tok == "Alt")   needAlt   = true;
+			else if (tok == "Super") needSuper = true;
+			else if (!tok.empty())   keyName   = tok;
+			if (plus == std::string::npos) break;
+			pos = plus + 1;
+			if (pos < combo.size() && combo[pos] == '+') { keyName = "+"; break; }
+		}
+		if (keyName.empty()) return false;
+		keyName = normalizeKeyToken(keyName);
+		ImGuiIO& io = ImGui::GetIO();
+		if (io.KeyCtrl != needCtrl || io.KeyShift != needShift ||
+		    io.KeyAlt != needAlt || io.KeySuper != needSuper)
+			return false;
+		for (ImGuiKey k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END;
+		     k = (ImGuiKey)(k + 1))
+		{
+			const char* n = ImGui::GetKeyName(k);
+			if (n && n[0] && keyName == n)
+				return ImGui::IsKeyPressed(k, false);
+		}
 		return false;
+	};
 
-	for (ImGuiKey k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END;
-	     k = (ImGuiKey)(k + 1))
-	{
-		const char* n = ImGui::GetKeyName(k);
-		if (n && n[0] && keyName == n)
-			return ImGui::IsKeyPressed(k, false);
+	// Two-stroke chord ("Ctrl+K Ctrl+U"): match the first combo to arm a pending
+	// prefix, then the second within a short window. keyChordPending holds the
+	// SECOND combo we're waiting for (or empty). Decay/cancel handled in
+	// tickKeyChordPending(), called once per frame from render().
+	auto sp = chord.find(' ');
+	if (sp == std::string::npos)
+		return matchCombo(chord);
+
+	std::string first = chord.substr(0, sp);
+	std::string second = chord.substr(sp + 1);
+	if (!keyChordPending.empty() && keyChordPending == second) {
+		if (matchCombo(second)) { keyChordPending.clear(); return true; }
+		return false;   // still waiting; tick() expires it
+	}
+	// Not yet armed: arm when the first combo is pressed. Don't fire this frame.
+	if (matchCombo(first)) {
+		keyChordPending = second;
+		keyChordPendingAge = 0.0f;
 	}
 	return false;
+}
+
+// Per-frame decay of the pending two-stroke prefix: a chord must complete within
+// ~1.2s, and Escape cancels it. Called from render() before shortcut dispatch.
+void Editor::tickKeyChordPending()
+{
+	if (keyChordPending.empty()) return;
+	keyChordPendingAge += ImGui::GetIO().DeltaTime;
+	if (keyChordPendingAge > 1.2f || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+		keyChordPending.clear();
 }
 
 bool Editor::keybindPressed(const char* id, const char* defaultChord) const
@@ -3289,6 +3321,7 @@ void Editor::renderSettings()
 				static std::string capturingId;       // id of the row currently waiting for a chord
 				static int         capturingFrame = 0; // frame we started — avoid catching the click that opened us
 				static int         curFrame = 0; ++curFrame;
+				static std::string captureStroke1;    // first combo of a two-stroke chord being recorded, or empty
 
 				// Build the list of distinct groups in declaration order.
 				std::vector<const char*> groupOrder;
@@ -3309,8 +3342,19 @@ void Editor::renderSettings()
 					if (capturingId != targetId) return;
 					if (curFrame == capturingFrame) return;  // skip frame the popup opened on
 					ImGuiIO& io = ImGui::GetIO();
+					// A staged first stroke commits as a SINGLE chord if the user
+					// lets go of Ctrl without pressing a second combo.
+					if (!captureStroke1.empty() && !io.KeyCtrl) {
+						keybindOverrides[targetId] = captureStroke1;
+						captureStroke1.clear();
+						applyKeybindOverridesToEditors();
+						saveSettings();
+						capturingId.clear();
+						return;
+					}
 					if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
 						capturingId.clear();
+						captureStroke1.clear();
 						return;
 					}
 					if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
@@ -3318,6 +3362,7 @@ void Editor::renderSettings()
 						applyKeybindOverridesToEditors();
 						saveSettings();
 						capturingId.clear();
+						captureStroke1.clear();
 						return;
 					}
 					// Walk every named key and grab the first non-modifier one
@@ -3342,16 +3387,38 @@ void Editor::renderSettings()
 					{
 						if (isModifierKey(k)) continue;
 						if (!ImGui::IsKeyPressed(k, false)) continue;
-						// Assemble the full chord: every held modifier + the key.
-						std::string chord;
-						if (io.KeyCtrl)  chord += "Ctrl+";
-						if (io.KeyShift) chord += "Shift+";
-						if (io.KeyAlt)   chord += "Alt+";
-						if (io.KeySuper) chord += "Super+";
+						// Assemble one combo: every held modifier + the key.
+						std::string combo;
+						if (io.KeyCtrl)  combo += "Ctrl+";
+						if (io.KeyShift) combo += "Shift+";
+						if (io.KeyAlt)   combo += "Alt+";
+						if (io.KeySuper) combo += "Super+";
 						const char* name = ImGui::GetKeyName(k);
 						if (!name || !name[0]) continue;   // unnamed key — ignore
-						chord += name;
-						keybindOverrides[targetId] = chord;
+						combo += name;
+
+						// Two-stroke recording (VSCode "Ctrl+K Ctrl+U" style): if this
+						// is the FIRST combo and Ctrl is still held, stage it and keep
+						// listening for a second combo. Pressing a second combo joins
+						// them with a space; pressing the same first combo again (or a
+						// non-Ctrl combo) commits a single chord. This makes both
+						// single and chord rebinds reachable without an extra button.
+						if (captureStroke1.empty()) {
+							if (io.KeyCtrl) {
+								// stage as potential first stroke; commit if nothing follows
+								captureStroke1 = combo;
+								return;   // keep capturing this frame's target
+							}
+							keybindOverrides[targetId] = combo;       // plain single chord
+						} else {
+							// We already have a first stroke. A different second combo
+							// makes a two-stroke chord; repeating the first commits single.
+							if (combo == captureStroke1)
+								keybindOverrides[targetId] = combo;   // user repeated → single
+							else
+								keybindOverrides[targetId] = captureStroke1 + " " + combo;
+							captureStroke1.clear();
+						}
 						applyKeybindOverridesToEditors();
 						saveSettings();
 						capturingId.clear();
@@ -3379,12 +3446,17 @@ void Editor::renderSettings()
 							ImGui::TextUnformatted(b.action);
 								ImGui::TableNextColumn();
 								if (b.rebindable) {
-									std::string label = (capturingId == b.id)
-										? std::string("press chord…")
-										: chordFor(b);
+									std::string label;
+									if (capturingId == b.id)
+										label = captureStroke1.empty()
+											? std::string("press chord…")
+											: (captureStroke1 + " , press 2nd (or release Ctrl)");
+									else
+										label = chordFor(b);
 									if (ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, 0))) {
 										capturingId    = b.id;
 										capturingFrame = curFrame;
+										captureStroke1.clear();   // fresh capture
 									}
 									tryCaptureChord(b.id);
 								} else {
@@ -4542,6 +4614,7 @@ void Editor::renderMenuBar()
 		// also fires under Ctrl+Shift+G. The id/default pairs mirror the Settings
 		// → Keybinds catalogue. Order: more-specific (Shift) chords first where a
 		// plain chord could otherwise swallow them.
+		tickKeyChordPending();   // age out / cancel a half-entered two-stroke chord
 		if      (keybindPressed("file.reopen", "Ctrl+Shift+T")) { reopenLastClosedTab(); }
 		else if (keybindPressed("file.saveAs", "Ctrl+Shift+S")) { showSaveFileAs(); }
 		else if (keybindPressed("file.new",    "Ctrl+N"))       { newFile(); }
