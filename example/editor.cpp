@@ -1232,6 +1232,15 @@ static void navRenderEntry(Editor* self,
 			ImGui::TextDisabled("Modified: %s", buf);
 		}
 #endif
+		// Image files get a thumbnail preview below the metadata.
+		if (!dir) {
+			auto ext = ent.path().extension().string();
+			std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+			if (Editor::isImageExt(ext)) {
+				ImGui::Separator();
+				self->navShowImageThumbnail(ent.path().string());
+			}
+		}
 		ImGui::EndTooltip();
 	};
 
@@ -1382,7 +1391,12 @@ static void navRenderFlat(Editor* self, const std::filesystem::path& root,
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
 			std::error_code rec;
 			auto rel = std::filesystem::relative(files[i], root, rec);
-			ImGui::SetTooltip("%s", (rec ? files[i] : rel).string().c_str());
+			auto ext = files[i].extension().string();
+			std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+			ImGui::BeginTooltip();
+			ImGui::TextUnformatted((rec ? files[i] : rel).string().c_str());
+			if (Editor::isImageExt(ext)) self->navShowImageThumbnail(files[i].string());
+			ImGui::EndTooltip();
 		}
 		if (ImGui::BeginPopupContextItem()) { contextPath = files[i].string(); ImGui::EndPopup(); }
 		ImGui::PopID();
@@ -2661,6 +2675,59 @@ void Editor::openImageFile(const std::string& path)
 	ImGui::RegisterUserTexture(img->tex);
 	img->wantFocus = true;
 	images.push_back(std::move(img));
+}
+
+void Editor::navShowImageThumbnail(const std::string& path)
+{
+	auto it = thumbCache.find(path);
+	if (it == thumbCache.end()) {
+		// First hover for this path — load + downscale to a thumbnail once.
+		Thumb th;
+		int w = 0, h = 0, n = 0;
+		stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &n, 4);
+		if (!pixels || w <= 0 || h <= 0) {
+			if (pixels) stbi_image_free(pixels);
+			th.failed = true;
+			thumbCache.emplace(path, th);
+			return;
+		}
+		// Cap the long edge so the GPU texture (and tooltip) stays small.
+		const int kMax = 256;
+		int tw = w, thh = h;
+		if (w > kMax || h > kMax) {
+			float s = (float) kMax / (float) (w > h ? w : h);
+			tw = (std::max)(1, (int) (w * s));
+			thh = (std::max)(1, (int) (h * s));
+		}
+		std::vector<stbi_uc> scaled((size_t) tw * thh * 4);   // NB: not 'small' — that's a Windows macro
+		// Nearest-neighbour box sample — fine for a hover thumbnail, no deps.
+		for (int y = 0; y < thh; ++y) {
+			int sy = (int) ((long long) y * h / thh);
+			for (int x = 0; x < tw; ++x) {
+				int sx = (int) ((long long) x * w / tw);
+				const stbi_uc* src = pixels + ((size_t) sy * w + sx) * 4;
+				stbi_uc* dst = scaled.data() + ((size_t) y * tw + x) * 4;
+				dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+			}
+		}
+		stbi_image_free(pixels);
+		th.tex = IM_NEW(ImTextureData)();
+		th.tex->Create(ImTextureFormat_RGBA32, tw, thh);
+		std::memcpy(th.tex->GetPixels(), scaled.data(), scaled.size());
+		th.tex->Status = ImTextureStatus_WantCreate;
+		th.tex->UseColors = true;
+		th.w = tw; th.h = thh;
+		ImGui::RegisterUserTexture(th.tex);
+		it = thumbCache.emplace(path, th).first;
+	}
+
+	Thumb& th = it->second;
+	if (th.failed) { ImGui::TextDisabled("(preview unavailable)"); return; }
+	if (th.tex && th.tex->Status == ImTextureStatus_OK
+		&& th.tex->TexID != ImTextureID_Invalid)
+		ImGui::Image(th.tex->GetTexRef(), ImVec2((float) th.w, (float) th.h));
+	else
+		ImGui::TextDisabled("loading preview…");
 }
 
 void Editor::renderImageWindows()

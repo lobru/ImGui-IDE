@@ -264,6 +264,10 @@ public:
 	void         navDragSourceSet(const std::string& p) { navDragSource = p; }
 	void         navMoveOrCopy(const std::string& src,
 	                           const std::string& destDir, bool copy);
+	// Public so the static nav-render helpers (navRenderEntry/navRenderFlat) can
+	// draw an image thumbnail in a file's hover tooltip.
+	static bool  isImageExt(const std::string& ext);
+	void         navShowImageThumbnail(const std::string& path);
 private:
 
 	// Split-right command (Ctrl+\): dock the next-active doc into a fresh
@@ -378,7 +382,18 @@ private:
 	std::vector<std::unique_ptr<ImageDoc>> images;
 	void openImageFile(const std::string& path);
 	void renderImageWindows();
-	static bool isImageExt(const std::string& ext);
+
+	// Lazy thumbnail cache for nav-panel hover previews. One GPU texture per
+	// image path, loaded on first hover and reused; capped so a big image tree
+	// can't balloon VRAM. Drawn inside the file's hover tooltip.
+	struct Thumb {
+		ImTextureData* tex = nullptr;
+		int w = 0, h = 0;        // source pixel size
+		bool failed = false;     // load failed — don't retry every hover
+	};
+	std::unordered_map<std::string, Thumb> thumbCache;
+	// isImageExt + navShowImageThumbnail are declared public above (used by the
+	// static nav-render helpers).
 	static bool isBinaryExt(const std::string& ext); // exe/dll/so/dylib/zip/etc — don't open as text
 
 	// Diff-against-another-file. Tracks the path of the alt file we're
