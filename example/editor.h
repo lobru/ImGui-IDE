@@ -285,6 +285,17 @@ private:
 	bool settingsVisible = false;
 	std::unordered_map<std::string, std::string> interpreterOverrides; // ".py" → "python"
 	std::unordered_map<std::string, std::string> projectBuildOverrides; // abs root → cmd
+	// User keybinding overrides for APP-LEVEL actions, keyed by bind id
+	// (e.g. "file.new" → "Ctrl+Shift+N"). Persisted in [keybinds]. Editor-
+	// internal chords (undo/cut/fold/Ctrl+K…) live in the TextEditor widget and
+	// are not remappable here. Empty/absent = use the action's default chord.
+	std::unordered_map<std::string, std::string> keybindOverrides;
+	// True if the live keyboard state this frame matches `chord` (e.g.
+	// "Ctrl+Shift+N"): exact modifier set + the named key just pressed.
+	bool keyChordPressed(const std::string& chord) const;
+	// Resolve a bind id to its active chord string (override or default), then
+	// test it this frame. defaultChord is used when no override exists.
+	bool keybindPressed(const char* id, const char* defaultChord) const;
 	bool   prefAutoIndent      = true;
 	bool   prefCompletePairs   = true;
 	bool   prefShowFps         = false;   // FPS readout on the status bar

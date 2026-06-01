@@ -1975,6 +1975,60 @@ void Editor::openCSharpLearn(const std::string& rawSymbol)
 }
 
 
+// Test a chord string ("Ctrl+Shift+N", "Alt+O", "F6") against the live key
+// state this frame: EXACT modifier set (so Ctrl+G doesn't also fire on
+// Ctrl+Shift+G) plus the named key just pressed. The key name is matched via
+// ImGui::GetKeyName so it round-trips with the recorder, which builds chords
+// the same way. Multi-stroke chords (containing a space, e.g. "Ctrl+K Ctrl+U")
+// are widget-internal and intentionally not handled here.
+bool Editor::keyChordPressed(const std::string& chord) const
+{
+	if (chord.empty() || chord.find(' ') != std::string::npos) return false;
+
+	bool needCtrl = false, needShift = false, needAlt = false, needSuper = false;
+	std::string keyName;
+	size_t pos = 0;
+	while (pos < chord.size()) {
+		size_t plus = chord.find('+', pos);
+		// A trailing token like the '+' key itself ("Ctrl++") leaves the final
+		// segment as the key name; treat the last segment (no following '+') as key.
+		std::string tok = (plus == std::string::npos) ? chord.substr(pos)
+		                                              : chord.substr(pos, plus - pos);
+		if      (tok == "Ctrl")  needCtrl  = true;
+		else if (tok == "Shift") needShift = true;
+		else if (tok == "Alt")   needAlt   = true;
+		else if (tok == "Super") needSuper = true;
+		else if (!tok.empty())   keyName   = tok;   // the non-modifier token is the key
+		if (plus == std::string::npos) break;
+		pos = plus + 1;
+		// Handle "++" (the literal '+' key): next char is the key, not a separator.
+		if (pos < chord.size() && chord[pos] == '+') { keyName = "+"; break; }
+	}
+	if (keyName.empty()) return false;
+
+	ImGuiIO& io = ImGui::GetIO();
+	if (io.KeyCtrl != needCtrl || io.KeyShift != needShift ||
+	    io.KeyAlt != needAlt || io.KeySuper != needSuper)
+		return false;
+
+	for (ImGuiKey k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END;
+	     k = (ImGuiKey)(k + 1))
+	{
+		const char* n = ImGui::GetKeyName(k);
+		if (n && n[0] && keyName == n)
+			return ImGui::IsKeyPressed(k, false);
+	}
+	return false;
+}
+
+bool Editor::keybindPressed(const char* id, const char* defaultChord) const
+{
+	auto it = keybindOverrides.find(id);
+	const std::string& chord = (it != keybindOverrides.end() && !it->second.empty())
+		? it->second : std::string(defaultChord);
+	return keyChordPressed(chord);
+}
+
 void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration)
 {
 	ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
@@ -2638,6 +2692,7 @@ void Editor::loadSettings()
 		std::string k = line.substr(0, eq), v = line.substr(eq + 1);
 		if (section == "interpreters") interpreterOverrides[k] = v;
 		else if (section == "build")    projectBuildOverrides[k] = v;
+		else if (section == "keybinds") { if (!v.empty()) keybindOverrides[k] = v; }
 		else if (section == "editor") {
 			if      (k == "auto_indent")    prefAutoIndent    = (v == "1" || v == "true");
 			else if (k == "complete_pairs") prefCompletePairs = (v == "1" || v == "true");
@@ -2757,6 +2812,8 @@ void Editor::saveSettings()
 	for (auto& [k, v] : interpreterOverrides) f << k << "=" << v << "\n";
 	f << "\n[build]\n";
 	for (auto& [k, v] : projectBuildOverrides) f << k << "=" << v << "\n";
+	f << "\n[keybinds]\n";
+	for (auto& [k, v] : keybindOverrides) f << k << "=" << v << "\n";
 	f << "\n[project_sessions]\n";
 	for (auto& [root, files] : projectSessions) {
 		if (files.empty()) continue;
@@ -3082,54 +3139,52 @@ void Editor::renderSettings()
 				// fallback so user overrides can be diffed/reset. Overrides go
 				// into `keybindOverrides` (in-memory only for now — persist in a
 				// follow-up if the user actually rebinds anything).
-				struct Bind { const char* id; const char* action; const char* defaultCombo; const char* group; };
+				struct Bind { const char* id; const char* action; const char* defaultCombo; const char* group; bool rebindable; };
 				static const Bind binds[] = {
-					{ "file.new",        "New tab",                  "Ctrl+N",        "File" },
-					{ "file.open",       "Open file...",             "Ctrl+O",        "File" },
-					{ "file.save",       "Save",                     "Ctrl+S",        "File" },
-					{ "file.saveAs",     "Save As...",               "Ctrl+Shift+S",  "File" },
-					{ "file.close",      "Close tab",                "Ctrl+W",        "File" },
-					{ "file.reopen",     "Reopen last closed tab",   "Ctrl+Shift+T",  "File" },
-					{ "file.history",    "File History",             "Ctrl+I",        "File" },
+					{ "file.new",        "New tab",                  "Ctrl+N",        "File", true },
+					{ "file.open",       "Open file...",             "Ctrl+O",        "File", true },
+					{ "file.save",       "Save",                     "Ctrl+S",        "File", true },
+					{ "file.saveAs",     "Save As...",               "Ctrl+Shift+S",  "File", true },
+					{ "file.close",      "Close tab",                "Ctrl+W",        "File", true },
+					{ "file.reopen",     "Reopen last closed tab",   "Ctrl+Shift+T",  "File", true },
+					{ "file.history",    "File History",             "Ctrl+I",        "File", true },
 
-					{ "edit.undo",       "Undo",                     "Ctrl+Z",        "Edit" },
-					{ "edit.redo",       "Redo",                     "Ctrl+Y",        "Edit" },
-					{ "edit.cut",        "Cut",                      "Ctrl+X",        "Edit" },
-					{ "edit.copy",       "Copy",                     "Ctrl+C",        "Edit" },
-					{ "edit.paste",      "Paste",                    "Ctrl+V",        "Edit" },
-					{ "edit.selAll",     "Select all",               "Ctrl+A",        "Edit" },
-					{ "edit.addOcc",     "Add next occurrence",      "Ctrl+D",        "Edit" },
-					{ "edit.selAllOcc",  "Select all occurrences",   "Ctrl+Shift+D",  "Edit" },
-					{ "edit.indent",     "Indent line(s)",           "Ctrl+]",        "Edit" },
-					{ "edit.deindent",   "De-indent line(s)",        "Ctrl+[",        "Edit" },
-					{ "edit.comment",    "Toggle comments",          "Ctrl+/",        "Edit" },
-					{ "edit.moveLine",   "Move line(s)",             "Alt+Up/Down",   "Edit" },
+					{ "edit.undo",       "Undo",                     "Ctrl+Z",        "Edit", false },
+					{ "edit.redo",       "Redo",                     "Ctrl+Y",        "Edit", false },
+					{ "edit.cut",        "Cut",                      "Ctrl+X",        "Edit", false },
+					{ "edit.copy",       "Copy",                     "Ctrl+C",        "Edit", false },
+					{ "edit.paste",      "Paste",                    "Ctrl+V",        "Edit", false },
+					{ "edit.selAll",     "Select all",               "Ctrl+A",        "Edit", false },
+					{ "edit.addOcc",     "Add next occurrence",      "Ctrl+D",        "Edit", false },
+					{ "edit.selAllOcc",  "Select all occurrences",   "Ctrl+Shift+D",  "Edit", false },
+					{ "edit.indent",     "Indent line(s)",           "Ctrl+]",        "Edit", false },
+					{ "edit.deindent",   "De-indent line(s)",        "Ctrl+[",        "Edit", false },
+					{ "edit.comment",    "Toggle comments",          "Ctrl+/",        "Edit", false },
+					{ "edit.moveLine",   "Move line(s)",             "Alt+Up/Down",   "Edit", false },
 
-					{ "find.find",       "Find",                     "Ctrl+F",        "Find" },
-					{ "find.next",       "Find next",                "F3",            "Find" },
-					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find" },
-					{ "find.goto",       "Go to Line...",            "Ctrl+G",        "Find" },
+					{ "find.find",       "Find",                     "Ctrl+F",        "Find", false },
+					{ "find.next",       "Find next",                "F3",            "Find", false },
+					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find", false },
+					{ "find.goto",       "Go to Line...",            "Ctrl+G",        "Find", true },
 
-					{ "code.foldAll",    "Fold all",                 "Ctrl+0",        "Code" },
-					{ "code.unfoldAll",  "Unfold all",               "Ctrl+J",        "Code" },
-					{ "code.foldCur",    "Fold current",             "Ctrl+Shift+[",  "Code" },
-					{ "code.unfoldCur",  "Unfold current",           "Ctrl+Shift+]",  "Code" },
-					{ "code.upper",      "Selection -> UPPERCASE",   "Ctrl+K Ctrl+U", "Code" },
-					{ "code.lower",      "Selection -> lowercase",   "Ctrl+K Ctrl+L", "Code" },
-					{ "code.hSrc",       "Switch Header / Source",   "Alt+O",         "Code" },
+					{ "code.foldAll",    "Fold all",                 "Ctrl+0",        "Code", false },
+					{ "code.unfoldAll",  "Unfold all",               "Ctrl+J",        "Code", false },
+					{ "code.foldCur",    "Fold current",             "Ctrl+Shift+[",  "Code", false },
+					{ "code.unfoldCur",  "Unfold current",           "Ctrl+Shift+]",  "Code", false },
+					{ "code.upper",      "Selection -> UPPERCASE",   "Ctrl+K Ctrl+U", "Code", false },
+					{ "code.lower",      "Selection -> lowercase",   "Ctrl+K Ctrl+L", "Code", false },
+					{ "code.hSrc",       "Switch Header / Source",   "Alt+O",         "Code", true },
 
-					{ "view.splitR",     "Split tab right",          "Ctrl+\\",       "View" },
-					{ "view.zoomIn",     "Zoom in",                  "Ctrl++",        "View" },
-					{ "view.zoomOut",    "Zoom out",                 "Ctrl+-",        "View" },
-					{ "view.cycleNext",  "Cycle tabs forward",       "Ctrl+Tab",      "View" },
-					{ "view.cyclePrev",  "Cycle tabs backward",      "Ctrl+Shift+Tab","View" },
+					{ "view.splitR",     "Split tab right",          "Ctrl+\\",       "View", true },
+					{ "view.zoomIn",     "Zoom in",                  "Ctrl++",        "View", true },
+					{ "view.zoomOut",    "Zoom out",                 "Ctrl+-",        "View", true },
+					{ "view.cycleNext",  "Cycle tabs forward",       "Ctrl+Tab",      "View", false },
+					{ "view.cyclePrev",  "Cycle tabs backward",      "Ctrl+Shift+Tab","View", false },
 
-					{ "proj.run",        "Run",                      "F5",            "Project" },
-					{ "proj.build",      "Build project",            "F6",            "Project" },
+					{ "proj.run",        "Run",                      "F5",            "Project", true },
+					{ "proj.build",      "Build project",            "F6",            "Project", true },
 				};
 
-				// In-memory overrides — keyed by bind id. Persist on demand.
-				static std::unordered_map<std::string, std::string> keybindOverrides;
 				static std::string capturingId;       // id of the row currently waiting for a chord
 				static int         capturingFrame = 0; // frame we started — avoid catching the click that opened us
 				static int         curFrame = 0; ++curFrame;
@@ -3159,6 +3214,7 @@ void Editor::renderSettings()
 					}
 					if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) {
 						keybindOverrides.erase(targetId);
+						saveSettings();
 						capturingId.clear();
 						return;
 					}
@@ -3194,6 +3250,7 @@ void Editor::renderSettings()
 						if (!name || !name[0]) continue;   // unnamed key — ignore
 						chord += name;
 						keybindOverrides[targetId] = chord;
+						saveSettings();
 						capturingId.clear();
 						return;
 					}
@@ -3217,20 +3274,24 @@ void Editor::renderSettings()
 							ImGui::TableNextRow();
 							ImGui::TableNextColumn();
 							ImGui::TextUnformatted(b.action);
-							ImGui::TableNextColumn();
-							std::string label = (capturingId == b.id)
-								? std::string("press chord…")
-								: chordFor(b);
-							if (ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, 0))) {
-								capturingId    = b.id;
-								capturingFrame = curFrame;
-							}
-							tryCaptureChord(b.id);
-							ImGui::TableNextColumn();
-							bool overridden = keybindOverrides.count(b.id) != 0;
-							if (overridden) {
-								if (ImGui::SmallButton("reset")) keybindOverrides.erase(b.id);
-							}
+								ImGui::TableNextColumn();
+								if (b.rebindable) {
+									std::string label = (capturingId == b.id)
+										? std::string("press chord…")
+										: chordFor(b);
+									if (ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, 0))) {
+										capturingId    = b.id;
+										capturingFrame = curFrame;
+									}
+									tryCaptureChord(b.id);
+								} else {
+									// Editor-internal / fixed chord — shown for reference, not rebindable here.
+									ImGui::TextDisabled("%s", chordFor(b).c_str());
+								}
+								ImGui::TableNextColumn();
+								if (b.rebindable && keybindOverrides.count(b.id) != 0) {
+									if (ImGui::SmallButton("reset")) { keybindOverrides.erase(b.id); saveSettings(); }
+								}
 							ImGui::PopID();
 						}
 						ImGui::EndTable();
@@ -4339,66 +4400,50 @@ void Editor::renderMenuBar()
 	if (!io.WantCaptureKeyboard || ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow))
 	{
 
-		if (ImGui::IsKeyDown(ImGuiMod_Ctrl))
-		{
-			// Ctrl+Shift+T = reopen last closed tab. Check shift first so it
-			// doesn't fall through to plain Ctrl+T (unused) or other branches.
-			if (ImGui::IsKeyDown(ImGuiMod_Shift) && ImGui::IsKeyPressed(ImGuiKey_T, false))
-			{
-				reopenLastClosedTab();
-			}
-			else if (ImGui::IsKeyPressed(ImGuiKey_N, false)) { newFile(); }
-			else if (ImGui::IsKeyPressed(ImGuiKey_O, false)) { openFile(); }
-			else if (ImGui::IsKeyPressed(ImGuiKey_W, false))
-			{
-				if (isDirty()) showConfirmClose([this]() { closeTab(activeTab); });
-				else closeTab(activeTab);
-			}
-			else if (ImGui::IsKeyPressed(ImGuiKey_S, false))
-			{
-				// Ctrl+Shift+S → always Save As. Plain Ctrl+S → Save (falls
-				// back to Save As only for untitled docs).
-				if (ImGui::IsKeyDown(ImGuiMod_Shift) || doc().filename == "untitled") {
-					showSaveFileAs();
-				} else {
-					saveFile();
-				}
-			}
-			else if (ImGui::IsKeyPressed(ImGuiKey_I, false)) { showDiff(); }
-			else if (ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::IsKeyDown(ImGuiMod_Shift)) {
-				// Ctrl+G — Go to Line. Ctrl+Shift+G falls through to the
-				// editor's own Find-All binding below.
-				showGotoLine();
-			}
-			else if (ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) {
-				// Ctrl+\ — split the active tab into a right-side dock pane.
-				splitActiveTabRight();
-			}
-			else if (ImGui::IsKeyPressed(ImGuiKey_Equal, false)) { increaseFontSIze(); }
-			else if (ImGui::IsKeyPressed(ImGuiKey_Minus, false)) { decreaseFontSIze(); }
-			else if (ImGui::IsKeyPressed(ImGuiKey_Tab, false))
-			{
-				if (!tabs.empty())
-				{
-					if (ImGui::IsKeyDown(ImGuiMod_Shift))
-						activeTab = (activeTab == 0) ? tabs.size() - 1 : activeTab - 1;
-					else
-						activeTab = (activeTab + 1) % tabs.size();
-					tabs[activeTab]->wantFocus = true;
-				}
-			}
+		// App-level shortcuts dispatched through the rebindable keybind registry.
+		// keybindPressed(id, default) consults the user override (if any) for the
+		// id, else the default chord, and does an EXACT modifier+key match — so a
+		// rebind to a different chord takes effect here, and e.g. Ctrl+G never
+		// also fires under Ctrl+Shift+G. The id/default pairs mirror the Settings
+		// → Keybinds catalogue. Order: more-specific (Shift) chords first where a
+		// plain chord could otherwise swallow them.
+		if      (keybindPressed("file.reopen", "Ctrl+Shift+T")) { reopenLastClosedTab(); }
+		else if (keybindPressed("file.saveAs", "Ctrl+Shift+S")) { showSaveFileAs(); }
+		else if (keybindPressed("file.new",    "Ctrl+N"))       { newFile(); }
+		else if (keybindPressed("file.open",   "Ctrl+O"))       { openFile(); }
+		else if (keybindPressed("file.close",  "Ctrl+W")) {
+			if (isDirty()) showConfirmClose([this]() { closeTab(activeTab); });
+			else closeTab(activeTab);
 		}
-		// Alt-only: Alt+O = header <-> source toggle
-		if (!ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyDown(ImGuiMod_Alt) &&
-			!ImGui::IsKeyDown(ImGuiMod_Shift))
+		else if (keybindPressed("file.save",   "Ctrl+S")) {
+			if (doc().filename == "untitled") showSaveFileAs();
+			else saveFile();
+		}
+		else if (keybindPressed("file.history","Ctrl+I"))       { showDiff(); }
+		else if (keybindPressed("find.goto",   "Ctrl+G"))       { showGotoLine(); }
+		else if (keybindPressed("view.splitR", "Ctrl+\\"))      { splitActiveTabRight(); }
+		else if (keybindPressed("view.zoomIn", "Ctrl+="))       { increaseFontSIze(); }
+		else if (keybindPressed("view.zoomOut","Ctrl+-"))       { decreaseFontSIze(); }
+		else if (keybindPressed("code.hSrc",   "Alt+O"))        { toggleHeaderSource(); }
+		else if (keybindPressed("proj.run",    "F5"))           { runProjectExeOrScript(); }
+		else if (keybindPressed("proj.build",  "F6"))           { runProjectBuild(); }
+
+		// Tab cycling stays special-cased: it's two chords on one key (Ctrl+Tab /
+		// Ctrl+Shift+Tab) and not exposed as a single rebindable action.
+		if (ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyPressed(ImGuiKey_Tab, false))
 		{
-			if (ImGui::IsKeyPressed(ImGuiKey_O, false))
+			if (!tabs.empty())
 			{
-				toggleHeaderSource();
+				if (ImGui::IsKeyDown(ImGuiMod_Shift))
+					activeTab = (activeTab == 0) ? tabs.size() - 1 : activeTab - 1;
+				else
+					activeTab = (activeTab + 1) % tabs.size();
+				tabs[activeTab]->wantFocus = true;
 			}
 		}
 		// Ctrl+Alt viewport control: pop the active doc out to its own OS window
-		// (←/→) or merge windows back in (M = current, Shift+M = all).
+		// (←/→) or merge windows back in (M = current, Shift+M = all). Fixed
+		// chords (multi-action group), not individually rebindable.
 		if (ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyDown(ImGuiMod_Alt))
 		{
 			if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  false)) popOutActiveDoc(-1);
@@ -4418,18 +4463,6 @@ void Editor::renderMenuBar()
 			float w = ImGui::GetIO().MouseWheel;
 			if (w > 0.0f) { increaseFontSIze(); prefFontSize = fontSize; }
 			else if (w < 0.0f) { decreaseFontSIze(); prefFontSize = fontSize; }
-		}
-		// F5: prefer running the project's built exe; fall back to running the
-		// active document with its interpreter.
-		if (ImGui::IsKeyPressed(ImGuiKey_F5, false))
-		{
-			runProjectExeOrScript();
-		}
-		// F6: run the project's build script (walk up for build.bat / .ps1 /
-		// Makefile / CMakeLists.txt). Output streams into the same window.
-		if (ImGui::IsKeyPressed(ImGuiKey_F6, false))
-		{
-			runProjectBuild();
 		}
 	}
 }
