@@ -1652,6 +1652,13 @@ protected:
 	std::string replaceText;
 	bool caseSensitiveFind = false;
 	bool wholeWordFind = false;
+	// Live match-count readout for the find bar (VSCode-style "3 of 12"). Cached
+	// and only recomputed when the search term / options / document version
+	// change, so it doesn't rescan the whole document every frame.
+	int findMatchCount = 0;          // total matches of findText in the document
+	int findMatchCurrent = 0;        // 1-based index of the match at the cursor, 0 if none
+	std::string findCountCacheKey;   // term+flags+version the counts were computed for
+	void recomputeFindMatches();     // refresh findMatchCount/findMatchCurrent if stale
 	// Click-and-drag-of-selected-text state. When the user mouses down on an
 	// existing selection we remember the text + its source range; on release
 	// we either move it (default) or copy it (Ctrl held) to the drop point.

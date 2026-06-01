@@ -6981,6 +6981,41 @@ static bool inputString(const char* label, std::string* value, ImGuiInputTextFla
 //	TextEditor::renderFindReplace
 //
 
+void TextEditor::recomputeFindMatches()
+{
+	// Cache key: term + flags + document revision. Recompute only when it
+	// changes so we scan the document at most once per edit/term change, not
+	// every frame the find bar is open.
+	std::string key = findText + "\x1f"
+		+ (caseSensitiveFind ? "1" : "0") + (wholeWordFind ? "1" : "0")
+		+ "\x1f" + std::to_string(transactions.getUndoIndex());
+	if (key == findCountCacheKey) return;
+	findCountCacheKey = key;
+	findMatchCount = 0;
+	findMatchCurrent = 0;
+	if (findText.empty()) return;
+
+	Coordinate cursor = cursors.getCurrent().getInteractiveEnd();
+	Coordinate from{ 0, 0 }, s, e;
+	bool first = true;
+	while (document.findText(from, findText, caseSensitiveFind, wholeWordFind, s, e))
+	{
+		// findText wraps to the top when it runs off the end; stop once a hit
+		// comes at/before a prior one (same guard as selectAllOccurrencesOf).
+		auto less = [](Coordinate a, Coordinate b){
+			return a.line != b.line ? a.line < b.line : a.column < b.column; };
+		if (!first && !less(from, e)) break;   // no forward progress → wrapped
+		first = false;
+		++findMatchCount;
+		// The current match is the first one at or after the cursor.
+		if (findMatchCurrent == 0 && !less(s, cursor)) findMatchCurrent = findMatchCount;
+		from = e;
+		if (findMatchCount > 100000) break;   // pathological safety bound
+	}
+	// Cursor past the last match → treat the last as current (wrap semantics).
+	if (findMatchCurrent == 0 && findMatchCount > 0) findMatchCurrent = findMatchCount;
+}
+
 void TextEditor::renderFindReplace(ImVec2 pos, float width)
 {
 	// render find/replace window (if required)
@@ -7010,10 +7045,14 @@ void TextEditor::renderFindReplace(ImVec2 pos, float width)
 			ImGui::GetFrameHeight() +
 			(readOnly ? 0.0f : (style.ItemSpacing.y + ImGui::GetFrameHeight()));
 
+		// Reserve room for the "999 of 999" match-count readout between the field
+		// and the buttons.
+		auto countWidth = ImGui::CalcTextSize("9999 of 9999").x + style.ItemSpacing.x;
 		auto windowWidth =
 			style.ChildBorderSize * 2.0f +
 			style.WindowPadding.x * 2.0f +
 			fieldWidth + style.ItemSpacing.x +
+			countWidth + style.ItemSpacing.x +
 			button1Width + style.ItemSpacing.x +
 			button2Width + style.ItemSpacing.x +
 			optionWidth * 3.0f + style.ItemSpacing.x * 2.0f;
@@ -7070,6 +7109,17 @@ void TextEditor::renderFindReplace(ImVec2 pos, float width)
 				focusOnFind = true;
 			}
 		}
+
+		// VSCode-style live match count next to the field: "3 of 12" / "No
+		// results". Recomputed only when term/flags/document change.
+		recomputeFindMatches();
+		ImGui::SameLine();
+		if (findText.empty())
+			ImGui::TextDisabled("   ");
+		else if (findMatchCount == 0)
+			ImGui::TextDisabled("No results");
+		else
+			ImGui::TextDisabled("%d of %d", findMatchCurrent, findMatchCount);
 
 		bool disableFindButtons = !findText.size();
 
