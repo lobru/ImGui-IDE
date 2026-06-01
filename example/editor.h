@@ -184,6 +184,24 @@ private:
 	void renderScriptOutputWindow();
 	void runScriptForDoc();
 
+	// C# "Go to Decompiled Source": resolve a BCL type to its runtime assembly
+	// and decompile it with ilspycmd (auto-installed if missing), caching the
+	// generated .cs. Runs on a detached thread (survives Editor via shared_ptr,
+	// same pattern as ScriptState); results published to the UI thread by
+	// pollDecompile(), which opens the cached file read-only.
+	struct DecompileState {
+		std::mutex        mutex;
+		std::string       symbol;       // requested type (for messaging)
+		std::string       resultPath;   // cached .cs path on success
+		std::string       error;        // non-empty on failure → caller falls back to Learn
+		std::atomic<bool> running{false};
+		std::atomic<bool> done{false};
+		std::atomic<bool> published{true};   // false while a result awaits the UI thread
+	};
+	std::shared_ptr<DecompileState> decompileState = std::make_shared<DecompileState>();
+	void openCSharpDecompiled(const std::string& rawSymbol);   // spawn decompile (BCL types)
+	void pollDecompile();                                       // UI-thread publish → open tab
+
 	// Per-project symbol index. Built once in the background when a project is
 	// opened (and refreshed on demand), it caches every identifier seen + the
 	// definition sites for each symbol, so autocomplete and Go-to-Definition

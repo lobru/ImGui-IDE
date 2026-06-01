@@ -1991,6 +1991,173 @@ void Editor::openCSharpLearn(const std::string& rawSymbol)
 }
 
 
+// Decompile a BCL type to real C# via ilspycmd and open it read-only. The whole
+// pipeline (tool auto-install, DLL resolution, decompile) runs on a detached
+// thread; pollDecompile() opens the result on the UI thread. On any failure the
+// state's `error` is set and pollDecompile falls back to the Learn page.
+//
+// Resolution (verified against ilspycmd 10.x): most System.* types are FORWARDED
+// — they aren't in their namesake runtime DLL but in System.Private.CoreLib.
+// ilspycmd reports this as "... was not found in the module being decompiled,
+// but only in <X>", so we try a best-guess DLL first and, on that error, parse
+// the named module and retry once.
+void Editor::openCSharpDecompiled(const std::string& rawSymbol)
+{
+#ifdef _WIN32
+	if (decompileState->running.load()) return;   // one at a time
+
+	// Last segment + generic arity: "System.Collections.Generic.List<int>" ->
+	// fullName "System.Collections.Generic.List`1" for ilspycmd's -t.
+	std::string full = rawSymbol;
+	{
+		// strip a generic argument list but remember its arity
+		int arity = 0;
+		if (auto lt = full.find('<'); lt != std::string::npos) {
+			// count top-level commas + 1 for the arg count
+			int depth = 0; arity = 1;
+			for (size_t i = lt; i < full.size(); ++i) {
+				if (full[i] == '<') ++depth;
+				else if (full[i] == '>') { if (--depth == 0) break; }
+				else if (full[i] == ',' && depth == 1) ++arity;
+			}
+			full = full.substr(0, lt);
+		}
+		while (!full.empty() && (full.back()==' '||full.back()=='.'||full.back()=='\t')) full.pop_back();
+		while (!full.empty() && (full.front()==' '||full.front()=='\t')) full.erase(full.begin());
+		if (arity > 0) full += "`" + std::to_string(arity);
+	}
+	if (full.empty()) { decompileState->error = "empty symbol"; return; }
+
+	auto st = decompileState;
+	st->running = true;
+	st->done = false;
+	st->published = true;     // nothing to publish yet
+	{ std::lock_guard<std::mutex> lk(st->mutex); st->symbol = full; st->resultPath.clear(); st->error.clear(); }
+	std::filesystem::path cacheDir = userConfigDir() / "decompiled";
+
+	std::thread([st, full, cacheDir]() {
+		auto fail = [&](const std::string& msg) {
+			std::lock_guard<std::mutex> lk(st->mutex);
+			st->error = msg; st->done = true; st->published = false; st->running = false;
+		};
+		std::error_code ec;
+
+		// ilspycmd path; auto-install if missing.
+		std::filesystem::path home = std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : "";
+		std::filesystem::path ilspy = home / ".dotnet" / "tools" / "ilspycmd.exe";
+		if (!std::filesystem::is_regular_file(ilspy, ec)) {
+			(void)std::system("dotnet tool install -g ilspycmd >NUL 2>&1");
+			if (!std::filesystem::is_regular_file(ilspy, ec)) { fail("ilspycmd not available (install failed)"); return; }
+		}
+
+		// Highest installed runtime dir.
+		std::filesystem::path shared = "C:/Program Files/dotnet/shared/Microsoft.NETCore.App";
+		std::filesystem::path rtDir; int bestMaj = -1, bestMin = -1, bestPatch = -1;
+		for (auto& e : std::filesystem::directory_iterator(shared, ec)) {
+			if (ec) break;
+			if (!e.is_directory(ec)) continue;
+			std::string nm = e.path().filename().string();
+			int v[3] = {0,0,0}; size_t i = 0;
+			for (int part = 0; part < 3 && i < nm.size(); ++part) {
+				std::string num;
+				while (i < nm.size() && std::isdigit((unsigned char)nm[i])) num += nm[i++];
+				if (i < nm.size() && nm[i] == '.') ++i;
+				v[part] = num.empty() ? 0 : std::atoi(num.c_str());
+			}
+			if (v[0] > bestMaj || (v[0]==bestMaj && (v[1]>bestMin || (v[1]==bestMin && v[2]>bestPatch))))
+			{ bestMaj=v[0]; bestMin=v[1]; bestPatch=v[2]; rtDir = e.path(); }
+		}
+		if (rtDir.empty()) { fail("no .NET runtime found"); return; }
+
+		// Plain type name (no arity) for cache filename + a first DLL guess.
+		std::string plain = full;
+		if (auto bt = plain.find('`'); bt != std::string::npos) plain = plain.substr(0, bt);
+
+		// Run ilspycmd <dll> -t <full>, capture stdout+stderr.
+		auto runIlspy = [&](const std::filesystem::path& dll, std::string& out) -> int {
+			std::string cmd = "\"" + ilspy.string() + "\" \"" + dll.string()
+				+ "\" -t \"" + full + "\" 2>&1";
+			FILE* p = _popen(("\"" + cmd + "\"").c_str(), "r");
+			if (!p) return -1;
+			char buf[4096]; out.clear();
+			while (fgets(buf, sizeof(buf), p)) out += buf;
+			return _pclose(p);
+		};
+
+		// First guess: a DLL named after the namespace (works for non-forwarded
+		// types like System.Diagnostics.Process). Fall back to CoreLib if the
+		// guessed DLL doesn't exist.
+		std::filesystem::path guess = rtDir / (plain.substr(0, plain.find_last_of('.')) + ".dll");
+		if (plain.find('.') == std::string::npos || !std::filesystem::is_regular_file(guess, ec))
+			guess = rtDir / "System.Private.CoreLib.dll";
+
+		std::string out;
+		runIlspy(guess, out);
+		// Forwarded-type retry: "... only in <Module>".
+		if (out.find("was not found in the module") != std::string::npos) {
+			auto k = out.find("but only in ");
+			if (k != std::string::npos) {
+				std::string mod = out.substr(k + 12);
+				// take up to end-of-line / whitespace
+				size_t e2 = mod.find_first_of("\r\n \t");
+				if (e2 != std::string::npos) mod = mod.substr(0, e2);
+				if (!mod.empty()) {
+					std::filesystem::path dll2 = rtDir / (mod + ".dll");
+					if (std::filesystem::is_regular_file(dll2, ec)) runIlspy(dll2, out);
+				}
+			}
+		}
+
+		// Validate: output must actually contain the type, not an error/empty.
+		if (out.find("was not found") != std::string::npos
+			|| out.find(plain.substr(plain.find_last_of('.') + 1)) == std::string::npos
+			|| out.size() < 40) {
+			fail("could not decompile " + full); return;
+		}
+
+		// Cache to <config>/decompiled/<Type>.cs (sanitize the name).
+		std::filesystem::create_directories(cacheDir, ec);
+		std::string fname = plain;
+		for (auto& c : fname) if (c=='/'||c=='\\'||c==':'||c=='<'||c=='>'||c=='`') c = '_';
+		std::filesystem::path outPath = cacheDir / (fname + ".cs");
+		{
+			std::ofstream f(outPath, std::ios::binary);
+			if (!f) { fail("cannot write cache file"); return; }
+			f << "// Decompiled from " << rtDir.filename().string()
+			  << " by ilspycmd — read-only. Not original source.\n\n" << out;
+		}
+		std::lock_guard<std::mutex> lk(st->mutex);
+		st->resultPath = outPath.string();
+		st->done = true; st->published = false; st->running = false;
+	}).detach();
+#else
+	(void)rawSymbol;
+#endif
+}
+
+void Editor::pollDecompile()
+{
+	if (decompileState->published.load()) return;
+	std::string path, err, sym;
+	{
+		std::lock_guard<std::mutex> lk(decompileState->mutex);
+		path = decompileState->resultPath;
+		err  = decompileState->error;
+		sym  = decompileState->symbol;
+	}
+	decompileState->published = true;
+	if (!err.empty() || path.empty()) {
+		// Fall back to the Learn page — better than nothing.
+		showError("Decompile failed for '" + sym + "': " + (err.empty() ? "unknown" : err)
+			+ "\nFalling back to Microsoft Learn.");
+		openCSharpLearn(sym);
+		return;
+	}
+	openFile(path);
+	if (!tabs.empty()) doc().editor.SetReadOnlyEnabled(true);
+}
+
+
 // Test a chord string ("Ctrl+Shift+N", "Alt+O", "F6") against the live key
 // state this frame: EXACT modifier set (so Ctrl+G doesn't also fire on
 // Ctrl+Shift+G) plus the named key just pressed. The key name is matched via
@@ -3804,6 +3971,10 @@ void Editor::saveFile(std::string& path)
 
 void Editor::render()
 {
+	// Publish a finished background decompile (opens the cached .cs read-only,
+	// or falls back to the Learn page on failure). Cheap atomic check per frame.
+	pollDecompile();
+
 	const ImGuiViewport* viewport = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(viewport->WorkPos);
 	ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -4389,13 +4560,26 @@ void Editor::renderDocumentWindow(TabDocument& t)
 													{
 														goToDefinitionProjectWide(qualified, true);
 													}
-												// C# SDK symbols have no on-disk source (ref assemblies); offer a
-												// jump to their Microsoft Learn documentation page instead. Shown
-												// for any non-keyword word, since SDK types aren't in our trie.
-												if (lang && lang->name == "C#" && !isKeyword && !seg.empty()
-													&& ImGui::MenuItem("Look up in Microsoft Learn"))
+												// C# SDK symbols have no on-disk source (ref assemblies).
+												// For a fully namespace-qualified BCL type we can decompile
+												// the runtime assembly to real C# (ilspycmd); for anything
+												// else, fall back to the Microsoft Learn docs page.
+												if (lang && lang->name == "C#" && !isKeyword && !seg.empty())
 												{
-													openCSharpLearn(qualified);
+													bool bclRooted = false;
+													if (auto dot = qualified.find('.'); dot != std::string::npos) {
+														std::string r = qualified.substr(0, dot);
+														bclRooted = (r == "System" || r == "Microsoft" ||
+															r == "Windows" || r == "Internal" || r == "Mono");
+													}
+													if (bclRooted && ImGui::MenuItem("Go to Decompiled Source"))
+													{
+														openCSharpDecompiled(qualified);
+													}
+													if (ImGui::MenuItem("Look up in Microsoft Learn"))
+													{
+														openCSharpLearn(qualified);
+													}
 												}
 												}
 												if (ImGui::MenuItem("Find References"))
