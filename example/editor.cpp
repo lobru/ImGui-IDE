@@ -3002,16 +3002,40 @@ void Editor::discoverFonts()
 				availableFonts.push_back(it->path().string());
 		}
 	}
+	// Likely-monospace fonts sort first (this is a grid editor; mono is the
+	// right pick). Heuristic on the filename — cheap and good enough; the
+	// authoritative non-monospace warning on the active font (advance-based)
+	// still fires if a mis-sorted font is selected. Within each group: A→Z.
 	std::sort(availableFonts.begin(), availableFonts.end(),
 		[](const std::string& a, const std::string& b) {
-			auto fa = std::filesystem::path(a).filename().string();
-			auto fb = std::filesystem::path(b).filename().string();
-			std::transform(fa.begin(), fa.end(), fa.begin(),
-				[](unsigned char c) { return (char) std::tolower(c); });
-			std::transform(fb.begin(), fb.end(), fb.begin(),
-				[](unsigned char c) { return (char) std::tolower(c); });
+			auto lower = [](std::string s) {
+				std::transform(s.begin(), s.end(), s.begin(),
+					[](unsigned char c) { return (char) std::tolower(c); });
+				return s;
+			};
+			std::string fa = lower(std::filesystem::path(a).filename().string());
+			std::string fb = lower(std::filesystem::path(b).filename().string());
+			bool ma = fontNameLooksMonospace(fa);
+			bool mb = fontNameLooksMonospace(fb);
+			if (ma != mb) return ma;       // monospace group first
 			return fa < fb;
 		});
+}
+
+// Filename heuristic for "probably a monospace font". Catches the common
+// naming conventions; not authoritative (the advance-based warning is).
+bool Editor::fontNameLooksMonospace(const std::string& lowerName)
+{
+	static const char* hints[] = {
+		"mono", "consol", "courier", "cascadia", "code", "fixed", "term",
+		"jetbrains", "firacode", "fira code", "hack", "inconsolata",
+		"sourcecodepro", "source code", "ubuntu mono", "dejavusansmono",
+		"liberation mono", "menlo", "andale", "pragmata", "iosevka", "noto mono",
+		"sfmono", "victor mono", "space mono", "anonymous", "operator mono",
+	};
+	for (auto h : hints)
+		if (lowerName.find(h) != std::string::npos) return true;
+	return false;
 }
 
 void Editor::applyFont()
@@ -3334,8 +3358,20 @@ void Editor::renderSettings()
 						fontPath.clear();
 						activeFont = nullptr;
 					}
+					// availableFonts is pre-sorted monospace-first. Drop a labeled
+					// separator at the boundary so the recommended (mono) fonts are
+					// visually grouped above the rest.
+					bool emittedNonMonoHeader = false;
 					for (auto& p : availableFonts) {
 						std::string name = std::filesystem::path(p).filename().string();
+						std::string lname = name;
+						std::transform(lname.begin(), lname.end(), lname.begin(),
+							[](unsigned char c){ return (char)std::tolower(c); });
+						if (!emittedNonMonoHeader && !fontNameLooksMonospace(lname)) {
+							emittedNonMonoHeader = true;
+							ImGui::Separator();
+							ImGui::TextDisabled("Other fonts (not monospace — may look uneven)");
+						}
 						bool selected = (p == fontPath);
 						if (ImGui::Selectable(name.c_str(), selected)) {
 							fontPath = p;

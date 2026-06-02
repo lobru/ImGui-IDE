@@ -350,6 +350,7 @@ private:
 	ImFont*     activeFont = nullptr; // result of AddFontFromFileTTF for fontPath; null = default
 	std::vector<std::string> availableFonts; // discovered TTF files; lazy-filled on first Settings open
 	void   discoverFonts();
+	static bool fontNameLooksMonospace(const std::string& lowerName);   // filename heuristic for sort grouping
 	void   applyFont();              // (re)load fontPath into the atlas
 	void   renderSettings();
 	void   loadSettings();

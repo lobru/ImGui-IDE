@@ -6417,6 +6417,21 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 			{
 				(glyph++)->color = Color::whitespace;
 
+				// Block comment must be tried BEFORE the single-line comment when its
+			// opener begins with the single-line marker (Lua: "--[[" starts with
+			// "--"), otherwise "--[[" is mis-read as a "--" line comment and the
+			// block never opens.
+			}
+			else if (language->commentStart.size()
+				&& language->singleLineComment.size()
+				&& language->commentStart.rfind(language->singleLineComment, 0) == 0
+				&& matches(glyph, line.end(), language->commentStart))
+			{
+				state = State::inComment;
+				auto size = language->commentStart.size();
+				setColor(glyph, glyph + size, Color::comment);
+				glyph += size;
+
 				// handle single line comments
 			}
 			else if (language->singleLineComment.size() && matches(glyph, line.end(), language->singleLineComment))
@@ -6435,7 +6450,7 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 			else if (language->commentStart.size() && matches(glyph, line.end(), language->commentStart))
 			{
 				state = State::inComment;
-				auto size = language->commentEnd.size();
+				auto size = language->commentStart.size();
 				setColor(glyph, glyph + size, Color::comment);
 				glyph += size;
 
@@ -11760,7 +11775,7 @@ const TextEditor::Language* TextEditor::Language::Lua()
 		language.name = "Lua";
 		language.singleLineComment = "--";
 		language.commentStart = "--[[";
-		language.commentEnd = "--]]";
+		language.commentEnd = "]]";   // Lua block comments close on ]] (not --]])
 		language.hasSingleQuotedStrings = true;
 		language.hasDoubleQuotedStrings = true;
 		language.otherStringStart = "[[";
