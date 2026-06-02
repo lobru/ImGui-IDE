@@ -384,6 +384,32 @@ private:
 	// run it. Returns empty if none found.
 	std::filesystem::path findBuiltExe() const;
 	void        runProjectExeOrScript();   // F5: prefer exe, fall back to script
+	void        runProjectWithArgs();      // like F5 but prompts for arguments
+
+	// Shared launcher: spawn `cmd` (optionally cd'd to runDir) on a detached
+	// thread, streaming stdout+stderr into the Output panel. The single home
+	// for the _popen/popen pipe loop that build / run / nav-run all share.
+	void        runCommandInOutputPanel(const std::string& cmd,
+	                                     const std::filesystem::path& runDir = {});
+	// Resolve the active document to a runnable command (interpreter + path),
+	// saving it first; {empty,_} with a reason written to Output if it can't run.
+	std::pair<std::string, std::filesystem::path> docScriptCommand();
+	// What F5 runs: freshest built exe under projectRoot, else the active doc.
+	std::pair<std::string, std::filesystem::path> projectRunCommand();
+	// Is `p` something we know how to launch (mapped interpreter, .exe, etc.)?
+	bool        navIsRunnable(const std::string& p) const;
+	// Build {command, workingDir} to launch an arbitrary file from the nav tree.
+	std::pair<std::string, std::filesystem::path> runCommandForPath(const std::string& p) const;
+
+	// "Run with arguments…" modal — stashes a base command + dir, prompts for an
+	// argument string, then appends it verbatim and launches. Rendered each frame
+	// at render() top level so any menu/context item can request it.
+	void        requestRunWithArgs(const std::string& baseCmd, const std::filesystem::path& runDir);
+	void        renderRunArgsPopup();
+	bool         runArgsRequested = false;
+	std::string  runArgsBaseCmd;
+	std::filesystem::path runArgsDir;
+	char         runArgsBuf[1024] = {};
 
 	// Image viewer — load .png/.jpg/etc via stb_image, upload as ImTextureData,
 	// display in a dockable window. Multiple images can be open at once.

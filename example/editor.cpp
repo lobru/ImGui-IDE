@@ -492,6 +492,72 @@ static std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std
 }
 
 
+// Single home for the run pipe loop. Spawns `cmd` (cd'd to runDir when set) on
+// a detached thread, captures stdout+stderr into the Output panel. The shared_ptr
+// is captured BY VALUE so the ScriptState outlives the Editor if the user quits
+// while a script is still blocked in fread. A newer gen supersedes older threads.
+void Editor::runCommandInOutputPanel(const std::string& cmd, const std::filesystem::path& runDir)
+{
+	std::string rd = runDir.empty() ? std::string() : runDir.string();
+	int gen = ++script->gen;
+	{
+		std::lock_guard<std::mutex> lock(script->mutex);
+		script->output = rd.empty() ? ("$ " + cmd + "\n")
+		                            : ("$ cd " + rd + " && " + cmd + "\n");
+		script->visible = true;
+	}
+	script->running = true;
+
+	auto scriptCtx = script;
+	std::thread([scriptCtx, cmd, rd, gen]()
+	{
+		std::string full;
+#ifdef _WIN32
+		full = rd.empty()
+			? ("\"< NUL " + cmd + " 2>&1\"")
+			: ("\"< NUL pushd \"" + rd + "\" && " + cmd + " 2>&1 & popd\"");
+		FILE* pipe = _popen(full.c_str(), "r");
+#else
+		full = rd.empty()
+			? ("< /dev/null " + cmd + " 2>&1")
+			: ("cd \"" + rd + "\" && < /dev/null " + cmd + " 2>&1");
+		FILE* pipe = popen(full.c_str(), "r");
+#endif
+		if (!pipe)
+		{
+			std::lock_guard<std::mutex> lock(scriptCtx->mutex);
+			if (gen == scriptCtx->gen.load()) scriptCtx->output += "[failed to spawn]\n";
+			scriptCtx->running = false;
+			return;
+		}
+		char buf[4096];
+		bool truncated = false;
+		while (size_t n = fread(buf, 1, sizeof(buf), pipe))
+		{
+			std::lock_guard<std::mutex> lock(scriptCtx->mutex);
+			if (gen != scriptCtx->gen.load()) break;   // superseded by a newer run
+			scriptCtx->output.append(buf, n);
+			if (scriptCtx->output.size() > (8u << 20))
+			{
+				scriptCtx->output.append("\n[…truncated after 8 MB…]\n");
+				truncated = true;
+				break;
+			}
+		}
+		int rc =
+#ifdef _WIN32
+			_pclose(pipe);
+#else
+			pclose(pipe);
+#endif
+		std::lock_guard<std::mutex> lock(scriptCtx->mutex);
+		if (gen == scriptCtx->gen.load() && !truncated)
+			scriptCtx->output += "\n[exit " + std::to_string(rc) + "]\n";
+		scriptCtx->running = false;
+	}).detach();
+}
+
+
 void Editor::runProjectBuild()
 {
 	std::filesystem::path startDir;
@@ -541,61 +607,7 @@ void Editor::runProjectBuild()
 		}
 	}
 
-	int gen = ++script->gen;
-	{
-		std::lock_guard<std::mutex> lock(script->mutex);
-		script->output = "$ cd " + runDir.string() + " && " + cmd + "\n";
-		script->visible = true;
-	}
-	script->running = true;
-
-	// Capture the shared_ptr BY VALUE so the ScriptState stays alive even if
-	// the Editor is destroyed while this thread is still running (e.g. the
-	// user quits while a hung script is blocked in fread). Without this, the
-	// thread would dereference a dangling `this->script` and crash on exit.
-	auto scriptCtx = script;
-	std::thread([scriptCtx, cmd, runDir, gen]()
-				{
-					std::string full;
-#ifdef _WIN32
-					full = "\"< NUL pushd \"" + runDir.string() + "\" && " + cmd + " 2>&1 & popd\"";
-					FILE* pipe = _popen(full.c_str(), "r");
-#else
-					full = "cd \"" + runDir.string() + "\" && < /dev/null " + cmd + " 2>&1";
-					FILE* pipe = popen(full.c_str(), "r");
-#endif
-					if (!pipe)
-					{
-						std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-						if (gen == scriptCtx->gen.load()) scriptCtx->output += "[failed to spawn]\n";
-						scriptCtx->running = false;
-						return;
-					}
-					char buf[4096];
-					while (size_t n = fread(buf, 1, sizeof(buf), pipe))
-					{
-						std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-						if (gen != scriptCtx->gen.load()) break;
-						scriptCtx->output.append(buf, n);
-						if (scriptCtx->output.size() > (8u << 20))
-						{
-							scriptCtx->output.append("\n[…truncated after 8 MB…]\n");
-							break;
-						}
-					}
-					int rc =
-#ifdef _WIN32
-						_pclose(pipe);
-#else
-						pclose(pipe);
-#endif
-					std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-					if (gen == scriptCtx->gen.load())
-					{
-						scriptCtx->output += "\n[exit " + std::to_string(rc) + "]\n";
-					}
-					scriptCtx->running = false;
-				}).detach();
+	runCommandInOutputPanel(cmd, runDir);
 }
 
 
@@ -641,71 +653,15 @@ std::filesystem::path Editor::findBuiltExe() const
 	return best;
 }
 
-void Editor::runProjectExeOrScript()
+// Resolve the active document to a runnable command. Saves a dirty buffer
+// first (so the run reflects on-disk state). Returns {command, workingDir};
+// the working dir is the script's own folder so relative paths in the script
+// resolve. On failure returns {empty, _} with the reason in the Output panel.
+std::pair<std::string, std::filesystem::path> Editor::docScriptCommand()
 {
-	// Prefer running a built exe when we have a project root with one.
-	// Falls back to the per-doc script interpreter otherwise.
-	if (!projectRoot.empty()) {
-		auto exe = findBuiltExe();
-		if (!exe.empty()) {
-			std::string cmd = "\"" + exe.string() + "\"";
-			int gen = ++script->gen;
-			{
-				std::lock_guard<std::mutex> lock(script->mutex);
-				script->output = "$ " + cmd + "\n";
-				script->visible = true;
-			}
-			script->running = true;
-			auto scriptCtx = script;
-			auto runDir = exe.parent_path();
-			std::thread([scriptCtx, cmd, runDir, gen]() {
-				std::string full;
-#ifdef _WIN32
-				full = "\"< NUL pushd \"" + runDir.string() + "\" && " + cmd + " 2>&1 & popd\"";
-				FILE* pipe = _popen(full.c_str(), "r");
-#else
-				full = "cd \"" + runDir.string() + "\" && < /dev/null " + cmd + " 2>&1";
-				FILE* pipe = popen(full.c_str(), "r");
-#endif
-				if (!pipe) {
-					std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-					if (gen == scriptCtx->gen.load()) scriptCtx->output += "[failed to spawn]\n";
-					scriptCtx->running = false;
-					return;
-				}
-				char buf[4096];
-				while (size_t n = fread(buf, 1, sizeof(buf), pipe)) {
-					std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-					if (gen != scriptCtx->gen.load()) break;
-					scriptCtx->output.append(buf, n);
-					if (scriptCtx->output.size() > (8u << 20)) {
-						scriptCtx->output.append("\n[…truncated after 8 MB…]\n");
-						break;
-					}
-				}
-				int rc =
-#ifdef _WIN32
-					_pclose(pipe);
-#else
-					pclose(pipe);
-#endif
-				std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-				if (gen == scriptCtx->gen.load())
-					scriptCtx->output += "\n[exit " + std::to_string(rc) + "]\n";
-				scriptCtx->running = false;
-			}).detach();
-			return;
-		}
-	}
-	runScriptForDoc();
-}
-
-
-void Editor::runScriptForDoc()
-{
-	if (tabs.empty()) return;
+	if (tabs.empty()) return {};
 	auto& t = doc();
-	if (t.filename == "untitled") return;
+	if (t.filename == "untitled") return {};
 
 	auto ext = std::filesystem::path(t.filename).extension().string();
 	std::transform(ext.begin(), ext.end(), ext.begin(),
@@ -723,70 +679,118 @@ void Editor::runScriptForDoc()
 		std::lock_guard<std::mutex> lock(script->mutex);
 		script->output = "[no interpreter mapped for " + ext + "]\n";
 		script->visible = true;
-		return;
+		return {};
 	}
 
 	if (isDirty()) saveFile();
 
-	std::string cmd;
-	if (!interpStr.empty()) cmd = interpStr + " \"" + t.filename + "\"";
-	else                    cmd = "\"" + t.filename + "\"";
+	std::string cmd = interpStr.empty()
+		? ("\"" + t.filename + "\"")
+		: (interpStr + " \"" + t.filename + "\"");
+	return { cmd, std::filesystem::path(t.filename).parent_path() };
+}
 
-	int gen = ++script->gen;
-	{
-		std::lock_guard<std::mutex> lock(script->mutex);
-		script->output = "$ " + cmd + "\n";
-		script->visible = true;
+
+// What F5 runs: the freshest built exe under projectRoot if there is one, else
+// the active document treated as a script.
+std::pair<std::string, std::filesystem::path> Editor::projectRunCommand()
+{
+	if (!projectRoot.empty()) {
+		auto exe = findBuiltExe();
+		if (!exe.empty())
+			return { "\"" + exe.string() + "\"", exe.parent_path() };
 	}
-	script->running = true;
+	return docScriptCommand();
+}
 
-	// Capture the shared_ptr BY VALUE so a still-running script thread keeps
-	// the ScriptState alive past Editor's destruction (program shutdown).
-	auto scriptCtx = script;
-	std::thread([scriptCtx, cmd, gen]()
-				{
-					std::string full;
+
+void Editor::runProjectExeOrScript()
+{
+	auto [cmd, dir] = projectRunCommand();
+	if (!cmd.empty()) runCommandInOutputPanel(cmd, dir);
+}
+
+
+void Editor::runProjectWithArgs()
+{
+	auto [cmd, dir] = projectRunCommand();
+	if (!cmd.empty()) requestRunWithArgs(cmd, dir);
+}
+
+
+void Editor::runScriptForDoc()
+{
+	auto [cmd, dir] = docScriptCommand();
+	if (!cmd.empty()) runCommandInOutputPanel(cmd, dir);
+}
+
+
+// ── Run arbitrary nav-tree files (scripts / executables) ──────────────
+
+bool Editor::navIsRunnable(const std::string& p) const
+{
+	auto ext = std::filesystem::path(p).extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(),
+				   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 #ifdef _WIN32
-					full = "\"< NUL " + cmd + " 2>&1\"";
-					FILE* pipe = _popen(full.c_str(), "r");
-#else
-					full = "< /dev/null " + cmd + " 2>&1";
-					FILE* pipe = popen(full.c_str(), "r");
+	if (ext == ".exe" || ext == ".com" || ext == ".bat" || ext == ".cmd") return true;
 #endif
-					if (!pipe)
-					{
-						std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-						if (gen == scriptCtx->gen.load()) scriptCtx->output += "[failed to spawn]\n";
-						scriptCtx->running = false;
-						return;
-					}
-					char buf[4096];
-					bool truncated = false;
-					while (size_t n = fread(buf, 1, sizeof(buf), pipe))
-					{
-						std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-						if (gen != scriptCtx->gen.load()) break;   // superseded by newer F5
-						scriptCtx->output.append(buf, n);
-						if (scriptCtx->output.size() > (8u << 20))
-						{
-							scriptCtx->output.append("\n[…truncated after 8 MB…]\n");
-							truncated = true;
-							break;
-						}
-					}
-					int rc =
-#ifdef _WIN32
-						_pclose(pipe);
-#else
-						pclose(pipe);
-#endif
-					std::lock_guard<std::mutex> lock(scriptCtx->mutex);
-					if (gen == scriptCtx->gen.load())
-					{
-						if (!truncated) scriptCtx->output += "\n[exit " + std::to_string(rc) + "]\n";
-					}
-					scriptCtx->running = false;
-				}).detach();
+	if (interpreterOverrides.count(ext)) return true;   // user-mapped interpreter
+	return interpreterForExt(ext) != nullptr;            // .py/.ps1/.sh/.lua/.js/...
+}
+
+std::pair<std::string, std::filesystem::path> Editor::runCommandForPath(const std::string& p) const
+{
+	std::filesystem::path path(p);
+	auto ext = path.extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(),
+				   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	std::string interp;
+	auto over = interpreterOverrides.find(ext);
+	if (over != interpreterOverrides.end()) interp = over->second;
+	else if (const char* def = interpreterForExt(ext)) interp = def;
+	// interp == "" → run the file directly (an .exe, or a .bat the shell handles).
+	std::string cmd = interp.empty()
+		? ("\"" + path.string() + "\"")
+		: (interp + " \"" + path.string() + "\"");
+	return { cmd, path.parent_path() };
+}
+
+
+// ── Run with arguments — deferred-open modal ──────────────────────────
+
+void Editor::requestRunWithArgs(const std::string& baseCmd, const std::filesystem::path& runDir)
+{
+	runArgsBaseCmd  = baseCmd;
+	runArgsDir      = runDir;
+	runArgsBuf[0]   = '\0';
+	runArgsRequested = true;   // renderRunArgsPopup() opens the modal next frame
+}
+
+void Editor::renderRunArgsPopup()
+{
+	if (runArgsRequested) { ImGui::OpenPopup("Run with Arguments"); runArgsRequested = false; }
+	if (ImGui::BeginPopupModal("Run with Arguments", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::TextDisabled("%s", runArgsBaseCmd.c_str());
+		ImGui::SetNextItemWidth(440.0f);
+		if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+		bool enter = ImGui::InputText("Arguments", runArgsBuf, sizeof(runArgsBuf),
+			ImGuiInputTextFlags_EnterReturnsTrue);
+		ImGui::Separator();
+		if (ImGui::Button("Run") || enter)
+		{
+			// Args are appended verbatim — the shell (_popen → cmd.exe /c) does
+			// its own quoting/splitting, which is exactly what a run box wants.
+			std::string cmd = runArgsBaseCmd;
+			if (runArgsBuf[0]) { cmd += ' '; cmd += runArgsBuf; }
+			runCommandInOutputPanel(cmd, runArgsDir);
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
 }
 
 
@@ -1460,6 +1464,12 @@ void Editor::renderNavigationPanel()
 			if (!isDir && ImGui::MenuItem("Open to Right")) { openFileToSide(ctxPath, +1); }
 			if (ImGui::MenuItem("Open in Explorer")) { navOpenPathInExplorer(ctxPath); }
 			if (ImGui::MenuItem("Copy path")) { ImGui::SetClipboardText(ctxPath.c_str()); }
+			if (!isDir && navIsRunnable(ctxPath)) {
+				ImGui::Separator();
+				auto [base, dir] = runCommandForPath(ctxPath);
+				if (ImGui::MenuItem("Run")) { runCommandInOutputPanel(base, dir); }
+				if (ImGui::MenuItem("Run with Arguments...")) { requestRunWithArgs(base, dir); }
+			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Copy")) { navClipboardPath = ctxPath; navClipboardIsCut = false; }
 			if (ImGui::MenuItem("Cut"))  { navClipboardPath = ctxPath; navClipboardIsCut = true;  }
@@ -4122,6 +4132,7 @@ void Editor::render()
 	renderNavigationPanel();
 	renderImageWindows();
 	renderScriptOutputWindow();
+	renderRunArgsPopup();
 	renderReferencesPanel();
 	renderSettings();
 
@@ -4953,6 +4964,7 @@ void Editor::renderMenuBar()
 		{
 			if (ImGui::MenuItem("Build Project",      "F6")) { runProjectBuild(); }
 			if (ImGui::MenuItem("Run",                "F5")) { runProjectExeOrScript(); }
+			if (ImGui::MenuItem("Run with Arguments...")) { runProjectWithArgs(); }
 			if (ImGui::MenuItem("Run Active Document (script)")) { runScriptForDoc(); }
 			ImGui::Separator();
 			if (ImGui::MenuItem("Open Project...")) { openProjectFolderPicker(); }
