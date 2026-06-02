@@ -2590,6 +2590,27 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 						if (typeBefore) score = 50;
 					}
 				}
+				// Lua: a name introduced by `local` is a definition site. Matches
+				// `local NAME = …` and comma lists `local a, b, c = …`; the names
+				// are the identifiers before the first '=' on a `local` line. The
+				// `function` keyword is excluded so `local function f` still scores
+				// `f` via the strong-keyword rule above, not the bare `local`.
+				if (score == 0 && ext == ".lua" && symbol != "function") {
+					bool startsLocal = s + 5 <= line.size()
+						&& line.compare(s, 5, "local") == 0
+						&& (s + 5 >= line.size() || isWordBoundary(line[s + 5]));
+					if (startsLocal && pos > s) {
+						// First '=' that is a real assignment (not ==, ~=, <=, >=).
+						size_t eq = std::string::npos;
+						for (size_t k = s; k < line.size(); ++k) {
+							char c = line[k];
+							if (c == '=' && (k + 1 >= line.size() || line[k + 1] != '=')
+								&& (k == 0 || (line[k - 1] != '=' && line[k - 1] != '~'
+									&& line[k - 1] != '<' && line[k - 1] != '>'))) { eq = k; break; }
+						}
+						if (eq == std::string::npos || pos < eq) score = 70;
+					}
+				}
 				// Weak: `<symbol> = ` top-level assignment.
 				if (score == 0 && !insideString && pos == s) {
 					size_t p = pos + symbol.size();
