@@ -1738,6 +1738,17 @@ void Editor::rebuildProjectIndex()
 				size_t lead = 0;
 				while (lead < n && (line[lead] == ' ' || line[lead] == '\t')) ++lead;
 				bool hashLine = lead < n && line[lead] == '#';
+				// A comment line still contributes its identifiers (autocomplete
+				// wants them) but must NOT register definition sites — otherwise a
+				// commented-out foreign snippet (C++ "-- struct FVector ..." in a
+				// Lua file) indexes as a real def and Go-to-Definition jumps to it.
+				bool commentLine = false;
+				if (lead < n) {
+					char c0 = line[lead];
+					char c1 = (lead + 1 < n) ? line[lead + 1] : '\0';
+					commentLine = (c0 == '/' && c1 == '/') || (c0 == '-' && c1 == '-')
+						|| c0 == ';' || c0 == '*';
+				}
 
 				std::string prevTok;
 				size_t i = 0;
@@ -1750,7 +1761,8 @@ void Editor::rebuildProjectIndex()
 					idset.insert(tok);
 
 					int score = 0;
-					if (defKw.count(prevTok)) score = 100;                 // class/def/... NAME
+					if (commentLine) score = 0;                            // comment → never a def site
+					else if (defKw.count(prevTok)) score = 100;            // class/def/... NAME
 					else if (hashLine && prevTok == "define") score = 80;  // #define NAME
 					else {
 						size_t p = i; while (p < n && line[p] == ' ') ++p;
@@ -2471,6 +2483,20 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 			// Strip leading whitespace for cheap pattern checks.
 			size_t s = 0;
 			while (s < line.size() && (line[s] == ' ' || line[s] == '\t')) ++s;
+			// Skip comment lines. A definition never lives in a comment, and
+			// pasted foreign-language snippets (e.g. C++ "-- struct FVector ..."
+			// commented out inside a Lua file) otherwise score as real defs and
+			// hijack Go-to-Definition. Covers the common leading markers across
+			// languages: // (C/C++/C#/JS), -- (Lua/SQL), # (Python/shell/Ruby),
+			// ; (ini/asm), * (inside C block comments / doc comments).
+			if (s < line.size()) {
+				char c0 = line[s];
+				char c1 = (s + 1 < line.size()) ? line[s + 1] : '\0';
+				if ((c0 == '/' && c1 == '/') || (c0 == '-' && c1 == '-')
+					|| c0 == '#' || c0 == ';' || c0 == '*') {
+					continue;
+				}
+			}
 			// Whole-word scan for the (last-segment) symbol.
 			size_t pos = 0;
 			while ((pos = line.find(symbol, pos)) != std::string::npos) {

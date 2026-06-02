@@ -130,6 +130,20 @@ int main()
 		CHECK(ed.GetText().rfind("--", 0) != 0, "Lua single-line toggle is reversible");
 	}
 
+	// ── Comment toggle leaves blank lines alone ──
+	{
+		TextEditor ed;
+		ed.SetLanguage(TextEditor::Language::Lua());
+		ed.SetText("a = 1\n\nb = 2\n");   // line 1 is blank
+		ed.SelectAll();
+		ed.ToggleComments();
+		// The blank middle line must NOT have gained a "--".
+		// GetText lines: "--a = 1", "", "--b = 2"
+		std::string out = ed.GetText();
+		// crude: the empty line stays empty (no "--\n--" run)
+		CHECK(out.find("--\n") == std::string::npos, "toggle does not comment blank lines");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

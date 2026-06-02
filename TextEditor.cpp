@@ -2371,9 +2371,12 @@ void TextEditor::selectAll()
 
 void TextEditor::selectLine(int line)
 {
+	// Select the whole line's content (column 0 → end of line). Previously this
+	// stopped one column short (maxColumn - 1), leaving the last glyph
+	// unselected and the caret one column before the line end.
 	Coordinate start{ line, 0 };
 	moveTo(start, false);
-	moveTo(Coordinate(start.line, document[line].maxColumn - 1), true);
+	moveTo(Coordinate(start.line, document[line].maxColumn), true);
 }
 
 
@@ -3419,6 +3422,13 @@ void TextEditor::toggleComments()
 		while (i < text.size() && (text[i] == ' ' || text[i] == '\t'))
 			++i;
 
+		// Blank / whitespace-only lines don't carry a comment marker — ignore
+		// them when deciding whether the block is fully commented (and below
+		// when applying), so commenting a selection doesn't litter "--" on empty
+		// lines and uncommenting isn't blocked by them.
+		if (i >= text.size())
+			continue;
+
 		if (i + cs.size() > text.size() ||
 			text.compare(i, cs.size(), cs) != 0)
 		{
@@ -3440,6 +3450,9 @@ void TextEditor::toggleComments()
 		size_t i = 0;
 		while (i < text.size() && (text[i] == ' ' || text[i] == '\t'))
 			++i;
+
+		if (i >= text.size())
+			continue;   // blank line — leave it alone
 
 		Coordinate start(line, (int)i);
 
