@@ -3025,7 +3025,10 @@ void Editor::applyFont()
 	std::snprintf(cfg.Name, sizeof(cfg.Name), "%s", leaf.c_str());
 	cfg.OversampleH = 1;
 	cfg.OversampleV = 1;
-	activeFont = ImGui::GetIO().Fonts->AddFontFromFileTTF(fontPath.c_str(), 15.0f, &cfg);
+	// Bake at the user's editor size (not a hardcoded 15) so the atlas is sharp
+	// at the size we actually render. Clamp to the Settings slider range.
+	float bake = (prefFontSize >= 8.0f && prefFontSize <= 40.0f) ? prefFontSize : 15.0f;
+	activeFont = ImGui::GetIO().Fonts->AddFontFromFileTTF(fontPath.c_str(), bake, &cfg);
 }
 
 
@@ -3341,6 +3344,28 @@ void Editor::renderSettings()
 						if (selected) ImGui::SetItemDefaultFocus();
 					}
 					ImGui::EndCombo();
+				}
+				// This is a monospace (grid) editor: every column is one cell wide.
+				// A proportional font (Comic Sans, Arial, ...) gets each glyph
+				// jammed into a fixed cell, so narrow letters look gappy and wide
+				// ones cramped. Detect it by comparing a narrow vs wide glyph's
+				// advance under the active font and warn — the fix is to pick a
+				// monospace font, not a spacing tweak.
+				{
+					ImFont* f = activeFont ? activeFont : ImGui::GetFont();
+					if (f) {
+						ImGui::PushFont(f, prefFontSize);
+						float wi = ImGui::CalcTextSize("i").x;
+						float wm = ImGui::CalcTextSize("M").x;
+						ImGui::PopFont();
+						if (wi > 0.0f && std::fabs(wm - wi) > 0.5f) {
+							ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
+							ImGui::TextWrapped("This font is not monospaced — text will look unevenly spaced "
+								"in the editor grid. Pick a fixed-width font (e.g. Consolas, "
+								"Cascadia Mono, DejaVu Sans Mono) for proper alignment.");
+							ImGui::PopStyleColor();
+						}
+					}
 				}
 				ImGui::EndTabItem();
 			}
