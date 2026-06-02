@@ -1601,6 +1601,21 @@ protected:
 	ImFont* font;
 	float fontSize;
 	ImVec2 glyphSize;
+	// Proportional-text support. When the active font is NOT fixed-pitch we map
+	// columns to pixels by summing real glyph advances instead of column*cell.
+	// `proportional` is detected once per render() from the font metrics; when
+	// false, columnToX/xToColumn use the exact old arithmetic so monospace
+	// rendering is byte-identical (and can't regress).
+	bool proportional = false;
+	// Pixel X (relative to text origin, i.e. excludes textOffset) of the LEFT
+	// edge of `column` on `line`. Walks the glyphs in proportional mode (tabs
+	// snap to tabSize cells using the space advance); O(1) multiply otherwise.
+	float columnToX(int line, int column) const;
+	// Inverse: nearest column for a pixel X (relative to text origin).
+	int   xToColumn(int line, float x) const;
+	// Advance (px) of one glyph at (line, index) given its start column — tab
+	// expands to the next tab stop. Uses CalcTextSize so it matches RenderChar.
+	float glyphAdvanceX(ImWchar codepoint, int column) const;
 	ImVec2 lastRenderOrigin;
 	float lineNumberLeftOffset;
 	float lineNumberRightOffset;

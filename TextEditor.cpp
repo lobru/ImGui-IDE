@@ -151,6 +151,11 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	font = ImGui::GetFont();
 	fontSize = ImGui::GetFontSize();
 	glyphSize = ImVec2(ImGui::CalcTextSize("#").x, ImGui::GetTextLineHeightWithSpacing() * lineSpacing);
+	// Detect a proportional (non-fixed-pitch) font: if a narrow and a wide glyph
+	// advance differently, switch the column↔pixel mapping to measured advances.
+	// For a monospace font this stays false and all layout uses the fast
+	// column*cell arithmetic exactly as before.
+	proportional = std::fabs(ImGui::CalcTextSize("i").x - ImGui::CalcTextSize("W").x) > 0.5f;
 	lineNumberLeftOffset = leftMargin * glyphSize.x;
 
 
@@ -503,8 +508,8 @@ void TextEditor::renderSelections()
 			if (!document[line].visible) continue;
 			int vi = lineToVisualIndex(line);
 			auto x = cursorScreenPos.x + textOffset;
-			auto left = x + (line == start.line ? start.column : 0) * glyphSize.x;
-			auto right = x + (line == end.line ? end.column : document[line].maxColumn) * glyphSize.x;
+			auto left = x + columnToX(line, (line == start.line ? start.column : 0));
+			auto right = x + columnToX(line, (line == end.line ? end.column : document[line].maxColumn));
 			if (left < gutterRightX) left = gutterRightX;
 			auto y = cursorScreenPos.y + vi * glyphSize.y;
 			if (ImGui::IsMouseHoveringRect(ImVec2(left, y), ImVec2(right, y + glyphSize.y)))
@@ -518,8 +523,8 @@ void TextEditor::renderSelections()
 			if (!document[line].visible) continue;
 			int vi = lineToVisualIndex(line);
 			auto x = cursorScreenPos.x + textOffset;
-			auto left = x + (line == start.line ? start.column : 0) * glyphSize.x;
-			auto right = x + (line == end.line ? end.column : document[line].maxColumn) * glyphSize.x;
+			auto left = x + columnToX(line, (line == start.line ? start.column : 0));
+			auto right = x + columnToX(line, (line == end.line ? end.column : document[line].maxColumn));
 			if (left < gutterRightX) left = gutterRightX;
 			auto y = cursorScreenPos.y + vi * glyphSize.y;
 
@@ -564,7 +569,7 @@ void TextEditor::renderCursors()
 				continue;
 
 			int vi = lineToVisualIndex(pos.line);
-			auto x = cursorScreenPos.x + textOffset + pos.column * glyphSize.x - 1;
+			auto x = cursorScreenPos.x + textOffset + columnToX(pos.line, pos.column) - 1;
 			auto y = cursorScreenPos.y + vi * glyphSize.y;
 			drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + cursorWidth, y + glyphSize.y), palette.get(Color::cursor));
 		}
@@ -671,7 +676,8 @@ void TextEditor::renderMatchingBrackets()
 					// stub between the visible `{` and `}` rows, which shows
 					// up as a stray `|` on what looks like an empty line.
 					if (startVI + 1 >= endVI) continue;
-					auto lineX = cursorScreenPos.x + textOffset + std::min(bracket.start.column, bracket.end.column) * glyphSize.x;
+					int guideLine = bracket.start.column <= bracket.end.column ? bracket.start.line : bracket.end.line;
+					auto lineX = cursorScreenPos.x + textOffset + columnToX(guideLine, std::min(bracket.start.column, bracket.end.column));
 					auto startY = cursorScreenPos.y + (startVI + 1) * glyphSize.y;
 					auto endY = cursorScreenPos.y + endVI * glyphSize.y;
 					drawList->AddLine(ImVec2(lineX, startY), ImVec2(lineX, endY), palette.get(Color::whitespace), 1.0f);
@@ -688,13 +694,15 @@ void TextEditor::renderMatchingBrackets()
 
 				int startVI = lineToVisualIndex(active->start.line);
 				int endVI = lineToVisualIndex(active->end.line);
-				auto x1 = cursorScreenPos.x + textOffset + active->start.column * glyphSize.x;
+				auto x1 = cursorScreenPos.x + textOffset + columnToX(active->start.line, active->start.column);
 				auto y1 = cursorScreenPos.y + startVI * glyphSize.y;
-				drawList->AddRectFilled(ImVec2(x1, y1), ImVec2(x1 + glyphSize.x, y1 + glyphSize.y), palette.get(Color::matchingBracketBackground));
+				auto w1 = columnToX(active->start.line, active->start.column + 1) - columnToX(active->start.line, active->start.column);
+				drawList->AddRectFilled(ImVec2(x1, y1), ImVec2(x1 + w1, y1 + glyphSize.y), palette.get(Color::matchingBracketBackground));
 
-				auto x2 = cursorScreenPos.x + textOffset + active->end.column * glyphSize.x;
+				auto x2 = cursorScreenPos.x + textOffset + columnToX(active->end.line, active->end.column);
 				auto y2 = cursorScreenPos.y + endVI * glyphSize.y;
-				drawList->AddRectFilled(ImVec2(x2, y2), ImVec2(x2 + glyphSize.x, y2 + glyphSize.y), palette.get(Color::matchingBracketBackground));
+				auto w2 = columnToX(active->end.line, active->end.column + 1) - columnToX(active->end.line, active->end.column);
+				drawList->AddRectFilled(ImVec2(x2, y2), ImVec2(x2 + w2, y2 + glyphSize.y), palette.get(Color::matchingBracketBackground));
 
 				if (active->end.line - active->start.line > 1 && startVI + 1 < endVI)
 				{
@@ -776,6 +784,72 @@ int TextEditor::wrapRowOfCoordinate(const Coordinate& c) const
 //	TextEditor::renderText
 //
 
+float TextEditor::glyphAdvanceX(ImWchar codepoint, int column) const
+{
+	int tabSize = document.getTabSize();
+	if (codepoint == '\t')
+	{
+		int next = ((column / tabSize) + 1) * tabSize;
+		// Tab width in the proportional world is measured in space-advances so it
+		// stays visually consistent with the rest of the (variable) text.
+		float space = proportional ? ImGui::CalcTextSize(" ").x : glyphSize.x;
+		return (next - column) * space;
+	}
+	if (!proportional)
+		return glyphSize.x;
+	char buf[5];
+	size_t n = CodePoint::write(buf, codepoint);
+	buf[n] = '\0';
+	return ImGui::CalcTextSize(buf).x;
+}
+
+float TextEditor::columnToX(int line, int column) const
+{
+	if (!proportional)
+		return column * glyphSize.x;
+	if (line < 0 || line >= document.lineCount())
+		return column * glyphSize.x;
+	// Walk glyphs accumulating real advances until we reach `column`. Columns
+	// past end-of-line continue at the space advance (so the caret can sit in
+	// virtual space, matching the monospace behaviour).
+	const Line& gl = document[line];
+	float x = 0.0f;
+	int col = 0;
+	for (size_t i = 0; i < gl.size() && col < column; ++i)
+	{
+		x += glyphAdvanceX(gl[i].codepoint, col);
+		col += (gl[i].codepoint == '\t') ? (document.getTabSize() - (col % document.getTabSize())) : 1;
+	}
+	if (col < column)
+		x += (column - col) * ImGui::CalcTextSize(" ").x;   // virtual trailing space
+	return x;
+}
+
+int TextEditor::xToColumn(int line, float x) const
+{
+	if (!proportional)
+		return std::max(0, static_cast<int>(x / glyphSize.x));
+	if (x <= 0.0f || line < 0 || line >= document.lineCount())
+		return std::max(0, static_cast<int>(x / glyphSize.x));
+	// Advance glyph by glyph; pick the column whose cell the pixel falls in
+	// (rounding at the glyph's horizontal midpoint, like a normal text caret).
+	const Line& gl = document[line];
+	float acc = 0.0f;
+	int col = 0;
+	for (size_t i = 0; i < gl.size(); ++i)
+	{
+		float adv = glyphAdvanceX(gl[i].codepoint, col);
+		if (x < acc + adv * 0.5f)
+			return col;
+		acc += adv;
+		col += (gl[i].codepoint == '\t') ? (document.getTabSize() - (col % document.getTabSize())) : 1;
+	}
+	// Past end of line → virtual space columns.
+	float space = ImGui::CalcTextSize(" ").x;
+	if (space > 0.0f) col += static_cast<int>((x - acc) / space + 0.5f);
+	return col;
+}
+
 void TextEditor::renderText()
 {
 	if (wordWrap) { renderTextWrapped(); return; }
@@ -822,7 +896,9 @@ void TextEditor::renderText()
 		{
 			auto& glyph = line[index];
 			auto codepoint = glyph.codepoint;
-			ImVec2 glyphPos{ lineScreenPos.x + column * glyphSize.x, lineScreenPos.y };
+			// columnToX == column*glyphSize.x in monospace mode (identical), but
+			// sums real advances when the font is proportional so glyphs sit flush.
+			ImVec2 glyphPos{ lineScreenPos.x + columnToX(lineIndex, column), lineScreenPos.y };
 
 			if (codepoint == '\t')
 			{
@@ -1897,9 +1973,12 @@ void TextEditor::handleMouseInteractions()
 		else
 		{
 			int realLine = visualIndexToLine(visibleIndex);
+			// xToColumn == (px / glyphSize.x) in monospace mode; measured walk
+			// when proportional so the caret lands under the clicked glyph.
+			int col = xToColumn(realLine, mousePos.x - textOffset);
 			document.normalizeCoordinate(
 				1.0f* realLine,
-				1.0f*std::max(0, static_cast<int>((mousePos.x - textOffset) / glyphSize.x)),
+				1.0f* std::max(0, col),
 				glyphCoordinate,
 				cursorCoordinate
 			);
