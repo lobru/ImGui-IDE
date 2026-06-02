@@ -3376,7 +3376,12 @@ void TextEditor::toggleComments()
 	if (!language)
 		return;
 
-	const std::string& cs = language->commentStart;
+	// Single-line toggle uses the LINE comment marker ("--", "//", "#") when the
+	// language has one; only fall back to the block opener for languages with no
+	// line comment. Previously this always used commentStart, so Lua (commentStart
+	// "--[[") prefixed every line with "--[[" instead of "--".
+	const std::string& cs = language->singleLineComment.empty()
+		? language->commentStart : language->singleLineComment;
 	if (cs.empty())
 		return;
 

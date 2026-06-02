@@ -83,3 +83,16 @@ add_custom_command(TARGET example POST_BUILD
 		"${CMAKE_CURRENT_SOURCE_DIR}/languages"
 		"$<TARGET_FILE_DIR:example>/languages"
 	COMMENT "Syncing languages/ next to example.exe")
+
+# ── Headless logic self-test ─────────────────────────────────────────────
+# A tiny console executable that exercises the pure (non-UI) code paths —
+# colorizer, fold detection — with no SDL/GPU/ImGui context. It links the same
+# TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
+# so it runs in CI and even while example.exe is open. `ctest` or run directly.
+add_executable(selftest selftest.cpp)
+target_link_libraries(selftest PRIVATE TextEditorLib imguifd)
+target_compile_options(selftest PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+enable_testing()
+add_test(NAME selftest COMMAND selftest)

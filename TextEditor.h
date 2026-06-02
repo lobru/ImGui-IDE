@@ -115,6 +115,17 @@ public:
 		foldRanges.toggleCurrent(line, document, -1);
 	}
 
+	// Headless test accessors. setText() already colorizes + rebuilds folds with
+	// no ImGui context, so these expose the results for --selftest without a GUI.
+	inline size_t GetFoldCount() const { return foldRanges.size(); }
+	inline int GetGlyphColorAt(int line, int column) const {
+		if (line < 0 || line >= document.lineCount()) return -1;
+		const Line& gl = document[line];
+		size_t idx = document.getIndex(gl, column);
+		if (idx >= gl.size()) return -1;
+		return static_cast<int>(gl[idx].color);
+	}
+
 	// access text (using UTF-8 encoded strings)
 	// (see note below on cursor and scroll manipulation after setting new text)
 	inline void SetText(const std::string_view& text) { setText(text); }
