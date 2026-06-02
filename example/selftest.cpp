@@ -144,6 +144,27 @@ int main()
 		CHECK(out.find("--\n") == std::string::npos, "toggle does not comment blank lines");
 	}
 
+	// ── Folding collapses / restores visible lines (regression net for the
+	//    "folding no longer flags the document content-changed" perf fix). ──
+	{
+		TextEditor ed;
+		ed.SetFoldingEnabled(true);
+		ed.SetLanguage(TextEditor::Language::Cpp());
+		ed.SetText(
+			"void f()\n"
+			"{\n"
+			"    int x = 1;\n"
+			"    int y = 2;\n"
+			"    int z = 3;\n"
+			"}\n");
+		int full = ed.getVisualLineCount();
+		ed.FoldAll();
+		int folded = ed.getVisualLineCount();
+		CHECK(folded < full, "FoldAll hides body lines (visible count drops)");
+		ed.UnfoldAll();
+		CHECK(ed.getVisualLineCount() == full, "UnfoldAll restores all lines");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

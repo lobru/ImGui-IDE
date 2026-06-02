@@ -975,8 +975,8 @@ void TextEditor::renderText()
 							cursors.setCursor(fr.start,
 											  Coordinate(fr.end.line, document[fr.end.line].maxColumn));
 							fr.folded = false;
+							// visibility-only — see toggleFold(): no setUpdated(true).
 							foldRanges.updateVisibility(document);
-							document.setUpdated(true);
 						}
 						else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 						{
@@ -4169,7 +4169,13 @@ void TextEditor::Folder::toggleFold(int line, Document& document)
 		{
 			fr.folded = !fr.folded;
 
-			document.setUpdated(true);   // force re-render with new visibility
+			// A fold is a VISIBILITY change only — updateVisibility() refreshes the
+			// O(1) line maps and the immediate-mode UI redraws next frame on its
+			// own. Do NOT call document.setUpdated(true): that flags the document as
+			// content-changed, which makes render() run a full rebuildFoldRanges()
+			// parse AND a full bracketeer rescan every single toggle (the big
+			// fold-latency bug). Real edits set the document's updated flag
+			// internally, so they still rebuild correctly.
 			updateVisibility(document);
 			break;
 		}
@@ -4195,8 +4201,8 @@ bool TextEditor::Folder::unfoldContaining(int line, Document& document)
 	}
 	if (changed)
 	{
+		// visibility-only change — see toggleFold(): no document.setUpdated(true).
 		updateVisibility(document);
-		document.setUpdated(true);
 	}
 	return changed;
 }
@@ -4210,8 +4216,8 @@ void TextEditor::Folder::foldAll(Document& document)
 		fr.folded = true;
 		foldedStartLines.insert(fr.start.line);
 	}
+	// visibility-only change — see toggleFold(): no document.setUpdated(true).
 	updateVisibility(document);
-	document.setUpdated(true);
 }
 
 
@@ -4223,8 +4229,8 @@ void TextEditor::Folder::unfoldAll(Document& document)
 		fr.folded = false;
 	}
 	foldedStartLines.clear();
+	// visibility-only change — see toggleFold(): no document.setUpdated(true).
 	updateVisibility(document);
-	document.setUpdated(true);
 }
 
 
@@ -4251,8 +4257,8 @@ bool TextEditor::Folder::toggleCurrent(int line, Document& document, int forceFo
 	best->folded = target;
 	if (target) foldedStartLines.insert(best->start.line);
 	else        foldedStartLines.erase(best->start.line);
+	// visibility-only change — see toggleFold(): no document.setUpdated(true).
 	updateVisibility(document);
-	document.setUpdated(true);
 	return true;
 }
 
