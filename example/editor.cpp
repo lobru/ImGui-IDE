@@ -4838,10 +4838,9 @@ void Editor::renderMenuBar()
 				ImGui::SetClipboardText(doc().filename.c_str());
 			}
 			ImGui::Separator();
-			// Close the application (respects unsaved-changes confirmation).
-			if (ImGui::MenuItem("Exit", SHORTCUT "Q")) { tryToQuit(); }
 			// "Switch Header/Source" only really applies to C/C++ files — hide
-			// it for other languages so the menu stays focused.
+			// it for other languages so the menu stays focused. Render it ABOVE
+			// Exit so Exit is always the last item in the menu.
 			bool isCxxDoc = false;
 			if (hasPath) {
 				auto* lang = doc().editor.GetLanguage();
@@ -4851,11 +4850,13 @@ void Editor::renderMenuBar()
 				}
 			}
 			if (isCxxDoc) {
-				ImGui::Separator();
 				if (ImGui::MenuItem("Switch Header/Source", "Alt+O")) {
 					toggleHeaderSource();
 				}
+				ImGui::Separator();
 			}
+			// Close the application (respects unsaved-changes confirmation).
+			if (ImGui::MenuItem("Exit", SHORTCUT "Q")) { tryToQuit(); }
 			ImGui::EndMenu();
 		}
 
