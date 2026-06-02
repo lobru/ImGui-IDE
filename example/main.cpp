@@ -164,7 +164,12 @@ int main(int argc, char** argv) {
 	ImFontConfig config;
 	std::memcpy(config.Name, "DejaVu", 7);
 	config.FontDataOwnedByAtlas = false;
-	config.OversampleH = 1;
+	// Horizontal oversampling 2 (ImGui's default) so glyphs carry their full
+	// left-side bearing in the atlas. With OversampleH=1 the leftmost pixel
+	// column of a glyph can be shaved when text sits at a clip-rect edge —
+	// visible as the first character of File-menu items being clipped on the
+	// left. This is the UI font only; the editor grid uses its own font.
+	config.OversampleH = 2;
 	config.OversampleV = 1;
 	io.Fonts->Clear();
 	io.Fonts->AddFontFromMemoryCompressedTTF((void*) &dejavu, dejavuSize, 15.0f, &config);
