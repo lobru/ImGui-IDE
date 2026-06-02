@@ -4766,6 +4766,13 @@ void Editor::renderMenuBar()
 {
 	if (ImGui::BeginMenuBar())
 	{
+		// Dropdown popups inherit WindowPadding at BeginMenu time. Widen the
+		// horizontal padding so item labels get a clear left margin instead of
+		// kissing (and clipping against) the popup's left edge. Pushed AFTER
+		// BeginMenuBar so the menu bar's own item layout is unaffected, popped
+		// just before EndMenuBar so the push/pop stay balanced.
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+			ImVec2(18.0f, ImGui::GetStyle().WindowPadding.y));
 		if (ImGui::BeginMenu("File"))
 		{
 			if (ImGui::MenuItem("New Tab", SHORTCUT "N")) { newFile(); }
@@ -4856,7 +4863,7 @@ void Editor::renderMenuBar()
 				ImGui::Separator();
 			}
 			// Close the application (respects unsaved-changes confirmation).
-			if (ImGui::MenuItem("Exit", SHORTCUT "Q")) { tryToQuit(); }
+			if (ImGui::MenuItem("Exit")) { tryToQuit(); }
 			ImGui::EndMenu();
 		}
 
@@ -4982,6 +4989,7 @@ void Editor::renderMenuBar()
 			ImGui::EndMenu();
 		}
 
+		ImGui::PopStyleVar();   // WindowPadding pushed after BeginMenuBar
 		ImGui::EndMenuBar();
 	}
 
