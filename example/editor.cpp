@@ -260,6 +260,7 @@ Editor::TabDocument& Editor::newTab()
 	t->editor.SetAutoIndentEnabled(prefAutoIndent);
 	t->editor.SetCompletePairedGlyphs(prefCompletePairs);
 	t->editor.SetPanInverted(prefInvertPan);
+	t->editor.SetPanScrollAccel(prefPanScrollAccel);
 	t->editor.SetWordWrap(prefWordWrap);
 	t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
 	applyKeybindOverridesToEditor(t->editor);   // user keybind remaps into this editor
@@ -1407,6 +1408,46 @@ static void navRenderFlat(Editor* self, const std::filesystem::path& root,
 	}
 }
 
+// Middle-mouse pan/scroll for a plain scrolling ImGui window (nav tree, settings).
+// Mirrors the editor widget's pan via the public scroll API. It tracks its OWN
+// per-frame delta (lastPos) rather than Get/ResetMouseDragDelta: the editor
+// renders first and would consume/reset the global drag delta, leaving this at
+// zero. windowKey distinguishes windows so a drag started in one can't bleed into
+// another. Call once inside the target window (while it is the current window).
+void Editor::middleMousePanScroll(int windowKey)
+{
+	static int    activeKey = 0;     // 0 = no pan in progress
+	static ImVec2 anchor;            // screen-space click point — drives accel distance
+	static ImVec2 lastPos;           // previous-frame mouse pos — drives per-frame scroll
+
+	bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+	if (activeKey == 0 && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+		activeKey = windowKey;
+		anchor = lastPos = ImGui::GetMousePos();
+	}
+	if (activeKey != windowKey) return;                          // not the panned window
+	if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) { activeKey = 0; return; }
+
+	ImVec2 pos   = ImGui::GetMousePos();
+	ImVec2 delta = pos - lastPos;                                // self-tracked movement
+	lastPos = pos;
+
+	// Quadratic acceleration by distance from the anchor (same curve as the editor).
+	ImVec2 rel  = pos - anchor;
+	float  dist = std::sqrt(rel.x * rel.x + rel.y * rel.y);
+	float  ref  = ImGui::GetTextLineHeightWithSpacing() * 8.0f;
+	float  t    = (ref > 0.0f) ? dist / ref : 0.0f;
+	float  accel = (prefPanScrollAccel <= 0.0f) ? 1.0f : (1.0f + t * t * prefPanScrollAccel);
+	if (accel > 16.0f) accel = 16.0f;
+
+	float panSign = prefInvertPan ? -1.0f : 1.0f;
+	// Vertical-biased like the editor: sideways scroll only on near-horizontal drags.
+	float hGate = (std::fabs(delta.x) > std::fabs(delta.y) * 2.0f) ? 1.0f : 0.0f;
+	ImGui::SetScrollX(ImGui::GetScrollX() - panSign * delta.x * 0.35f * hGate * accel);
+	ImGui::SetScrollY(ImGui::GetScrollY() - panSign * delta.y * accel);
+}
+
+
 void Editor::renderNavigationPanel()
 {
 	if (!navPanelVisible) return;
@@ -1547,6 +1588,9 @@ void Editor::renderNavigationPanel()
 			}
 			ImGui::EndPopup();
 		}
+
+		// Middle-mouse pan/scroll inside the nav tree (same gesture as the editor).
+		middleMousePanScroll(1);
 	}
 	ImGui::End();
 }
@@ -3150,6 +3194,7 @@ void Editor::loadSettings()
 			else if (k == "ctrl_scroll_zoom") prefCtrlScrollZoom = (v == "1" || v == "true");
 			else if (k == "autocomplete")   autocomplete      = (v == "1" || v == "true");
 			else if (k == "invert_pan")     prefInvertPan     = (v == "1" || v == "true");
+			else if (k == "pan_scroll_accel") prefPanScrollAccel = std::strtof(v.c_str(), nullptr);
 			else if (k == "word_wrap")      prefWordWrap      = (v == "1" || v == "true");
 			else if (k == "wrap_width")     prefWrapWidthPx   = std::atoi(v.c_str());
 			else if (k == "fps_limit")      prefFpsLimit      = std::atoi(v.c_str());
@@ -3235,6 +3280,7 @@ void Editor::saveSettings()
 	f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
 	f << "autocomplete="     << (autocomplete       ? "1" : "0") << "\n";
 	f << "invert_pan="       << (prefInvertPan      ? "1" : "0") << "\n";
+	f << "pan_scroll_accel=" << prefPanScrollAccel << "\n";
 	f << "word_wrap="        << (prefWordWrap       ? "1" : "0") << "\n";
 	f << "wrap_width="       << prefWrapWidthPx << "\n";
 	f << "fps_limit="        << prefFpsLimit << "\n";
@@ -3367,6 +3413,13 @@ void Editor::renderSettings()
 	detectToolchains();
 	pollDotnetProbe();
 	ImGui::SetNextWindowSize(ImVec2(640.0f, 420.0f), ImGuiCond_FirstUseEver);
+	// Clicking File → Settings while the window is already open (possibly
+	// collapsed or behind other windows) should restore + focus it.
+	if (settingsFocusRequest) {
+		ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
+		ImGui::SetNextWindowFocus();
+		settingsFocusRequest = false;
+	}
 	if (ImGui::Begin("Settings##editorSettings", &settingsVisible))
 	{
 		if (ImGui::BeginTabBar("##settingsTabs"))
@@ -3378,6 +3431,10 @@ void Editor::renderSettings()
 				ImGui::Checkbox("Show FPS on status bar", &prefShowFps);
 				ImGui::Checkbox("Ctrl + scroll wheel adjusts editor font size", &prefCtrlScrollZoom);
 				ImGui::Checkbox("Invert middle-mouse pan direction", &prefInvertPan);
+				ImGui::SetNextItemWidth(220.0f);
+				ImGui::SliderFloat("Pan/scroll acceleration", &prefPanScrollAccel, 0.0f, 4.0f, "%.2f");
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Middle-mouse scroll speed-up by distance from the click point.\n0 = constant speed (no acceleration).");
 				ImGui::Checkbox("Word wrap", &prefWordWrap);
 				if (prefWordWrap) {
 					ImGui::SetNextItemWidth(220.0f);
@@ -3399,6 +3456,7 @@ void Editor::renderSettings()
 				// Pan-invert + word-wrap apply to every open doc, not just the active one.
 				for (auto& up : tabs) {
 					up->editor.SetPanInverted(prefInvertPan);
+					up->editor.SetPanScrollAccel(prefPanScrollAccel);
 					up->editor.SetWordWrap(prefWordWrap);
 					up->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
 				}
@@ -3833,6 +3891,9 @@ void Editor::renderSettings()
 		if (ImGui::Button("Save"))   { saveSettings(); }
 		ImGui::SameLine();
 		if (ImGui::Button("Close"))  { saveSettings(); settingsVisible = false; }
+
+		// Middle-mouse pan/scroll inside the settings window (same gesture as the editor).
+		middleMousePanScroll(2);
 	}
 	ImGui::End();
 }
@@ -4834,7 +4895,13 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("File History…",      " " SHORTCUT "I")) { showDiff(); }
 			if (ImGui::MenuItem("Diff Against File…"))                  { openDiffOtherDialog(); }
 			ImGui::Separator();
-			if (ImGui::MenuItem("Settings...")) { loadSettings(); applyKeybindOverridesToEditors(); settingsVisible = true; }
+			if (ImGui::MenuItem("Settings...")) {
+				// Only reload from disk when opening fresh — re-clicking while the
+				// window is already open must not clobber unsaved slider edits.
+				if (!settingsVisible) { loadSettings(); applyKeybindOverridesToEditors(); }
+				settingsVisible = true;
+				settingsFocusRequest = true;   // un-collapse + focus even if already open
+			}
 			ImGui::Separator();
 			// Path utilities — handy when the current doc lives on disk.
 			bool hasPath = !tabs.empty() && doc().filename != "untitled";

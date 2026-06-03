@@ -305,6 +305,11 @@ private:
 	// editor toggles. Persisted to <configDir>/settings.json (minimal
 	// hand-rolled writer; no JSON dep).
 	bool settingsVisible = false;
+	bool settingsFocusRequest = false;   // un-collapse + focus the settings window next frame
+	// Middle-mouse pan/scroll for non-editor windows (nav tree, settings). Mirrors
+	// the editor widget's pan using the public scroll API; tracks its own per-frame
+	// delta so it never contends with the editor's global drag-delta reset.
+	void middleMousePanScroll(int windowKey);
 	std::unordered_map<std::string, std::string> interpreterOverrides; // ".py" → "python"
 	std::unordered_map<std::string, std::string> projectBuildOverrides; // abs root → cmd
 	// User keybinding overrides for APP-LEVEL actions, keyed by bind id
@@ -337,6 +342,7 @@ private:
 	bool   prefInvertPan       = false;   // flip middle-mouse pan direction
 	bool   prefWordWrap        = false;   // soft-wrap long lines
 	int    prefWrapWidthPx     = 0;       // 0 = wrap to view width, else fixed px
+	float  prefPanScrollAccel  = 1.0f;    // middle-mouse pan/scroll accel gain (0 = linear)
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused
 

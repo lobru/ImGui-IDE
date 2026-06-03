@@ -1722,7 +1722,7 @@ protected:
 	// the distance from the click anchor ("scroll cursor") to the live cursor:
 	// speed *= 1 + (dist/refDist)^2 * gain, capped. 0 = linear (no acceleration);
 	// higher = farther pulls fly faster. Tunable via SetPanScrollAccel().
-	float panScrollAccelGain = 2.0f;
+	float panScrollAccelGain = 1.0f;
 
 	// Word-wrap state. wrapRows is rebuilt each frame in render() when wordWrap
 	// is on; it is the 1:many visual-row model (one document line → N rows).
