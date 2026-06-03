@@ -1899,24 +1899,30 @@ void TextEditor::handleMouseInteractions()
 		}
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		// Accelerate by distance from the anchor to the live cursor (screen space).
+		// Stable anchor-relative drag vector — drives both the axis-lock decision
+		// and the (vertical-only) acceleration.
 		ImVec2 aRel = ImGui::GetMousePos() - panScrollAnchor;
 		float accel = panAccel(std::sqrt(aRel.x * aRel.x + aRel.y * aRel.y));
-		// Bias strongly toward vertical: only apply horizontal scroll when the
-		// drag is within ~27° of horizontal (|dx| > 2*|dy|). A near-diagonal or
-		// vertical gesture contributes NO sideways motion, so reading down a
-		// file never drifts left/right. A constant damping factor can't express
-		// this — the gate has to depend on the dx/dy ratio.
-		// Horizontal scroll only on a deliberate sideways drag. Gate on the STABLE
-		// anchor-relative direction (per-frame delta is noisy and flickered the gate
-		// on/off → stutter), and require BOTH a real sideways distance from the
-		// anchor AND a steep horizontal angle (|dx| > 3|dy|). Acceleration is
-		// vertical-only.
-		bool hOnP = std::fabs(aRel.x) > glyphSize.x * 6.0f
-			&& std::fabs(aRel.x) > std::fabs(aRel.y) * 3.0f;
-		float hGateP = hOnP ? 1.0f : 0.0f;
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f * hGateP);
-		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y * accel);
+		// Axis lock: once the drag clears a small commit distance, snap it to ONE
+		// axis and HOLD that until the button is released — an off-true drag never
+		// bleeds into the other axis, which is what caused the jitter. Strong
+		// vertical bias: horizontal only locks when the drag is clearly horizontal
+		// (|dx| > 3|dy|) AND there's real horizontal scroll room (so panes that
+		// don't scroll sideways stay pure-vertical for free). No "default to
+		// vertical" before the commit — that would nudge vertically at the start of
+		// a horizontal drag; the commit distance is tiny so there's no felt lag.
+		if (panLockAxis == 0) {
+			float commit = glyphSize.y * 0.5f;
+			if (std::fabs(aRel.x) > commit || std::fabs(aRel.y) > commit) {
+				bool canHoriz  = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
+				bool nearHoriz = std::fabs(aRel.x) > std::fabs(aRel.y) * 3.0f;
+				panLockAxis = (canHoriz && nearHoriz) ? 1 : 2;
+			}
+		}
+		if (panLockAxis == 1)
+			ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f);
+		else if (panLockAxis == 2)
+			ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y * accel);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
 	}
 	else if (scrolling)
@@ -1929,20 +1935,25 @@ void TextEditor::handleMouseInteractions()
 		offset.x = (offset.x < 0.0f) ? std::min(offset.x + deadzoneX, 0.0f) : std::max(offset.x - deadzoneX, 0.0f);
 		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone,  0.0f) : std::max(offset.y - deadzone,  0.0f);
 
-		// Accelerate by distance from the anchor (|offset| is exactly that, in px,
-		// after the deadzone). Superlinear so far pulls scroll much faster. Applied
-		// to the VERTICAL axis only — horizontal felt too fast with acceleration.
+		float panSign = panInverted ? -1.0f : 1.0f;
+		// Axis lock (same scheme as pan): commit once past a small distance and hold
+		// until the scroll ends. `offset` (post-deadzone) is the stable
+		// anchor-relative vector. Vertical bias + horizontal-room guard.
+		if (panLockAxis == 0) {
+			float commit = glyphSize.y * 0.5f;
+			if (std::fabs(offset.x) > commit || std::fabs(offset.y) > commit) {
+				bool canHoriz  = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
+				bool nearHoriz = std::fabs(offset.x) > std::fabs(offset.y) * 3.0f;
+				panLockAxis = (canHoriz && nearHoriz) ? 1 : 2;
+			}
+		}
+		// Acceleration (vertical-only) from the px distance, before time scaling.
 		float accel = panAccel(std::sqrt(offset.x * offset.x + offset.y * offset.y));
 		float scrollFactor = ImGui::GetIO().DeltaTime * 5.0f;
-		offset *= scrollFactor;
-
-		float panSign = panInverted ? -1.0f : 1.0f;
-		// Steep horizontal gate (|dx| > 3*|dy|, ~18°) on top of the deadzoneX above
-		// so vertical scrolling stays the easy default and stray sideways drift
-		// doesn't register.
-		float hGateS = (std::fabs(offset.x) > std::fabs(offset.y) * 3.0f) ? 1.0f : 0.0f;
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * 0.35f * hGateS);
-		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y * accel);
+		if (panLockAxis == 1)
+			ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * scrollFactor * 0.35f);
+		else if (panLockAxis == 2)
+			ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y * scrollFactor * accel);
 
 		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
 			ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
@@ -2176,6 +2187,7 @@ void TextEditor::handleMouseInteractions()
 			// Anchor the on-screen indicator at the exact click point (screen
 			// space) for both modes, so it appears where the user pressed.
 			panScrollAnchor = ImGui::GetMousePos();
+			panLockAxis = 0;   // re-decide the axis lock for this fresh drag
 			if (panMode)
 			{
 				panning = true;

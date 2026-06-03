@@ -1718,6 +1718,10 @@ protected:
 	Coordinate completePairLocation;
 	bool panMode = true;
 	bool panInverted = false;
+	// Middle-mouse drag axis lock, decided once per drag and held until release so
+	// an off-true drag can't bleed jitter into the other axis: 0=undecided,
+	// 1=horizontal, 2=vertical. Reset on each middle-press.
+	int  panLockAxis = 0;
 	// Middle-mouse pan/scroll acceleration. Scroll speed grows superlinearly with
 	// the distance from the click anchor ("scroll cursor") to the live cursor:
 	// speed *= 1 + (dist/refDist)^2 * gain, capped. 0 = linear (no acceleration);

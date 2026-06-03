@@ -1419,11 +1419,13 @@ void Editor::middleMousePanScroll(int windowKey)
 	static int    activeKey = 0;     // 0 = no pan in progress
 	static ImVec2 anchor;            // screen-space click point — drives accel distance
 	static ImVec2 lastPos;           // previous-frame mouse pos — drives per-frame scroll
+	static int    lockAxis = 0;      // 0=undecided, 1=horizontal, 2=vertical (held until release)
 
 	bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 	if (activeKey == 0 && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
 		activeKey = windowKey;
 		anchor = lastPos = ImGui::GetMousePos();
+		lockAxis = 0;                // re-decide for this fresh drag
 	}
 	if (activeKey != windowKey) return;                          // not the panned window
 	if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) { activeKey = 0; return; }
@@ -1441,15 +1443,22 @@ void Editor::middleMousePanScroll(int windowKey)
 	if (accel > 16.0f) accel = 16.0f;
 
 	float panSign = prefInvertPan ? -1.0f : 1.0f;
-	// Vertical-biased like the editor: sideways scroll only on near-horizontal drags.
-	// Horizontal only on a deliberate sideways drag: gate on the STABLE
-	// anchor-relative direction (not the noisy per-frame delta → no stutter) with a
-	// distance deadzone + steep angle (|dx| > 3|dy|). Acceleration is vertical-only.
-	float hThresh = ImGui::GetTextLineHeightWithSpacing() * 3.0f;
-	bool hOn = std::fabs(rel.x) > hThresh && std::fabs(rel.x) > std::fabs(rel.y) * 3.0f;
-	float hGate = hOn ? 1.0f : 0.0f;
-	ImGui::SetScrollX(ImGui::GetScrollX() - panSign * delta.x * 0.35f * hGate);
-	ImGui::SetScrollY(ImGui::GetScrollY() - panSign * delta.y * accel);
+	// Axis lock (same as the editor): commit to one axis once the drag clears a
+	// small distance and HOLD it until release — no cross-axis bleed/jitter. Strong
+	// vertical bias; horizontal only when clearly horizontal AND the window has real
+	// horizontal scroll room (nav/settings usually have none → always vertical).
+	if (lockAxis == 0) {
+		float commit = ImGui::GetTextLineHeightWithSpacing() * 0.5f;
+		if (std::fabs(rel.x) > commit || std::fabs(rel.y) > commit) {
+			bool canHoriz  = ImGui::GetScrollMaxX() > 24.0f;
+			bool nearHoriz = std::fabs(rel.x) > std::fabs(rel.y) * 3.0f;
+			lockAxis = (canHoriz && nearHoriz) ? 1 : 2;
+		}
+	}
+	if (lockAxis == 1)
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * delta.x * 0.35f);
+	else if (lockAxis == 2)
+		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * delta.y * accel);
 }
 
 
