@@ -1442,7 +1442,7 @@ void Editor::middleMousePanScroll(int windowKey)
 	float  dist = std::sqrt(rel.x * rel.x + rel.y * rel.y);
 	float  ref  = ImGui::GetTextLineHeightWithSpacing() * 8.0f;
 	float  t    = (ref > 0.0f) ? dist / ref : 0.0f;
-	float  accel = (prefPanScrollAccel <= 0.0f) ? 1.0f : (1.0f + t * t * prefPanScrollAccel);
+	float  accel = (prefPanScrollAccel <= 0.0f) ? 1.0f : (1.0f + t * t * prefPanScrollAccel * 0.25f);
 	if (accel > 16.0f) accel = 16.0f;
 
 	float panSign = prefInvertPan ? -1.0f : 1.0f;

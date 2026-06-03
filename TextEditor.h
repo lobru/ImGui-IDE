@@ -1651,6 +1651,12 @@ protected:
 	Scroll scrollToAlignment = Scroll::alignMiddle;
 	bool showMatchingBracketsChanged = false;
 	bool languageChanged = false;
+	// Debounce for the two O(document) post-edit passes (fold-range reparse +
+	// bracket rescan). Per-line recolor still runs every edit (live), but these
+	// full-document passes only run once typing settles — otherwise editing a big
+	// file reparses everything every keystroke and tanks the frame rate.
+	bool   structureDirty = false;
+	double structureDirtyTime = 0.0;
 
 	float decoratorWidth = 0.0f;
 	std::function<void(Decorator&)> decoratorCallback;
@@ -1728,9 +1734,10 @@ protected:
 	ImVec2 panVelEMA{ 0.0f, 0.0f };
 	// Middle-mouse pan/scroll acceleration. Scroll speed grows superlinearly with
 	// the distance from the click anchor ("scroll cursor") to the live cursor:
-	// speed *= 1 + (dist/refDist)^2 * gain, capped. 0 = linear (no acceleration);
-	// higher = farther pulls fly faster. Tunable via SetPanScrollAccel().
-	float panScrollAccelGain = 0.22f;
+	// speed *= 1 + (dist/refDist)^2 * gain * 0.25, capped. The internal 0.25 factor
+	// makes the user-facing default of 1.0 feel right (1.0 here == the old 0.25).
+	// 0 = linear (no acceleration); higher = farther pulls fly faster.
+	float panScrollAccelGain = 1.0f;
 
 	// Word-wrap state. wrapRows is rebuilt each frame in render() when wordWrap
 	// is on; it is the 1:many visual-row model (one document line → N rows).

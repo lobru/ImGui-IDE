@@ -362,28 +362,33 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 		bracketeer.reset();
 	}
 
+	// An edit recolors the touched lines right away (cheap, keeps coloring live),
+	// but the two O(document) passes below — fold-range reparse and bracket rescan
+	// — are DEBOUNCED. Running them on every keystroke reparses the whole file each
+	// frame; in a large document that drops the frame rate hard (240->30). Run them
+	// only once typing has settled (or immediately on a language / setting change).
+	if (documentChanged) { structureDirty = true; structureDirtyTime = ImGui::GetTime(); }
+	bool structureForce   = languageChanged || showMatchingBracketsChanged;
+	bool structureSettled = structureDirty && (ImGui::GetTime() - structureDirtyTime) > 0.15;
 
-	if (foldRanges.foldingEnabled && (documentChanged || languageChanged || showMatchingBracketsChanged))
+	if (language && documentChanged)
+	{
+		// recolorize updated lines (incremental — only the changed lines)
+		colorizer.updateChangedLines(document, language);
+	}
+
+	if (foldRanges.foldingEnabled && (structureForce || structureSettled))
 	{
 		foldRanges.rebuildFoldRanges(document);
 	}
 
-
-	if (language)
+	if (language && showMatchingBrackets && (structureForce || structureSettled))
 	{
-		if (documentChanged)
-		{
-			// recolorize updated lines
-			colorizer.updateChangedLines(document, language);
-		}
-
-		if (showMatchingBrackets && (documentChanged || showMatchingBracketsChanged || languageChanged))
-		{
-			// rebuild bracket list
-			bracketeer.update(document);
-		}
-
+		// rebuild bracket list
+		bracketeer.update(document);
 	}
+
+	if (structureSettled) structureDirty = false;
 
 	// reset changed states
 	showMatchingBracketsChanged = false;
@@ -1868,7 +1873,7 @@ void TextEditor::handleMouseInteractions()
 		if (panScrollAccelGain <= 0.0f) return 1.0f;
 		float ref = glyphSize.y * 8.0f;
 		float t = (ref > 0.0f) ? (distPx / ref) : 0.0f;
-		float a = 1.0f + t * t * panScrollAccelGain;
+		float a = 1.0f + t * t * panScrollAccelGain * 0.25f;   // 0.25: user 1.0 == old 0.25
 		return (a > 16.0f) ? 16.0f : a;
 	};
 
