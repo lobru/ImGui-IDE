@@ -342,7 +342,7 @@ private:
 	bool   prefInvertPan       = false;   // flip middle-mouse pan direction
 	bool   prefWordWrap        = false;   // soft-wrap long lines
 	int    prefWrapWidthPx     = 0;       // 0 = wrap to view width, else fixed px
-	float  prefPanScrollAccel  = 1.0f;    // middle-mouse pan/scroll accel gain (0 = linear)
+	float  prefPanScrollAccel  = 0.22f;   // middle-mouse pan/scroll accel gain (0 = linear)
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused
 

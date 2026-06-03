@@ -3896,6 +3896,13 @@ void Editor::renderSettings()
 		middleMousePanScroll(2);
 	}
 	ImGui::End();
+
+	// Persist on ANY close, including the window's [x] (which, unlike the Close
+	// button, doesn't save). Without this, a live slider edit is lost when the
+	// window is X-closed, and reopening reloads the stale value from disk — i.e.
+	// "the settings change didn't stick". settingsVisible was true on entry
+	// (early-return above), so it being false now means it closed this frame.
+	if (!settingsVisible) saveSettings();
 }
 
 
