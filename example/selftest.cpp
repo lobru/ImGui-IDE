@@ -176,6 +176,21 @@ int main()
 			"C#: #region/#endregion produces a fold");
 	}
 
+	// ── Backslash-continued #define carries preprocessor color to next line ──
+	{
+		const int kPre = static_cast<int>(TextEditor::Color::preprocessor);
+		std::string cpp =
+			"#define FOO(x) \\\n"        // line 0: directive, ends with backslash
+			"    do { x; } while (0)\n"  // line 1: continuation
+			"int after = 1;\n";          // line 2: back to normal code
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 0, 0) == kPre,
+			"#define line is preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 1, 4) == kPre,
+			"backslash-continued line is preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 2, 0) != kPre,
+			"line after the continuation is back to normal code");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

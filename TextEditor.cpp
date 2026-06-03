@@ -6483,6 +6483,17 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 {
 	auto state = line.state;
 
+	// A line whose last non-whitespace glyph is a backslash continues onto the
+	// next line (C/C++ line splicing) — used to carry a #define etc. across lines.
+	auto lineEndsInBackslash = [](Line& ln) -> bool {
+		for (auto it = ln.end(); it != ln.begin(); ) {
+			--it;
+			if (CodePoint::isWhiteSpace(it->codepoint)) continue;
+			return it->codepoint == static_cast<ImWchar>('\\');
+		}
+		return false;
+	};
+
 	// process all glyphs on this line
 	auto nonWhiteSpace = false;
 	auto glyph = line.begin();
@@ -6579,6 +6590,8 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 			{
 				setColor(line.begin(), line.end(), Color::preprocessor);
 				glyph = line.end();
+				// A trailing backslash continues the directive onto the next line.
+				if (lineEndsInBackslash(line)) state = State::inPreprocessor;
 
 				// handle custom tokenizer (if we have one)
 			}
@@ -6684,6 +6697,15 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 				(glyph++)->color = Color::comment;
 			}
 
+		}
+		else if (state == State::inPreprocessor)
+		{
+			// Continuation line of a backslash-continued directive: the whole line
+			// belongs to the directive. Stay here while lines keep ending in '\',
+			// then fall back to normal text.
+			setColor(line.begin(), line.end(), Color::preprocessor);
+			glyph = line.end();
+			if (!lineEndsInBackslash(line)) state = State::inText;
 		}
 		else if (state == State::inOtherString)
 		{

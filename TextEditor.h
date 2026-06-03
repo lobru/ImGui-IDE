@@ -1049,7 +1049,8 @@ protected:
 		inSingleQuotedString,
 		inDoubleQuotedString,
 		inOtherString,
-		inOtherStringAlt
+		inOtherStringAlt,
+		inPreprocessor   // continuation of a backslash-continued #define etc.
 	};
 	// a single line in a document
 	class Line : public std::vector<Glyph> {
