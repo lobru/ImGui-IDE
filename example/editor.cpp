@@ -3420,7 +3420,11 @@ void Editor::renderSettings()
 		ImGui::SetNextWindowFocus();
 		settingsFocusRequest = false;
 	}
-	if (ImGui::Begin("Settings##editorSettings", &settingsVisible))
+	// NoDocking keeps Settings a floating dialog: a docked tab can't be raised
+	// "to the top" by focus alone (focus just activates the tab in place), so the
+	// window appeared buried. Floating + SetNextWindowFocus reliably pops it above
+	// everything when opened.
+	if (ImGui::Begin("Settings##editorSettings", &settingsVisible, ImGuiWindowFlags_NoDocking))
 	{
 		if (ImGui::BeginTabBar("##settingsTabs"))
 		{
