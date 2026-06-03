@@ -483,6 +483,19 @@ private:
 	void findReferencesOf(TabDocument& t, const std::string& word);
 	void renderReferencesPanel();
 
+	// Find in Files — project-wide text search with a query box + options.
+	bool                            findInFilesVisible = false;
+	bool                            findInFilesFocus   = false;   // focus the query box next frame
+	char                            findInFilesQuery[256] = {};
+	bool                            findInFilesCase = false;       // match case
+	bool                            findInFilesWholeWord = false;  // whole-word matches only
+	std::vector<RefHit>             findInFilesHits;
+	int                             findInFilesFileCount = 0;
+	bool                            findInFilesTruncated = false;  // hit the result cap
+	void runFindInFiles();
+	void renderFindInFilesPanel();
+	void openFindInFiles();        // show the panel, focus the query, seed from selection
+
 	// Project-wide Go to Definition — greps files under projectRoot (or the
 	// active doc's directory) for definition patterns (class/struct/interface/
 	// enum/record, method signatures, #define, etc.). Opens the first hit at

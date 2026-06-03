@@ -3017,6 +3017,163 @@ void Editor::renderReferencesPanel()
 }
 
 
+// ── Find in Files — project-wide text search ──────────────────────────
+
+void Editor::openFindInFiles()
+{
+	findInFilesVisible = true;
+	findInFilesFocus   = true;
+	// Seed the query from a single-line selection, if any, and search immediately.
+	if (!tabs.empty() && doc().editor.AnyCursorHasSelection()) {
+		std::string sel = doc().editor.GetCurrentSelectionText();
+		if (!sel.empty() && sel.find('\n') == std::string::npos && sel.size() < sizeof(findInFilesQuery)) {
+			std::snprintf(findInFilesQuery, sizeof(findInFilesQuery), "%s", sel.c_str());
+			runFindInFiles();
+		}
+	}
+}
+
+void Editor::runFindInFiles()
+{
+	findInFilesHits.clear();
+	findInFilesFileCount = 0;
+	findInFilesTruncated = false;
+	std::string needle = findInFilesQuery;
+	if (needle.empty()) return;
+
+	const bool cs = findInFilesCase;
+	const bool ww = findInFilesWholeWord;
+	auto lower = [](std::string s) { for (auto& c : s) c = (char) std::tolower((unsigned char) c); return s; };
+	if (!cs) needle = lower(needle);
+	auto isBoundary = [](char c) { return !(std::isalnum((unsigned char) c) || c == '_'); };
+
+	static constexpr size_t kMaxHits = 5000;
+	auto scanText = [&](const std::string& file, std::istream& in) {
+		std::string line;
+		int ln = 0;
+		bool counted = false;
+		while (std::getline(in, line)) {
+			const std::string hay = cs ? line : lower(line);
+			size_t pos = 0;
+			while ((pos = hay.find(needle, pos)) != std::string::npos) {
+				size_t end = pos + needle.size();
+				bool ok = !ww
+					|| (((pos == 0) || isBoundary(line[pos - 1]))
+						&& ((end >= line.size()) || isBoundary(line[end])));
+				if (ok) {
+					std::string trimmed = line;
+					size_t s = trimmed.find_first_not_of(" \t");
+					if (s != std::string::npos) trimmed = trimmed.substr(s);
+					if (trimmed.size() > 400) trimmed.resize(400);
+					findInFilesHits.push_back({ file, ln, trimmed });
+					if (!counted) { ++findInFilesFileCount; counted = true; }
+					break;   // one hit per line
+				}
+				pos = end;
+			}
+			++ln;
+			if (findInFilesHits.size() >= kMaxHits) { findInFilesTruncated = true; return; }
+		}
+	};
+
+	std::filesystem::path root = projectRoot;
+	if (root.empty() && !tabs.empty() && doc().filename != "untitled")
+		root = std::filesystem::path(doc().filename).parent_path();
+	if (root.empty()) root = std::filesystem::current_path();
+
+	std::error_code ec;
+	std::string activeCanon;
+	if (!tabs.empty() && doc().filename != "untitled")
+		activeCanon = std::filesystem::weakly_canonical(doc().filename, ec).string();
+
+	// Active doc first (live buffer — unsaved edits count), then the rest.
+	if (!tabs.empty() && doc().filename != "untitled") {
+		std::istringstream ss(doc().editor.GetText());
+		scanText(doc().filename, ss);
+	}
+
+	int budget = 8000;
+	for (auto it = std::filesystem::recursive_directory_iterator(
+			root, std::filesystem::directory_options::skip_permission_denied, ec);
+		 it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+	{
+		if (findInFilesHits.size() >= kMaxHits) { findInFilesTruncated = true; break; }
+		if (ec) { ec.clear(); continue; }
+		if (it->is_directory(ec)) {
+			auto n = it->path().filename().string();
+			if (n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" || n == "bin" ||
+				n == "obj" || n == "out" || n == "build" || n == "target" || n == ".vs" ||
+				n == ".vscode" || n == ".idea" || n == "__pycache__" || n == "deps" || n == "vendor")
+				it.disable_recursion_pending();
+			continue;
+		}
+		if (--budget < 0) { findInFilesTruncated = true; break; }
+		if (!navIsCodeFile(it->path())) continue;
+		auto canon = std::filesystem::weakly_canonical(it->path(), ec);
+		if (!activeCanon.empty() && canon.string() == activeCanon) continue;   // already did live buffer
+		std::ifstream f(it->path());
+		if (!f.is_open()) continue;
+		scanText(it->path().string(), f);
+	}
+}
+
+void Editor::renderFindInFilesPanel()
+{
+	if (!findInFilesVisible) return;
+	ImGui::SetNextWindowSize(ImVec2(500.0f, 420.0f), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Find in Files###findInFiles", &findInFilesVisible))
+	{
+		if (findInFilesFocus) { ImGui::SetKeyboardFocusHere(); findInFilesFocus = false; }
+		ImGui::SetNextItemWidth(-1.0f);
+		bool go = ImGui::InputTextWithHint("##fifQuery", "Search text in project…",
+			findInFilesQuery, sizeof(findInFilesQuery), ImGuiInputTextFlags_EnterReturnsTrue);
+		ImGui::Checkbox("Match case", &findInFilesCase);
+		ImGui::SameLine();
+		ImGui::Checkbox("Whole word", &findInFilesWholeWord);
+		ImGui::SameLine();
+		if (ImGui::Button("Search")) go = true;
+		if (go) runFindInFiles();
+
+		ImGui::TextDisabled("%zu match%s across %d file%s%s",
+			findInFilesHits.size(), findInFilesHits.size() == 1 ? "" : "es",
+			findInFilesFileCount, findInFilesFileCount == 1 ? "" : "s",
+			findInFilesTruncated ? " (truncated)" : "");
+		ImGui::Separator();
+
+		ImGui::BeginChild("##fifResults");
+		std::string lastFile;
+		for (size_t i = 0; i < findInFilesHits.size(); ++i) {
+			auto& hit = findInFilesHits[i];
+			if (hit.file != lastFile) {
+				lastFile = hit.file;
+				auto leaf = std::filesystem::path(hit.file).filename().string();
+				ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
+				ImGui::TextUnformatted(leaf.empty() ? hit.file.c_str() : leaf.c_str());
+				ImGui::PopStyleColor();
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hit.file.c_str());
+			}
+			ImGui::PushID((int) i);
+			char buf[32];
+			std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
+			if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f))) {
+				openFile(hit.file);
+				if (!tabs.empty()) {
+					auto& ed = doc().editor;
+					ed.SetCursor(hit.line, 0);
+					ed.SelectLine(hit.line);
+					ed.ScrollToLine(hit.line, TextEditor::Scroll::alignMiddle);
+				}
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("%s", hit.text.c_str());
+			ImGui::PopID();
+		}
+		ImGui::EndChild();
+	}
+	ImGui::End();
+}
+
+
 // ── Image viewer + non-text dispatch ───────────────────────────────
 
 bool Editor::isImageExt(const std::string& ext)
@@ -3855,6 +4012,7 @@ void Editor::renderSettings()
 					{ "find.find",       "Find",                     "Ctrl+F",        "Find", true, "find" },
 					{ "find.next",       "Find next",                "F3",            "Find", true, "findNext" },
 					{ "find.findAll",    "Find all",                 "Ctrl+Shift+G",  "Find", true, "findAll" },
+					{ "find.inFiles",    "Find in Files",            "Ctrl+Shift+F",  "Find", true, nullptr },
 					{ "find.goto",       "Go to Line...",            "Ctrl+G",        "Find", true, nullptr },
 
 					{ "code.foldAll",    "Fold all",                 "Ctrl+0",        "Code", true, "foldAll" },
@@ -4366,6 +4524,7 @@ void Editor::render()
 	renderScriptOutputWindow();
 	renderRunArgsPopup();
 	renderReferencesPanel();
+	renderFindInFilesPanel();
 	renderSettings();
 
 	// Diff-against-other file picker — overlay on any state.
@@ -5200,6 +5359,7 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Find",        " " SHORTCUT "F"))      { e.OpenFindReplaceWindow(); }
 			if (ImGui::MenuItem("Find Next",   "F3",                   nullptr, e.HasFindString())) { e.FindNext(); }
 			if (ImGui::MenuItem("Find All",    "^" SHORTCUT "G",       nullptr, e.HasFindString())) { e.FindAll(); }
+			if (ImGui::MenuItem("Find in Files…", "^" SHORTCUT "F"))   { openFindInFiles(); }
 			ImGui::Separator();
 			if (ImGui::MenuItem("Go to Line…", " " SHORTCUT "G"))      { showGotoLine(); }
 			ImGui::EndMenu();
@@ -5235,6 +5395,7 @@ void Editor::renderMenuBar()
 			else saveFile();
 		}
 		else if (keybindPressed("file.history","Ctrl+I"))       { showDiff(); }
+		else if (keybindPressed("find.inFiles","Ctrl+Shift+F"))  { openFindInFiles(); }
 		else if (keybindPressed("find.goto",   "Ctrl+G"))       { showGotoLine(); }
 		else if (keybindPressed("view.splitR", "Ctrl+\\"))      { splitActiveTabRight(); }
 		else if (keybindPressed("view.zoomIn", "Ctrl+="))       { increaseFontSIze(); }
