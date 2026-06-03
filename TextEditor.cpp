@@ -1908,7 +1908,8 @@ void TextEditor::handleMouseInteractions()
 		// file never drifts left/right. A constant damping factor can't express
 		// this — the gate has to depend on the dx/dy ratio.
 		float hGateP = (std::fabs(mouseDelta.x) > std::fabs(mouseDelta.y) * 2.0f) ? 1.0f : 0.0f;
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f * hGateP * accel);
+		// Acceleration is vertical-only: horizontal already felt too fast with it.
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f * hGateP);
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y * accel);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
 	}
@@ -1923,17 +1924,18 @@ void TextEditor::handleMouseInteractions()
 		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone,  0.0f) : std::max(offset.y - deadzone,  0.0f);
 
 		// Accelerate by distance from the anchor (|offset| is exactly that, in px,
-		// after the deadzone). Superlinear so far pulls scroll much faster.
+		// after the deadzone). Superlinear so far pulls scroll much faster. Applied
+		// to the VERTICAL axis only — horizontal felt too fast with acceleration.
 		float accel = panAccel(std::sqrt(offset.x * offset.x + offset.y * offset.y));
 		float scrollFactor = ImGui::GetIO().DeltaTime * 5.0f;
-		offset *= scrollFactor * accel;
+		offset *= scrollFactor;
 
 		float panSign = panInverted ? -1.0f : 1.0f;
 		// Same angle gate as the pan path: horizontal only when the cursor offset
 		// from the anchor is within ~27° of horizontal (|dx| > 2*|dy|).
 		float hGateS = (std::fabs(offset.x) > std::fabs(offset.y) * 2.0f) ? 1.0f : 0.0f;
 		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * 0.35f * hGateS);
-		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y);
+		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y * accel);
 
 		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
 			ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||

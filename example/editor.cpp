@@ -1443,7 +1443,8 @@ void Editor::middleMousePanScroll(int windowKey)
 	float panSign = prefInvertPan ? -1.0f : 1.0f;
 	// Vertical-biased like the editor: sideways scroll only on near-horizontal drags.
 	float hGate = (std::fabs(delta.x) > std::fabs(delta.y) * 2.0f) ? 1.0f : 0.0f;
-	ImGui::SetScrollX(ImGui::GetScrollX() - panSign * delta.x * 0.35f * hGate * accel);
+	// Acceleration is vertical-only (horizontal felt too fast with it).
+	ImGui::SetScrollX(ImGui::GetScrollX() - panSign * delta.x * 0.35f * hGate);
 	ImGui::SetScrollY(ImGui::GetScrollY() - panSign * delta.y * accel);
 }
 
@@ -3416,14 +3417,20 @@ void Editor::renderSettings()
 	// Clicking File → Settings while the window is already open (possibly
 	// collapsed or behind other windows) should restore + focus it.
 	if (settingsFocusRequest) {
+		// Multi-viewport is always on, so a floating Settings window can become its
+		// own OS window — and SetNextWindowFocus() raises the ImGui window but NOT
+		// the OS window, so it stayed buried behind the main app window. Pin it into
+		// the MAIN viewport (rendered inside the main OS window — nothing can cover
+		// it) and center it so it's always on-screen, uncollapsed, and focused.
+		const ImGuiViewport* vp = ImGui::GetMainViewport();
+		ImGui::SetNextWindowViewport(vp->ID);
+		ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 		ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
 		ImGui::SetNextWindowFocus();
 		settingsFocusRequest = false;
 	}
-	// NoDocking keeps Settings a floating dialog: a docked tab can't be raised
-	// "to the top" by focus alone (focus just activates the tab in place), so the
-	// window appeared buried. Floating + SetNextWindowFocus reliably pops it above
-	// everything when opened.
+	// NoDocking keeps Settings a floating dialog (a docked tab can't be raised to
+	// the top by focus alone).
 	if (ImGui::Begin("Settings##editorSettings", &settingsVisible, ImGuiWindowFlags_NoDocking))
 	{
 		if (ImGui::BeginTabBar("##settingsTabs"))
