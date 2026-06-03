@@ -4809,19 +4809,25 @@ void Editor::renderDocumentWindow(TabDocument& t)
 												// else, fall back to the Microsoft Learn docs page.
 												if (lang && lang->name == "C#" && !isKeyword && !seg.empty())
 												{
+													// Only treat a symbol as a documented .NET/BCL type when it's
+													// namespace-qualified under a Microsoft-owned root. Project
+													// types, NuGet packages (Newtonsoft.*, etc.) and linked
+													// projects have their own roots, so the Decompile / Learn
+													// options no longer appear for them (they're meaningless there).
 													bool bclRooted = false;
 													if (auto dot = qualified.find('.'); dot != std::string::npos) {
 														std::string r = qualified.substr(0, dot);
 														bclRooted = (r == "System" || r == "Microsoft" ||
 															r == "Windows" || r == "Internal" || r == "Mono");
 													}
-													if (bclRooted && ImGui::MenuItem("Go to Decompiled Source"))
+													// A symbol the project itself defines is never a BCL type.
+													if (navigable) bclRooted = false;
+													if (bclRooted)
 													{
-														openCSharpDecompiled(qualified);
-													}
-													if (ImGui::MenuItem("Look up in Microsoft Learn"))
-													{
-														openCSharpLearn(qualified);
+														if (ImGui::MenuItem("Go to Decompiled Source"))
+															openCSharpDecompiled(qualified);
+														if (ImGui::MenuItem("Look up in Microsoft Learn"))
+															openCSharpLearn(qualified);
 													}
 												}
 												}

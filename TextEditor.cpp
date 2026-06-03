@@ -2139,25 +2139,22 @@ void TextEditor::handleMouseInteractions()
 			int selLo = std::min(anchorCol, dragCol);
 			int selHi = std::max(anchorCol, dragCol);
 
-			// STRICT column-select per user spec: drop any line whose
-			// maxColumn is less than the requested RIGHT edge. Previously we
-			// clipped to maxColumn, leaving "stub" cursors in a different
-			// column than the rest of the box. Once any later edit shifted
-			// columns around, Cursors::update could try to merge those
-			// mismatched cursors and (rarely) trip a debug iterator assert.
+			// VS Code-style rectangle: select [selLo, selHi] on EVERY line in the
+			// range, letting selHi (and selLo) extend past the end of short lines
+			// into virtual space rather than dropping or clipping them — so the box
+			// has a straight right edge. Every cursor gets the SAME columns, so they
+			// can never become mismatched "stub" cursors; Cursors::update() only
+			// merges *overlapping* selections (different lines never overlap) and
+			// doesn't re-normalize coordinates, so the virtual columns are stable.
 			bool first = true;
 			for (int ln = loLine; ln <= hiLine; ++ln)
 			{
 				if (ln < 0 || ln >= document.lineCount()) continue;
 				if (!document[ln].visible) continue;
-				int maxCol = document[ln].maxColumn;
-				if (maxCol < selHi) continue;            // line can't fit the column box
 				Coordinate a(ln, selLo), b(ln, selHi);
 				if (first) { cursors.setCursor(a, b); first = false; }
 				else { cursors.addCursor(a, b); }
 			}
-			// If nothing was added (e.g. all candidate lines are too short),
-			// keep at least the anchor cursor so the user sees something.
 			if (first) cursors.setCursor(columnAnchor);
 			makeCursorVisible();
 		}
