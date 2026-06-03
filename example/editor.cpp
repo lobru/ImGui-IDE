@@ -2515,6 +2515,11 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 	std::vector<Hit> hits;
 	std::error_code ec;
 
+	// The directory the next runScan() walks, and whether it's the MSVC system
+	// include tree (STL/CRT headers are extensionless, so extOk is relaxed there).
+	std::filesystem::path scanRoot = root;
+	bool sysScan = false;
+
 	// One full directory walk + scan. Wrapped in a lambda so we can run it twice:
 	// once with deps excluded (fast, project-only) and, if that finds nothing,
 	// again with deps included (reaches symbols defined only in bundled libs).
@@ -2522,7 +2527,7 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 	int budget = 8000;   // file budget — keep walks bounded on huge projects
 
 	for (auto it = std::filesystem::recursive_directory_iterator(
-			root, std::filesystem::directory_options::skip_permission_denied, ec);
+			scanRoot, std::filesystem::directory_options::skip_permission_denied, ec);
 		 it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
 	{
 		if (ec) { ec.clear(); continue; }
@@ -2534,8 +2539,9 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 		auto ext = it->path().extension().string();
 		std::transform(ext.begin(), ext.end(), ext.begin(),
 			[](unsigned char c){ return (char) std::tolower(c); });
-		if (!extOk(ext)) continue;
-		if (navIsExcluded(it->path())) continue;
+		// System pass also accepts extensionless files (STL headers like <vector>).
+		if (!extOk(ext) && !(sysScan && ext.empty())) continue;
+		if (!sysScan && navIsExcluded(it->path())) continue;
 
 		// File-level bias. Declaration mode favours headers; definition mode
 		// favours implementation files. A file named after the symbol
@@ -2729,6 +2735,29 @@ void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration
 		includeDeps = true;
 		ec.clear();
 		runScan();
+	}
+	// Final fallback for C/C++: std:: / CRT symbols live in the MSVC system headers,
+	// which aren't under projectRoot. Scan the MSVC include dir from the dev-cmd
+	// env (set when launched via build.ps1 -Run / a Developer prompt). Only when
+	// the active doc is C/C++ and the project + deps turned up nothing.
+	if (hits.empty()) {
+		bool isCxx = false;
+		if (!tabs.empty()) {
+			auto* lg = doc().editor.GetLanguage();
+			isCxx = lg && (lg->name == "C" || lg->name == "C++");
+		}
+		if (isCxx) {
+			if (const char* vct = std::getenv("VCToolsInstallDir")) {
+				std::filesystem::path inc = std::filesystem::path(vct) / "include";
+				std::error_code dec;
+				if (std::filesystem::is_directory(inc, dec)) {
+					scanRoot = inc;
+					sysScan = true;
+					ec.clear();
+					runScan();
+				}
+			}
+		}
 	}
 
 	if (hits.empty()) {
