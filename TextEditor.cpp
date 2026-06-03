@@ -1860,6 +1860,18 @@ void TextEditor::handleMouseInteractions()
 	panning &= panMode && ImGui::IsMouseDown(ImGuiMouseButton_Middle);
 	auto absoluteMousePos = ImGui::GetMousePos() - ImGui::GetWindowPos();
 
+	// Pan/scroll acceleration: scroll speed grows superlinearly with how far the
+	// cursor sits from the middle-click anchor ("scroll cursor"). Near the anchor
+	// the multiplier is ~1 (precise); far out it climbs quadratically (fast),
+	// capped so it can't run away. Reference distance ~8 text lines.
+	auto panAccel = [&](float distPx) -> float {
+		if (panScrollAccelGain <= 0.0f) return 1.0f;
+		float ref = glyphSize.y * 8.0f;
+		float t = (ref > 0.0f) ? (distPx / ref) : 0.0f;
+		float a = 1.0f + t * t * panScrollAccelGain;
+		return (a > 16.0f) ? 16.0f : a;
+	};
+
 	if (panning && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
 	{
 		// handle middle mouse button panning
@@ -1887,14 +1899,17 @@ void TextEditor::handleMouseInteractions()
 		}
 
 		float panSign = panInverted ? -1.0f : 1.0f;
+		// Accelerate by distance from the anchor to the live cursor (screen space).
+		ImVec2 aRel = ImGui::GetMousePos() - panScrollAnchor;
+		float accel = panAccel(std::sqrt(aRel.x * aRel.x + aRel.y * aRel.y));
 		// Bias strongly toward vertical: only apply horizontal scroll when the
 		// drag is within ~27° of horizontal (|dx| > 2*|dy|). A near-diagonal or
 		// vertical gesture contributes NO sideways motion, so reading down a
 		// file never drifts left/right. A constant damping factor can't express
 		// this — the gate has to depend on the dx/dy ratio.
 		float hGateP = (std::fabs(mouseDelta.x) > std::fabs(mouseDelta.y) * 2.0f) ? 1.0f : 0.0f;
-		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f * hGateP);
-		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y);
+		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f * hGateP * accel);
+		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y * accel);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
 	}
 	else if (scrolling)
@@ -1907,8 +1922,11 @@ void TextEditor::handleMouseInteractions()
 		offset.x = (offset.x < 0.0f) ? std::min(offset.x + deadzoneX, 0.0f) : std::max(offset.x - deadzoneX, 0.0f);
 		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone,  0.0f) : std::max(offset.y - deadzone,  0.0f);
 
+		// Accelerate by distance from the anchor (|offset| is exactly that, in px,
+		// after the deadzone). Superlinear so far pulls scroll much faster.
+		float accel = panAccel(std::sqrt(offset.x * offset.x + offset.y * offset.y));
 		float scrollFactor = ImGui::GetIO().DeltaTime * 5.0f;
-		offset *= scrollFactor;
+		offset *= scrollFactor * accel;
 
 		float panSign = panInverted ? -1.0f : 1.0f;
 		// Same angle gate as the pan path: horizontal only when the cursor offset

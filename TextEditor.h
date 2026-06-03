@@ -88,6 +88,9 @@ public:
 	inline bool IsMiddleMousePanMode() const { return panMode; }
 	inline void SetPanInverted(bool value) { panInverted = value; }
 	inline bool IsPanInverted() const { return panInverted; }
+	// Pan/scroll acceleration gain (0 = linear). See panScrollAccelGain.
+	inline void SetPanScrollAccel(float gain) { panScrollAccelGain = (gain < 0.0f) ? 0.0f : gain; }
+	inline float GetPanScrollAccel() const { return panScrollAccelGain; }
 	// Word wrap. When on, long lines wrap to the view width (or wrapWidthPx if
 	// > 0) at word boundaries; horizontal scrolling is disabled. Off by default
 	// — the normal column-grid path is unchanged when this is false.
@@ -1715,6 +1718,11 @@ protected:
 	Coordinate completePairLocation;
 	bool panMode = true;
 	bool panInverted = false;
+	// Middle-mouse pan/scroll acceleration. Scroll speed grows superlinearly with
+	// the distance from the click anchor ("scroll cursor") to the live cursor:
+	// speed *= 1 + (dist/refDist)^2 * gain, capped. 0 = linear (no acceleration);
+	// higher = farther pulls fly faster. Tunable via SetPanScrollAccel().
+	float panScrollAccelGain = 2.0f;
 
 	// Word-wrap state. wrapRows is rebuilt each frame in render() when wordWrap
 	// is on; it is the 1:many visual-row model (one document line → N rows).
