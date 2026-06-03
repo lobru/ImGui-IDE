@@ -1382,14 +1382,14 @@ void TextEditor::renderPanScrollIndicator()
 	textC.w = 0.9f;
 	ImU32 col = ImGui::ColorConvertFloat4ToU32(textC);
 
-	constexpr float radius      = 14.0f;
-	constexpr float armLen      = 7.0f;    // arrow tail extension past the ring
-	constexpr float tipLen      = 5.0f;    // arrow tip leg length
-	constexpr float tipSpread   = 3.5f;    // arrow tip half-width
+	constexpr float radius      = 12.0f;
+	constexpr float armLen      = 6.0f;    // arrow tail extension past the ring
+	constexpr float tipLen      = 4.5f;    // arrow tip leg length
+	constexpr float tipSpread   = 3.0f;    // arrow tip half-width
 
 	// Backing disc — low-alpha dark fill keeps the indicator legible without
 	// really "covering" content (it's tiny and translucent).
-	drawList->AddCircleFilled(center, radius + 4.0f, IM_COL32(20, 20, 24, 140));
+	drawList->AddCircleFilled(center, radius + 4.0f, IM_COL32(20, 20, 24, 80));
 	drawList->AddCircle(center, radius, col, 0, 2.0f);
 	drawList->AddCircleFilled(center, 2.0f, col);
 
@@ -2105,6 +2105,26 @@ void TextEditor::handleMouseInteractions()
 				draggedText.clear();
 			}
 		}
+#if !__APPLE__
+		// Mid-drag axis switch: hold Alt during an active left-drag to convert a
+		// normal selection into a column/vertical one (and release Alt to go back),
+		// so the choice isn't locked in before the drag starts. (Skipped on macOS
+		// where Alt is the multi-cursor modifier.)
+		if (selectingText && !draggingSelection && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+		{
+			bool altDown = ImGui::IsKeyDown(ImGuiMod_Alt);
+			if (altDown && !columnSelecting)
+			{
+				columnSelecting = true;
+				columnAnchor = cursors.getCurrent().getInteractiveStart();  // anchor = drag start
+			}
+			else if (!altDown && columnSelecting)
+			{
+				columnSelecting = false;
+				cursors.setCursor(columnAnchor);   // collapse the box back to one cursor
+			}
+		}
+#endif
 		// --- Column / box selection (Alt+drag) -----------------------------
 		// One vertical anchor column → one cursor per intermediate line, each
 		// selecting from the anchor column to the current mouse column. VSCode
@@ -3879,13 +3899,15 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 			}
 		}
 
-		// // region / // endregion
+		// // region / // endregion (JS/TS)  and  #region / #endregion (C#/F#/VB/PS).
+		// A given file uses one style, so sharing regionStack is safe; #endregion is
+		// tested before #region patterns can't alias it ("#e..." vs "#r...").
 		idx = 0;
-		if (starts_with_trimmed(text, "// region", idx))
+		if (starts_with_trimmed(text, "// region", idx) || starts_with_trimmed(text, "#region", idx))
 		{
 			regionStack.push_back({ Coordinate(line, static_cast<int>(idx)) });
 		}
-		else if (starts_with_trimmed(text, "// endregion", idx))
+		else if (starts_with_trimmed(text, "// endregion", idx) || starts_with_trimmed(text, "#endregion", idx))
 		{
 			if (!regionStack.empty())
 			{

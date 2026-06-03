@@ -165,6 +165,17 @@ int main()
 		CHECK(ed.getVisualLineCount() == full, "UnfoldAll restores all lines");
 	}
 
+	// ── C# #region / #endregion folding ──
+	{
+		std::string cs =
+			"#region Helpers\n"
+			"int Add(int a, int b) { return a + b; }\n"
+			"int Sub(int a, int b) { return a - b; }\n"
+			"#endregion\n";
+		CHECK(foldCount(TextEditor::Language::Cs(), cs) >= 1,
+			"C#: #region/#endregion produces a fold");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

@@ -103,8 +103,21 @@ ninja || exit /b 1
 "@ | Set-Content -Path $bat -Encoding ASCII
 
 Write-Host "Configuring and building ($Config) ..." -ForegroundColor Cyan
-cmd /c $bat
+$buildOut = & cmd /c $bat 2>&1
+$buildOut | ForEach-Object { Write-Host $_ }
 $code = $LASTEXITCODE
+
+# Self-host workflow: if the only thing that failed is the linker not being able
+# to overwrite a running example.exe (LNK1168), close the running instance and
+# retry once. Lets you rebuild the editor from inside the editor.
+if ($code -ne 0 -and ($buildOut -match 'LNK1168')) {
+    Write-Host "`nexample.exe is running and locked its own output — closing it and retrying ..." -ForegroundColor Yellow
+    Get-Process example -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 600
+    $buildOut = & cmd /c $bat 2>&1
+    $buildOut | ForEach-Object { Write-Host $_ }
+    $code = $LASTEXITCODE
+}
 Remove-Item $bat -Force
 
 if ($code -ne 0) {

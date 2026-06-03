@@ -1521,7 +1521,10 @@ void Editor::renderNavigationPanel()
 			if (!isDir && ImGui::MenuItem("Open")) { openFile(ctxPath); }
 			if (!isDir && ImGui::MenuItem("Open to Left"))  { openFileToSide(ctxPath, -1); }
 			if (!isDir && ImGui::MenuItem("Open to Right")) { openFileToSide(ctxPath, +1); }
-			if (ImGui::MenuItem("Open in Explorer")) { navOpenPathInExplorer(ctxPath); }
+			// Shell/path actions — separated from the editor-open group above, since
+			// "Open in Explorer" is a different meaning of "open" than "Open" (editor).
+			ImGui::Separator();
+			if (ImGui::MenuItem("Reveal in Explorer")) { navOpenPathInExplorer(ctxPath); }
 			if (ImGui::MenuItem("Copy path")) { ImGui::SetClipboardText(ctxPath.c_str()); }
 			if (!isDir && navIsRunnable(ctxPath)) {
 				ImGui::Separator();

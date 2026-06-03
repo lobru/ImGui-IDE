@@ -186,7 +186,7 @@ public:
 	inline size_t GetUndoIndex() const { return transactions.getUndoIndex(); };
 
 	// manipulate cursors and selections (line numbers are zero-based)
-	inline void SetCursor(int line, int column) { moveTo(document.normalizeCoordinate(Coordinate(line, column)), false); }
+	inline void SetCursor(int line, int column) { foldRanges.unfoldContaining(line, document); moveTo(document.normalizeCoordinate(Coordinate(line, column)), false); }
 	inline void SelectAll() { selectAll(); }
 	inline void SelectLine(int line) { if (line >= 0 && line < document.lineCount()) selectLine(line); }
 	inline void SelectLines(int start, int end) { if (start >= 0 && end < document.lineCount() && start <= end) selectLines(start, end); }
@@ -301,7 +301,7 @@ public:
 		alignBottom
 	};
 
-	inline void ScrollToLine(int line, Scroll alignment) { scrollToLine(line, alignment); }
+	inline void ScrollToLine(int line, Scroll alignment) { foldRanges.unfoldContaining(line, document); scrollToLine(line, alignment); }
 	inline int GetFirstVisibleLine() const { return firstVisibleLine; }
 	inline int GetLastVisibleLine() const { return lastVisibleLine; }
 	inline int GetFirstVisibleColumn() const { return firstVisibleColumn; }
