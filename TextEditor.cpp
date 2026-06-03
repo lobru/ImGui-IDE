@@ -7237,6 +7237,17 @@ void TextEditor::renderFindReplace(ImVec2 pos, float width)
 			button2Width + style.ItemSpacing.x +
 			optionWidth * 3.0f + style.ItemSpacing.x * 2.0f;
 
+		// Clamp the widget to the available editor width so a narrow window can't
+		// push it off the left edge; absorb the overflow by shrinking the search
+		// field (down to a usable floor) rather than overflowing.
+		float maxWidth = width - style.ItemSpacing.x * 2.0f;
+		if (windowWidth > maxWidth)
+		{
+			float over = windowWidth - maxWidth;
+			fieldWidth = std::max(80.0f, fieldWidth - over);
+			windowWidth = std::max(maxWidth, /* hard floor */ 120.0f);
+		}
+
 		// create window
 		ImGui::SetNextWindowPos(ImVec2(
 			pos.x + width - windowWidth - style.ItemSpacing.x,
