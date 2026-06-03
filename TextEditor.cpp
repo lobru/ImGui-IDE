@@ -1907,8 +1907,14 @@ void TextEditor::handleMouseInteractions()
 		// vertical gesture contributes NO sideways motion, so reading down a
 		// file never drifts left/right. A constant damping factor can't express
 		// this — the gate has to depend on the dx/dy ratio.
-		float hGateP = (std::fabs(mouseDelta.x) > std::fabs(mouseDelta.y) * 2.0f) ? 1.0f : 0.0f;
-		// Acceleration is vertical-only: horizontal already felt too fast with it.
+		// Horizontal scroll only on a deliberate sideways drag. Gate on the STABLE
+		// anchor-relative direction (per-frame delta is noisy and flickered the gate
+		// on/off → stutter), and require BOTH a real sideways distance from the
+		// anchor AND a steep horizontal angle (|dx| > 3|dy|). Acceleration is
+		// vertical-only.
+		bool hOnP = std::fabs(aRel.x) > glyphSize.x * 6.0f
+			&& std::fabs(aRel.x) > std::fabs(aRel.y) * 3.0f;
+		float hGateP = hOnP ? 1.0f : 0.0f;
 		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f * hGateP);
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y * accel);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
@@ -1931,9 +1937,10 @@ void TextEditor::handleMouseInteractions()
 		offset *= scrollFactor;
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		// Same angle gate as the pan path: horizontal only when the cursor offset
-		// from the anchor is within ~27° of horizontal (|dx| > 2*|dy|).
-		float hGateS = (std::fabs(offset.x) > std::fabs(offset.y) * 2.0f) ? 1.0f : 0.0f;
+		// Steep horizontal gate (|dx| > 3*|dy|, ~18°) on top of the deadzoneX above
+		// so vertical scrolling stays the easy default and stray sideways drift
+		// doesn't register.
+		float hGateS = (std::fabs(offset.x) > std::fabs(offset.y) * 3.0f) ? 1.0f : 0.0f;
 		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * 0.35f * hGateS);
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y * accel);
 

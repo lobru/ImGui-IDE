@@ -1442,8 +1442,12 @@ void Editor::middleMousePanScroll(int windowKey)
 
 	float panSign = prefInvertPan ? -1.0f : 1.0f;
 	// Vertical-biased like the editor: sideways scroll only on near-horizontal drags.
-	float hGate = (std::fabs(delta.x) > std::fabs(delta.y) * 2.0f) ? 1.0f : 0.0f;
-	// Acceleration is vertical-only (horizontal felt too fast with it).
+	// Horizontal only on a deliberate sideways drag: gate on the STABLE
+	// anchor-relative direction (not the noisy per-frame delta → no stutter) with a
+	// distance deadzone + steep angle (|dx| > 3|dy|). Acceleration is vertical-only.
+	float hThresh = ImGui::GetTextLineHeightWithSpacing() * 3.0f;
+	bool hOn = std::fabs(rel.x) > hThresh && std::fabs(rel.x) > std::fabs(rel.y) * 3.0f;
+	float hGate = hOn ? 1.0f : 0.0f;
 	ImGui::SetScrollX(ImGui::GetScrollX() - panSign * delta.x * 0.35f * hGate);
 	ImGui::SetScrollY(ImGui::GetScrollY() - panSign * delta.y * accel);
 }
@@ -3414,6 +3418,9 @@ void Editor::renderSettings()
 	detectToolchains();
 	pollDotnetProbe();
 	ImGui::SetNextWindowSize(ImVec2(640.0f, 420.0f), ImGuiCond_FirstUseEver);
+	// On the frame the window is (re)opened we must NOT treat the menu click that
+	// opened it as a "click outside" dismissal.
+	const bool justOpened = settingsFocusRequest;
 	// Clicking File → Settings while the window is already open (possibly
 	// collapsed or behind other windows) should restore + focus it.
 	if (settingsFocusRequest) {
@@ -3431,7 +3438,12 @@ void Editor::renderSettings()
 	}
 	// NoDocking keeps Settings a floating dialog (a docked tab can't be raised to
 	// the top by focus alone).
-	if (ImGui::Begin("Settings##editorSettings", &settingsVisible, ImGuiWindowFlags_NoDocking))
+	bool winOpen = ImGui::Begin("Settings##editorSettings", &settingsVisible, ImGuiWindowFlags_NoDocking);
+	// Capture focus/hover while the settings window is the current window — used
+	// below (after End) for Esc / click-outside dismissal.
+	bool settingsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+	bool settingsHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+	if (winOpen)
 	{
 		if (ImGui::BeginTabBar("##settingsTabs"))
 		{
@@ -3908,11 +3920,28 @@ void Editor::renderSettings()
 	}
 	ImGui::End();
 
+	// Easy dismissal: Esc while the window is focused, or a primary click outside
+	// it. Guards: skip on the frame it was opened (so the menu click that opened it
+	// doesn't immediately count as an outside click), and whenever any popup is
+	// open (font/combo dropdowns and the menu bar) so interacting with those
+	// doesn't close it.
+	if (settingsVisible) {
+		bool anyPopup = ImGui::IsPopupOpen(nullptr,
+			ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+		if (settingsFocused && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+			settingsVisible = false;
+		} else if (!justOpened && !settingsHovered && !anyPopup &&
+			(ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+			 ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+			settingsVisible = false;
+		}
+	}
+
 	// Persist on ANY close, including the window's [x] (which, unlike the Close
-	// button, doesn't save). Without this, a live slider edit is lost when the
-	// window is X-closed, and reopening reloads the stale value from disk — i.e.
-	// "the settings change didn't stick". settingsVisible was true on entry
-	// (early-return above), so it being false now means it closed this frame.
+	// button, doesn't save) and the Esc / click-outside paths above. Without this,
+	// a live slider edit is lost on close and reopening reloads the stale value
+	// from disk — i.e. "the settings change didn't stick". settingsVisible was true
+	// on entry (early-return above), so it being false now means it closed this frame.
 	if (!settingsVisible) saveSettings();
 }
 
