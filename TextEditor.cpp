@@ -1899,29 +1899,28 @@ void TextEditor::handleMouseInteractions()
 		}
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		// Stable anchor-relative drag vector — drives both the axis-lock decision
-		// and the (vertical-only) acceleration.
+		// Acceleration (vertical-only) scales with distance from the anchor.
 		ImVec2 aRel = ImGui::GetMousePos() - panScrollAnchor;
 		float accel = panAccel(std::sqrt(aRel.x * aRel.x + aRel.y * aRel.y));
-		// Axis lock: once the drag clears a small commit distance, snap it to ONE
-		// axis and HOLD that until the button is released — an off-true drag never
-		// bleeds into the other axis, which is what caused the jitter. Strong
-		// vertical bias: horizontal only locks when the drag is clearly horizontal
-		// (|dx| > 3|dy|) AND there's real horizontal scroll room (so panes that
-		// don't scroll sideways stay pure-vertical for free). No "default to
-		// vertical" before the commit — that would nudge vertically at the start of
-		// a horizontal drag; the commit distance is tiny so there's no felt lag.
-		if (panLockAxis == 0) {
-			float commit = glyphSize.y * 0.5f;
-			if (std::fabs(aRel.x) > commit || std::fabs(aRel.y) > commit) {
-				bool canHoriz  = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
-				bool nearHoriz = std::fabs(aRel.x) > std::fabs(aRel.y) * 3.0f;
-				panLockAxis = (canHoriz && nearHoriz) ? 1 : 2;
-			}
+		// Axis SNAP: re-decide every frame (so direction can change mid-drag) but
+		// snap to ONE axis so there's no diagonal drift. The decision runs on a
+		// smoothed velocity (panVelEMA) and uses hysteresis with a strong vertical
+		// bias, so it doesn't flip-flop near the boundary: vertical is the default
+		// and is sticky (need |dx| > 3|dy| to flip to horizontal), horizontal drops
+		// back as soon as the motion is no longer clearly sideways (|dx| < 1.5|dy|),
+		// and horizontal only engages when there's real horizontal scroll room.
+		panVelEMA.x = panVelEMA.x * 0.7f + mouseDelta.x * 0.3f;
+		panVelEMA.y = panVelEMA.y * 0.7f + mouseDelta.y * 0.3f;
+		float vAx = std::fabs(panVelEMA.x), vAy = std::fabs(panVelEMA.y);
+		bool canHoriz = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
+		if (panSnapAxis == 1) {                       // currently horizontal
+			if (!canHoriz || vAx < vAy * 1.5f) panSnapAxis = 2;
+		} else {                                      // currently vertical (default)
+			if (canHoriz && vAx > vAy * 3.0f) panSnapAxis = 1;
 		}
-		if (panLockAxis == 1)
+		if (panSnapAxis == 1)
 			ImGui::SetScrollX(ImGui::GetScrollX() - panSign * mouseDelta.x * 0.35f);
-		else if (panLockAxis == 2)
+		else
 			ImGui::SetScrollY(ImGui::GetScrollY() - panSign * mouseDelta.y * accel);
 		ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
 	}
@@ -1936,23 +1935,24 @@ void TextEditor::handleMouseInteractions()
 		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone,  0.0f) : std::max(offset.y - deadzone,  0.0f);
 
 		float panSign = panInverted ? -1.0f : 1.0f;
-		// Axis lock (same scheme as pan): commit once past a small distance and hold
-		// until the scroll ends. `offset` (post-deadzone) is the stable
-		// anchor-relative vector. Vertical bias + horizontal-room guard.
-		if (panLockAxis == 0) {
-			float commit = glyphSize.y * 0.5f;
-			if (std::fabs(offset.x) > commit || std::fabs(offset.y) > commit) {
-				bool canHoriz  = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
-				bool nearHoriz = std::fabs(offset.x) > std::fabs(offset.y) * 3.0f;
-				panLockAxis = (canHoriz && nearHoriz) ? 1 : 2;
+		// Axis SNAP, same hysteresis as pan. `offset` (post-deadzone) is already the
+		// stable anchor-relative vector, so no smoothing is needed — move the cursor
+		// to a different side of the anchor to change direction mid-scroll.
+		{
+			float oAx = std::fabs(offset.x), oAy = std::fabs(offset.y);
+			bool canHoriz = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
+			if (panSnapAxis == 1) {
+				if (!canHoriz || oAx < oAy * 1.5f) panSnapAxis = 2;
+			} else {
+				if (canHoriz && oAx > oAy * 3.0f) panSnapAxis = 1;
 			}
 		}
 		// Acceleration (vertical-only) from the px distance, before time scaling.
 		float accel = panAccel(std::sqrt(offset.x * offset.x + offset.y * offset.y));
 		float scrollFactor = ImGui::GetIO().DeltaTime * 5.0f;
-		if (panLockAxis == 1)
+		if (panSnapAxis == 1)
 			ImGui::SetScrollX(ImGui::GetScrollX() - panSign * offset.x * scrollFactor * 0.35f);
-		else if (panLockAxis == 2)
+		else
 			ImGui::SetScrollY(ImGui::GetScrollY() - panSign * offset.y * scrollFactor * accel);
 
 		if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
@@ -2187,7 +2187,8 @@ void TextEditor::handleMouseInteractions()
 			// Anchor the on-screen indicator at the exact click point (screen
 			// space) for both modes, so it appears where the user pressed.
 			panScrollAnchor = ImGui::GetMousePos();
-			panLockAxis = 0;   // re-decide the axis lock for this fresh drag
+			panSnapAxis = 2;                    // start vertical-biased
+			panVelEMA = ImVec2(0.0f, 0.0f);     // clear smoothed velocity
 			if (panMode)
 			{
 				panning = true;

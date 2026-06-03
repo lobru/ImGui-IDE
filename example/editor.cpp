@@ -1419,13 +1419,15 @@ void Editor::middleMousePanScroll(int windowKey)
 	static int    activeKey = 0;     // 0 = no pan in progress
 	static ImVec2 anchor;            // screen-space click point — drives accel distance
 	static ImVec2 lastPos;           // previous-frame mouse pos — drives per-frame scroll
-	static int    lockAxis = 0;      // 0=undecided, 1=horizontal, 2=vertical (held until release)
+	static int    snapAxis = 2;      // 1=horizontal, 2=vertical (re-decided per frame, hysteresis)
+	static ImVec2 velEMA{ 0.0f, 0.0f };   // smoothed velocity for the snap decision
 
 	bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
 	if (activeKey == 0 && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
 		activeKey = windowKey;
 		anchor = lastPos = ImGui::GetMousePos();
-		lockAxis = 0;                // re-decide for this fresh drag
+		snapAxis = 2;                // start vertical-biased
+		velEMA = ImVec2(0.0f, 0.0f);
 	}
 	if (activeKey != windowKey) return;                          // not the panned window
 	if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) { activeKey = 0; return; }
@@ -1443,21 +1445,22 @@ void Editor::middleMousePanScroll(int windowKey)
 	if (accel > 16.0f) accel = 16.0f;
 
 	float panSign = prefInvertPan ? -1.0f : 1.0f;
-	// Axis lock (same as the editor): commit to one axis once the drag clears a
-	// small distance and HOLD it until release — no cross-axis bleed/jitter. Strong
-	// vertical bias; horizontal only when clearly horizontal AND the window has real
+	// Axis SNAP (same as the editor): re-decide every frame so direction can change
+	// mid-drag, but snap to one axis (no diagonal). Smoothed velocity + hysteresis +
+	// strong vertical bias prevent flip-flop. Horizontal only when there's real
 	// horizontal scroll room (nav/settings usually have none → always vertical).
-	if (lockAxis == 0) {
-		float commit = ImGui::GetTextLineHeightWithSpacing() * 0.5f;
-		if (std::fabs(rel.x) > commit || std::fabs(rel.y) > commit) {
-			bool canHoriz  = ImGui::GetScrollMaxX() > 24.0f;
-			bool nearHoriz = std::fabs(rel.x) > std::fabs(rel.y) * 3.0f;
-			lockAxis = (canHoriz && nearHoriz) ? 1 : 2;
-		}
+	velEMA.x = velEMA.x * 0.7f + delta.x * 0.3f;
+	velEMA.y = velEMA.y * 0.7f + delta.y * 0.3f;
+	float vAx = std::fabs(velEMA.x), vAy = std::fabs(velEMA.y);
+	bool canHoriz = ImGui::GetScrollMaxX() > 24.0f;
+	if (snapAxis == 1) {
+		if (!canHoriz || vAx < vAy * 1.5f) snapAxis = 2;
+	} else {
+		if (canHoriz && vAx > vAy * 3.0f) snapAxis = 1;
 	}
-	if (lockAxis == 1)
+	if (snapAxis == 1)
 		ImGui::SetScrollX(ImGui::GetScrollX() - panSign * delta.x * 0.35f);
-	else if (lockAxis == 2)
+	else
 		ImGui::SetScrollY(ImGui::GetScrollY() - panSign * delta.y * accel);
 }
 
