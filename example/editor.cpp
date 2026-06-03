@@ -1220,7 +1220,8 @@ static void navRenderEntry(Editor* self,
 				FileTimeToSystemTime(&ft, &st);
 				char buf[64];
 				std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d",
-					st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+					(int) st.wYear, (int) st.wMonth, (int) st.wDay,
+					(int) st.wHour, (int) st.wMinute);
 				return buf;
 			};
 			ImGui::TextDisabled("Created:  %s", fmt(fad.ftCreationTime).c_str());
