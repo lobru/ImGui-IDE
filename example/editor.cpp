@@ -2409,6 +2409,114 @@ void Editor::applyKeybindOverridesToEditors()
 	for (auto& tp : tabs) applyKeybindOverridesToEditor(tp->editor);
 }
 
+// Discover the MSVC toolchain + Windows SDK include directories WITHOUT relying
+// on a Developer-Command-Prompt environment (%INCLUDE% etc.). Sources, in order:
+//   1. %INCLUDE% / %VCToolsInstallDir% if present (free when launched from a dev
+//      prompt or build.ps1 -Run);
+//   2. vswhere.exe -> VS install -> newest VC\Tools\MSVC\<ver>\include;
+//   3. well-known "Program Files\Microsoft Visual Studio\<year>\<edition>" glob;
+//   4. Windows SDK: registry KitsRoot10 (or well-known) -> newest
+//      Include\<ver>\{ucrt,um,shared}.
+// Cached after the first call (the vswhere subprocess + dir walks run once).
+const std::vector<std::filesystem::path>& Editor::systemIncludeDirs()
+{
+	if (sysIncludeComputed_) return sysIncludeDirs_;
+	sysIncludeComputed_ = true;
+	std::error_code ec;
+	auto add = [&](std::filesystem::path p) {
+		if (p.empty()) return;
+		if (!std::filesystem::is_directory(p, ec)) return;
+		for (auto& e : sysIncludeDirs_) if (e == p) return;   // dedupe
+		sysIncludeDirs_.push_back(std::move(p));
+	};
+	auto newestSubdir = [&](const std::filesystem::path& base, const char* mustHave) -> std::filesystem::path {
+		std::filesystem::path best;
+		for (auto it = std::filesystem::directory_iterator(base, ec);
+			 !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+			if (!it->is_directory(ec)) continue;
+			if (mustHave && !std::filesystem::is_directory(it->path() / mustHave, ec)) continue;
+			if (best.empty() || it->path().filename().string() > best.filename().string()) best = it->path();
+		}
+		return best;
+	};
+
+	// 1. Environment (dev-cmd launch) — fast path.
+	if (const char* inc = std::getenv("INCLUDE")) {
+		std::string s = inc, part;
+		for (char ch : s) { if (ch == ';') { if (!part.empty()) add(part); part.clear(); } else part += ch; }
+		if (!part.empty()) add(part);
+	}
+	if (const char* vct = std::getenv("VCToolsInstallDir")) add(std::filesystem::path(vct) / "include");
+
+	auto haveMsvc = [&] {
+		for (auto& d : sysIncludeDirs_)
+			if (d.string().find("\\VC\\Tools\\MSVC\\") != std::string::npos) return true;
+		return false;
+	};
+
+	// 2/3. Locate the VS install and pick the newest MSVC toolchain include dir.
+	if (!haveMsvc()) {
+		std::filesystem::path vs;
+		if (const char* pf86 = std::getenv("ProgramFiles(x86)")) {
+			std::filesystem::path vsw = std::filesystem::path(pf86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe";
+			if (std::filesystem::is_regular_file(vsw, ec)) {
+				std::string cmd = "\"\"" + vsw.string() + "\" -latest -property installationPath\"";
+				if (FILE* p = _popen(cmd.c_str(), "r")) {
+					char buf[1024]; std::string out;
+					while (fgets(buf, sizeof(buf), p)) out += buf;
+					_pclose(p);
+					while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' ' || out.back() == '\t'))
+						out.pop_back();
+					if (!out.empty()) vs = out;
+				}
+			}
+		}
+		if (vs.empty()) {   // well-known fallback glob
+			for (const char* pf : { std::getenv("ProgramFiles"), std::getenv("ProgramFiles(x86)") }) {
+				if (!pf) continue;
+				std::filesystem::path base = std::filesystem::path(pf) / "Microsoft Visual Studio";
+				if (!std::filesystem::is_directory(base, ec)) continue;
+				for (auto y = std::filesystem::directory_iterator(base, ec);
+					 !ec && y != std::filesystem::directory_iterator(); y.increment(ec)) {
+					if (!y->is_directory(ec)) continue;
+					for (auto e = std::filesystem::directory_iterator(y->path(), ec);
+						 !ec && e != std::filesystem::directory_iterator(); e.increment(ec)) {
+						if (e->is_directory(ec) && std::filesystem::is_directory(e->path() / "VC" / "Tools" / "MSVC", ec))
+							vs = e->path();
+					}
+				}
+			}
+		}
+		if (!vs.empty()) {
+			auto ver = newestSubdir(vs / "VC" / "Tools" / "MSVC", "include");
+			if (!ver.empty()) add(ver / "include");
+		}
+	}
+
+	// 4. Windows SDK (covers <windows.h>, CRT headers). KitsRoot10 from registry.
+	{
+		std::filesystem::path kits;
+		char val[1024]; DWORD sz;
+		for (const char* sub : { "SOFTWARE\\WOW6432Node\\Microsoft\\Windows Kits\\Installed Roots",
+								  "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots" }) {
+			sz = sizeof(val);
+			if (RegGetValueA(HKEY_LOCAL_MACHINE, sub, "KitsRoot10", RRF_RT_REG_SZ, nullptr, val, &sz) == ERROR_SUCCESS) {
+				kits = std::string(val); break;
+			}
+		}
+		if (kits.empty()) {
+			std::filesystem::path wk = "C:/Program Files (x86)/Windows Kits/10";
+			if (std::filesystem::is_directory(wk, ec)) kits = wk;
+		}
+		if (!kits.empty()) {
+			auto ver = newestSubdir(kits / "Include", "ucrt");
+			if (!ver.empty()) { add(ver / "ucrt"); add(ver / "um"); add(ver / "shared"); }
+		}
+	}
+
+	return sysIncludeDirs_;
+}
+
 void Editor::goToDefinitionProjectWide(const std::string& word, bool declaration)
 {
 	ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
@@ -4667,45 +4775,12 @@ void Editor::renderDocumentWindow(TabDocument& t)
 													// <vector> work out of the box in dev builds).
 													if (!found)
 													{
-														auto addSystemRoots = [&](std::vector<std::filesystem::path>& roots)
-															{
-																auto pushEnv = [&](const char* var, const char* sub = nullptr)
-																	{
-																		if (const char* v = std::getenv(var))
-																		{
-																			std::filesystem::path p(v);
-																			if (sub) p /= sub;
-																			roots.push_back(std::move(p));
-																		}
-																	};
-																pushEnv("VCToolsInstallDir", "include");          // MSVC STL: <vector>, <string>, …
-																pushEnv("WindowsSdkDir", "Include");          // SDK root; subfolders by version
-																pushEnv("UniversalCRTSdkDir", "Include");          // ucrt
-																pushEnv("INCLUDE");                                // semicolon-separated combined path
-															};
-														std::vector<std::filesystem::path> sysRoots;
-														addSystemRoots(sysRoots);
-
-														// %INCLUDE% is actually a semicolon-separated list, not a
-														// single path — expand it.
-														if (const char* incEnv = std::getenv("INCLUDE"))
-														{
-															std::string s = incEnv;
-															std::string part;
-															for (char ch : s)
-															{
-																if (ch == ';')
-																{
-																	if (!part.empty()) sysRoots.push_back(part);
-																	part.clear();
-																}
-																else part += ch;
-															}
-															if (!part.empty()) sysRoots.push_back(part);
-														}
+														// Self-discovered MSVC + Windows SDK include dirs (cached) —
+														// no dev-cmd %INCLUDE% needed; see systemIncludeDirs().
+														const std::vector<std::filesystem::path>& sysRoots = systemIncludeDirs();
 
 														auto wantedName = incPath.filename().string();
-														for (auto& root : sysRoots)
+														for (const auto& root : sysRoots)
 														{
 															if (!std::filesystem::is_directory(root, ec)) continue;
 															// First try a direct join (handles <foo.h> sitting at the root)

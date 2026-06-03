@@ -491,6 +491,14 @@ private:
 	void goToDefinitionProjectWide(const std::string& word, bool declaration = false);
 	void openCSharpLearn(const std::string& rawSymbol);   // C# SDK types -> Microsoft Learn docs (no on-disk source)
 
+	// MSVC toolchain + Windows SDK include directories, discovered ourselves
+	// (vswhere / registry / well-known paths) and cached, so system headers like
+	// <vector> / <windows.h> resolve in "Go to File" regardless of how the editor
+	// was launched (no Developer-Command-Prompt %INCLUDE% required).
+	const std::vector<std::filesystem::path>& systemIncludeDirs();
+	std::vector<std::filesystem::path> sysIncludeDirs_;
+	bool sysIncludeComputed_ = false;
+
 	// Recents — MRU lists of recently opened files and projects.
 	// Capped at 20 entries each, persisted in settings.
 	std::vector<std::string> recentFiles;
