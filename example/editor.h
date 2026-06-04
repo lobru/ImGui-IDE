@@ -262,6 +262,7 @@ private:
 	bool         navShowExcluded = false;   // expose hidden-from-view items
 	bool         navCodeOnly     = false;   // hide non-source files
 	bool         navFlatFiles    = false;   // collapse folder bodies (show folders only)
+	int          navSetAllOpen   = -1;      // one-shot bulk tree open/close: -1 none, 0 collapse all, 1 expand all
 	std::unordered_map<std::string, bool> navExcluded; // abs path → true = hidden in tree
 	std::string  navClipboardPath;          // last "Copy" target — used by Paste
 	bool         navClipboardIsCut = false; // true = move on paste, false = copy
@@ -278,6 +279,7 @@ public:
 	bool         navIsExcluded(const std::filesystem::path& p) const;
 	bool         navIsCodeOnly() const { return navCodeOnly; }
 	bool         navIsFlat() const     { return navFlatFiles; }
+	int          navBulkOpenRequest() const { return navSetAllOpen; }   // -1 none / 0 collapse / 1 expand
 	bool         navIsShowingExcluded() const { return navShowExcluded; }
 	void         navDragSourceSet(const std::string& p) { navDragSource = p; }
 	void         navMoveOrCopy(const std::string& src,

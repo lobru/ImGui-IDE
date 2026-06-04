@@ -1408,6 +1408,10 @@ static void navRenderEntry(Editor* self,
 
 	if (isDir) {
 		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+		// Collapse-all / expand-all: force every folder node open/closed for the
+		// one frame the toolbar button set the request.
+		if (self->navBulkOpenRequest() >= 0)
+			ImGui::SetNextItemOpen(self->navBulkOpenRequest() == 1, ImGuiCond_Always);
 		bool open = ImGui::TreeNodeEx(name.c_str(), flags);
 		navTooltip(e, true);
 		navDnD(true);
@@ -1626,6 +1630,12 @@ void Editor::renderNavigationPanel()
 		ImGui::SameLine();
 		ImGui::Checkbox("flat", &navFlatFiles);
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flat view — every file in one list, no folder nesting.");
+		ImGui::SameLine();
+		if (ImGui::SmallButton("-")) navSetAllOpen = 0;   // collapse all folders
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse all folders");
+		ImGui::SameLine();
+		if (ImGui::SmallButton("+")) navSetAllOpen = 1;   // expand all folders
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expand all folders");
 		ImGui::Separator();
 
 		navContextPath.clear();
@@ -1639,6 +1649,7 @@ void Editor::renderNavigationPanel()
 		} else {
 			ImGui::TextDisabled("(no project root set)");
 		}
+		navSetAllOpen = -1;   // bulk open/close request consumed this frame
 
 		// Context-menu popup. BeginPopupContextItem above sets contextPath when
 		// the user right-clicks a tree row; we open the popup here with that
