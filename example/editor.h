@@ -521,6 +521,12 @@ private:
 	bool devShowDemo      = false;
 	void renderDevTools();
 
+	// Markdown preview — renders the active .md document (headings, lists, code
+	// fences, blockquotes, rules, and inline bold/italic/code/links).
+	bool mdPreviewVisible = false;
+	void renderMarkdownPreview();
+	void renderMarkdownInline(const std::string& text, float wrapWidth);  // word-wrap + inline styles
+
 	// Project-wide Go to Definition — greps files under projectRoot (or the
 	// active doc's directory) for definition patterns (class/struct/interface/
 	// enum/record, method signatures, #define, etc.). Opens the first hit at

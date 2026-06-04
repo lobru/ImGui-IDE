@@ -3392,6 +3392,161 @@ void Editor::renderDevTools()
 }
 
 
+// ── Markdown preview ──────────────────────────────────────────────────
+
+// Render one logical line of markdown text with inline styles (**bold**,
+// *italic*, `code`, [text](url)), word-wrapped to wrapWidth. Links open in the
+// browser on click.
+void Editor::renderMarkdownInline(const std::string& text, float wrapWidth)
+{
+	struct Word { std::string s; int style; std::string url; };   // style 0 norm,1 bold,2 italic,3 code
+	std::vector<Word> words;
+	std::string cur;
+	int style = 0;
+	auto flush = [&] { if (!cur.empty()) { words.push_back({ cur, style, std::string() }); cur.clear(); } };
+
+	for (size_t i = 0; i < text.size(); ) {
+		char c = text[i];
+		if (style == 3) {                                  // inside `code` — literal until closing `
+			if (c == '`')      { flush(); style = 0; ++i; }
+			else if (c == ' ') { flush(); ++i; }
+			else               { cur += c; ++i; }
+			continue;
+		}
+		if (c == '`') { flush(); style = 3; ++i; continue; }
+		if (c == '[') {                                    // [text](url)
+			size_t close = text.find(']', i + 1);
+			size_t op = (close != std::string::npos) ? text.find('(', close + 1) : std::string::npos;
+			size_t cp = (op != std::string::npos) ? text.find(')', op + 1) : std::string::npos;
+			if (close != std::string::npos && op == close + 1 && cp != std::string::npos) {
+				flush();
+				std::string ltext = text.substr(i + 1, close - i - 1);
+				std::string lurl = text.substr(op + 1, cp - op - 1);
+				std::string w;
+				for (char lc : ltext) { if (lc == ' ') { if (!w.empty()) { words.push_back({ w, 0, lurl }); w.clear(); } } else w += lc; }
+				if (!w.empty()) words.push_back({ w, 0, lurl });
+				i = cp + 1;
+				continue;
+			}
+		}
+		if (c == '*' || c == '_') {
+			bool dbl = (i + 1 < text.size() && text[i + 1] == c);
+			flush();
+			if (dbl) { style = (style == 1) ? 0 : 1; i += 2; }   // bold
+			else     { style = (style == 2) ? 0 : 2; i += 1; }   // italic
+			continue;
+		}
+		if (c == ' ') { flush(); ++i; continue; }
+		cur += c; ++i;
+	}
+	flush();
+
+	const float spaceW = ImGui::CalcTextSize(" ").x;
+	float x = 0.0f;
+	bool firstOnLine = true;
+	for (auto& wd : words) {
+		float w = ImGui::CalcTextSize(wd.s.c_str()).x;
+		if (!firstOnLine) {
+			if (x + spaceW + w <= wrapWidth) { ImGui::SameLine(0.0f, spaceW); x += spaceW; }
+			else { x = 0.0f; firstOnLine = true; }   // wrap: next word starts a new line
+		}
+		bool link = !wd.url.empty();
+		ImU32 col = link            ? IM_COL32(90, 160, 255, 255)
+				  : wd.style == 3   ? IM_COL32(220, 170, 90, 255)    // code
+				  : wd.style == 1   ? IM_COL32(255, 255, 255, 255)   // bold (bright)
+				  : wd.style == 2   ? IM_COL32(205, 205, 165, 255)   // italic
+				  :                   ImGui::GetColorU32(ImGuiCol_Text);
+		ImGui::PushStyleColor(ImGuiCol_Text, col);
+		ImGui::TextUnformatted(wd.s.c_str());
+		ImGui::PopStyleColor();
+		if (link) {
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", wd.url.c_str());
+			if (ImGui::IsItemClicked()) {
+#ifdef _WIN32
+				ShellExecuteA(nullptr, "open", wd.url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#endif
+			}
+		}
+		x += w;
+		firstOnLine = false;
+	}
+	if (words.empty()) ImGui::NewLine();
+}
+
+void Editor::renderMarkdownPreview()
+{
+	if (!mdPreviewVisible) return;
+	ImGui::SetNextWindowSize(ImVec2(560.0f, 600.0f), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Markdown Preview###mdPreview", &mdPreviewVisible))
+	{
+		if (tabs.empty()) { ImGui::TextDisabled("(no document)"); ImGui::End(); return; }
+		auto& t = doc();
+		std::string ext = std::filesystem::path(t.filename).extension().string();
+		std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+		if (ext != ".md" && ext != ".markdown") {
+			ImGui::TextDisabled("Open a Markdown (.md) file to preview it here.");
+			ImGui::End();
+			return;
+		}
+
+		const float avail = ImGui::GetContentRegionAvail().x;
+		std::istringstream ss(t.editor.GetText());
+		std::string line;
+		bool inCode = false;
+		while (std::getline(ss, line)) {
+			if (!line.empty() && line.back() == '\r') line.pop_back();
+			std::string trimmed = line;
+			size_t a = trimmed.find_first_not_of(" \t");
+
+			// fenced code block toggle
+			if (line.rfind("```", 0) == 0 || line.rfind("~~~", 0) == 0) { inCode = !inCode; continue; }
+			if (inCode) {
+				ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 150, 255));
+				ImGui::TextUnformatted(line.empty() ? " " : line.c_str());
+				ImGui::PopStyleColor();
+				continue;
+			}
+			if (a == std::string::npos) { ImGui::Spacing(); continue; }   // blank line
+			std::string body = line.substr(a);
+
+			if (body == "---" || body == "***" || body == "___") { ImGui::Separator(); continue; }
+
+			int h = 0;
+			while (h < (int) body.size() && body[h] == '#') ++h;
+			if (h > 0 && h <= 6 && h < (int) body.size() && body[h] == ' ') {
+				float scale = (h == 1) ? 1.7f : (h == 2) ? 1.4f : (h == 3) ? 1.2f : 1.1f;
+				ImGui::PushFont(nullptr, ImGui::GetFontSize() * scale);   // bigger heading text
+				renderMarkdownInline(body.substr(h + 1), avail);
+				ImGui::PopFont();
+				if (h <= 2) ImGui::Separator();
+				continue;
+			}
+			if (body[0] == '>') {
+				std::string q = body.substr(1);
+				if (!q.empty() && q[0] == ' ') q = q.substr(1);
+				ImGui::Indent();
+				ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(150, 150, 150, 255));
+				renderMarkdownInline(q, avail - ImGui::GetStyle().IndentSpacing);
+				ImGui::PopStyleColor();
+				ImGui::Unindent();
+				continue;
+			}
+			if (body.rfind("- ", 0) == 0 || body.rfind("* ", 0) == 0 || body.rfind("+ ", 0) == 0) {
+				ImGui::Indent();
+				ImGui::TextUnformatted("\xe2\x80\xa2");   // bullet
+				ImGui::SameLine();
+				renderMarkdownInline(body.substr(2),
+					avail - ImGui::GetStyle().IndentSpacing - ImGui::CalcTextSize("\xe2\x80\xa2 ").x);
+				ImGui::Unindent();
+				continue;
+			}
+			renderMarkdownInline(body, avail);
+		}
+	}
+	ImGui::End();
+}
+
+
 // ── Image viewer + non-text dispatch ───────────────────────────────
 
 bool Editor::isImageExt(const std::string& ext)
@@ -4763,6 +4918,7 @@ void Editor::render()
 	renderReferencesPanel();
 	renderFindInFilesPanel();
 	renderDevTools();
+	renderMarkdownPreview();
 	renderSettings();
 
 	// Diff-against-other file picker — overlay on any state.
@@ -5545,6 +5701,7 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Navigation Panel",  nullptr, &navPanelVisible)) {}
 			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
 			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
+			if (ImGui::MenuItem("Markdown Preview",  nullptr, &mdPreviewVisible)) {}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
 			ImGui::Separator();
