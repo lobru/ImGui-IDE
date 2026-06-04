@@ -795,6 +795,19 @@ void Editor::renderRunArgsPopup()
 }
 
 
+// Resolve the per-language brace pref (Allman/new-line = true) for a file ext.
+bool Editor::formatBraceNewLineForExt(const std::string& ext) const
+{
+	if (ext == ".c" || ext == ".h" || ext == ".cpp" || ext == ".hpp" || ext == ".cxx" ||
+		ext == ".hxx" || ext == ".cc" || ext == ".hh" || ext == ".inl" || ext == ".m" || ext == ".mm")
+		return prefFormatBraceCpp;
+	if (ext == ".cs") return prefFormatBraceCs;
+	if (ext == ".js" || ext == ".jsx" || ext == ".ts" || ext == ".tsx" || ext == ".mjs" || ext == ".cjs")
+		return prefFormatBraceJs;
+	if (ext == ".java") return prefFormatBraceJava;
+	return prefFormatBraceNewLine;
+}
+
 // Format the active document with clang-format (Microsoft base style = VS-like
 // spacing; brace placement from the setting; ColumnLimit 0 so it fixes braces /
 // indentation / spacing WITHOUT reflowing lines to a width). Undo-safe: the whole
@@ -828,7 +841,7 @@ void Editor::formatActiveDocument()
 	{
 		std::ofstream cf(dir / ".clang-format", std::ios::trunc);
 		cf << "BasedOnStyle: Microsoft\n"
-		   << "BreakBeforeBraces: " << (prefFormatBraceNewLine ? "Allman" : "Attach") << "\n"
+		   << "BreakBeforeBraces: " << (formatBraceNewLineForExt(ext) ? "Allman" : "Attach") << "\n"
 		   << "ColumnLimit: 0\n";   // don't reflow lines to a width; just fix structure/spacing
 	}
 	auto src = dir / ("buffer" + ext);
@@ -3629,6 +3642,10 @@ void Editor::loadSettings()
 			if      (k == "auto_indent")    prefAutoIndent    = (v == "1" || v == "true");
 			else if (k == "complete_pairs") prefCompletePairs = (v == "1" || v == "true");
 			else if (k == "format_brace_newline") prefFormatBraceNewLine = (v == "1" || v == "true");
+			else if (k == "format_brace_cpp")  prefFormatBraceCpp  = (v == "1" || v == "true");
+			else if (k == "format_brace_cs")   prefFormatBraceCs   = (v == "1" || v == "true");
+			else if (k == "format_brace_js")   prefFormatBraceJs   = (v == "1" || v == "true");
+			else if (k == "format_brace_java") prefFormatBraceJava = (v == "1" || v == "true");
 			else if (k == "show_fps")       prefShowFps       = (v == "1" || v == "true");
 			else if (k == "ctrl_scroll_zoom") prefCtrlScrollZoom = (v == "1" || v == "true");
 			else if (k == "autocomplete")   autocomplete      = (v == "1" || v == "true");
@@ -3716,6 +3733,10 @@ void Editor::saveSettings()
 	f << "auto_indent="      << (prefAutoIndent     ? "1" : "0") << "\n";
 	f << "complete_pairs="   << (prefCompletePairs  ? "1" : "0") << "\n";
 	f << "format_brace_newline=" << (prefFormatBraceNewLine ? "1" : "0") << "\n";
+	f << "format_brace_cpp="  << (prefFormatBraceCpp  ? "1" : "0") << "\n";
+	f << "format_brace_cs="   << (prefFormatBraceCs   ? "1" : "0") << "\n";
+	f << "format_brace_js="   << (prefFormatBraceJs   ? "1" : "0") << "\n";
+	f << "format_brace_java=" << (prefFormatBraceJava ? "1" : "0") << "\n";
 	f << "show_fps="         << (prefShowFps        ? "1" : "0") << "\n";
 	f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
 	f << "autocomplete="     << (autocomplete       ? "1" : "0") << "\n";
@@ -3886,9 +3907,14 @@ void Editor::renderSettings()
 			{
 				ImGui::Checkbox("Auto-indent on new line", &prefAutoIndent);
 				ImGui::Checkbox("Auto-complete matching brackets / quotes", &prefCompletePairs);
-				ImGui::Checkbox("Format Document: braces on their own line (Allman)", &prefFormatBraceNewLine);
+				ImGui::TextDisabled("Format Document — braces on their own line (Allman), per language:");
+				ImGui::Checkbox("C / C++", &prefFormatBraceCpp);  ImGui::SameLine();
+				ImGui::Checkbox("C#",      &prefFormatBraceCs);   ImGui::SameLine();
+				ImGui::Checkbox("JS / TS", &prefFormatBraceJs);   ImGui::SameLine();
+				ImGui::Checkbox("Java",    &prefFormatBraceJava); ImGui::SameLine();
+				ImGui::Checkbox("Other",   &prefFormatBraceNewLine);
 				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("Code > Format Document (Alt+Shift+F) runs clang-format.\nOn = Allman (brace on next line); off = attached (same line).");
+					ImGui::SetTooltip("Code > Format Document (Alt+Shift+F) runs clang-format.\nChecked = brace on next line (Allman); unchecked = attached (same line).");
 				ImGui::Checkbox("Show FPS on status bar", &prefShowFps);
 				ImGui::Checkbox("Ctrl + scroll wheel adjusts editor font size", &prefCtrlScrollZoom);
 				ImGui::Checkbox("Invert middle-mouse pan direction", &prefInvertPan);

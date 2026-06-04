@@ -337,7 +337,15 @@ private:
 	void applyKeybindOverridesToEditor(TextEditor& ed) const;
 	bool   prefAutoIndent      = true;
 	bool   prefCompletePairs   = true;
-	bool   prefFormatBraceNewLine = true;   // Format Document: braces on their own line (Allman) vs attached
+	// Format Document brace placement: braces on their own line (Allman) vs
+	// attached, PER LANGUAGE group. prefFormatBraceNewLine is the default for
+	// languages without a specific entry.
+	bool   prefFormatBraceNewLine = true;   // default (and "Other" languages)
+	bool   prefFormatBraceCpp  = true;      // C / C++ / ObjC
+	bool   prefFormatBraceCs   = true;      // C#
+	bool   prefFormatBraceJs   = false;     // JS / TS (conventionally same-line)
+	bool   prefFormatBraceJava = false;     // Java (conventionally same-line)
+	bool   formatBraceNewLineForExt(const std::string& ext) const;   // resolve per-lang brace pref
 	void   formatActiveDocument();          // run clang-format over the active doc (undo-safe)
 	bool   prefShowFps         = false;   // FPS readout on the status bar
 	bool   prefCtrlScrollZoom  = true;    // Ctrl+wheel adjusts editor font size
