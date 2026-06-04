@@ -496,6 +496,16 @@ private:
 	void renderFindInFilesPanel();
 	void openFindInFiles();        // show the panel, focus the query, seed from selection
 
+	// Developer tools — Dear ImGui's own inspectors + a "where is this feature's
+	// code" source map (click a row -> project go-to-def to that function), so the
+	// editor can be developed inside itself.
+	bool devToolsVisible  = false;
+	bool devShowMetrics   = false;
+	bool devShowStackTool = false;
+	bool devShowDebugLog  = false;
+	bool devShowDemo      = false;
+	void renderDevTools();
+
 	// Project-wide Go to Definition — greps files under projectRoot (or the
 	// active doc's directory) for definition patterns (class/struct/interface/
 	// enum/record, method signatures, #define, etc.). Opens the first hit at

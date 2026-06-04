@@ -3174,6 +3174,76 @@ void Editor::renderFindInFilesPanel()
 }
 
 
+// ── Developer tools — inspectors + "where is this feature's code" map ──
+
+void Editor::renderDevTools()
+{
+	// Dear ImGui's own inspectors (rendered whenever toggled on, even if the
+	// Developer Tools window itself is closed).
+	if (devShowMetrics)   ImGui::ShowMetricsWindow(&devShowMetrics);
+	if (devShowStackTool) ImGui::ShowIDStackToolWindow(&devShowStackTool);
+	if (devShowDebugLog)  ImGui::ShowDebugLogWindow(&devShowDebugLog);
+	if (devShowDemo)      ImGui::ShowDemoWindow(&devShowDemo);
+
+	if (!devToolsVisible) return;
+	ImGui::SetNextWindowSize(ImVec2(520.0f, 480.0f), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Developer Tools###devTools", &devToolsVisible))
+	{
+		ImGui::SeparatorText("Dear ImGui inspectors");
+		ImGui::Checkbox("Metrics / Debugger", &devShowMetrics);
+		ImGui::Checkbox("ID Stack Tool (inspect widget IDs)", &devShowStackTool);
+		ImGui::Checkbox("Debug Log", &devShowDebugLog);
+		ImGui::Checkbox("Dear ImGui Demo", &devShowDemo);
+
+		ImGui::SeparatorText("Where is this feature's code?");
+		ImGui::TextWrapped("Click a row to jump to the function (project-wide go-to-def). "
+			"Open the editor's own repo as the project for these to resolve.");
+		ImGui::Spacing();
+
+		struct DevLoc { const char* feature; const char* symbol; const char* file; };
+		static const DevLoc locs[] = {
+			{ "Menu bar / menus",         "renderMenuBar",            "example/editor.cpp" },
+			{ "Settings window",          "renderSettings",           "example/editor.cpp" },
+			{ "Navigation panel",         "renderNavigationPanel",    "example/editor.cpp" },
+			{ "Find in Files",            "renderFindInFilesPanel",   "example/editor.cpp" },
+			{ "References panel",         "renderReferencesPanel",    "example/editor.cpp" },
+			{ "Run / Output panel",       "runCommandInOutputPanel",  "example/editor.cpp" },
+			{ "Document tabs / docking",  "renderDockedDocuments",    "example/editor.cpp" },
+			{ "Status bar",               "renderStatusBar",          "example/editor.cpp" },
+			{ "Go to Definition",         "goToDefinitionProjectWide","example/editor.cpp" },
+			{ "Keybind dispatch",         "keybindPressed",           "example/editor.cpp" },
+			{ "System include discovery", "systemIncludeDirs",        "example/editor.cpp" },
+			{ "Settings persistence",     "saveSettings",             "example/editor.cpp" },
+			{ "Editor text render",       "renderText",               "TextEditor.cpp" },
+			{ "Find / Replace bar",       "renderFindReplace",        "TextEditor.cpp" },
+			{ "Syntax colorizer",         "updateChangedLines",       "TextEditor.cpp" },
+			{ "Folding (build ranges)",   "rebuildFoldRanges",        "TextEditor.cpp" },
+			{ "Mouse / pan-scroll",       "handleMouseInteractions",  "TextEditor.cpp" },
+		};
+		if (ImGui::BeginTable("##devmap", 2,
+			ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY))
+		{
+			ImGui::TableSetupColumn("Feature");
+			ImGui::TableSetupColumn("Function - file");
+			ImGui::TableHeadersRow();
+			for (int i = 0; i < (int) (sizeof(locs) / sizeof(locs[0])); ++i)
+			{
+				ImGui::TableNextRow();
+				ImGui::TableNextColumn();
+				ImGui::PushID(i);
+				if (ImGui::Selectable(locs[i].feature, false, ImGuiSelectableFlags_SpanAllColumns))
+					goToDefinitionProjectWide(locs[i].symbol, false);
+				ImGui::TableNextColumn();
+				ImGui::TextDisabled("%s  -  %s", locs[i].symbol, locs[i].file);
+				ImGui::PopID();
+			}
+			ImGui::EndTable();
+		}
+	}
+	ImGui::End();
+}
+
+
 // ── Image viewer + non-text dispatch ───────────────────────────────
 
 bool Editor::isImageExt(const std::string& ext)
@@ -4525,6 +4595,7 @@ void Editor::render()
 	renderRunArgsPopup();
 	renderReferencesPanel();
 	renderFindInFilesPanel();
+	renderDevTools();
 	renderSettings();
 
 	// Diff-against-other file picker — overlay on any state.
@@ -5304,6 +5375,7 @@ void Editor::renderMenuBar()
 			ImGui::Separator();
 			if (ImGui::MenuItem("Navigation Panel",  nullptr, &navPanelVisible)) {}
 			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
+			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
 			ImGui::Separator();
