@@ -410,6 +410,9 @@ private:
 	// Resolve the active document to a runnable command (interpreter + path),
 	// saving it first; {empty,_} with a reason written to Output if it can't run.
 	std::pair<std::string, std::filesystem::path> docScriptCommand();
+	// Locate a project virtualenv's python for a script (VIRTUAL_ENV, or a
+	// .venv/venv/env dir walking up from the script / project root). Empty = none.
+	std::string venvPythonFor(const std::filesystem::path& scriptPath) const;
 	// What F5 runs: freshest built exe under projectRoot, else the active doc.
 	std::pair<std::string, std::filesystem::path> projectRunCommand();
 	// Is `p` something we know how to launch (mapped interpreter, .exe, etc.)?

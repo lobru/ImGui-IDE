@@ -658,6 +658,40 @@ std::filesystem::path Editor::findBuiltExe() const
 // first (so the run reflects on-disk state). Returns {command, workingDir};
 // the working dir is the script's own folder so relative paths in the script
 // resolve. On failure returns {empty, _} with the reason in the Output panel.
+std::string Editor::venvPythonFor(const std::filesystem::path& scriptPath) const
+{
+	std::error_code ec;
+	auto check = [&](const std::filesystem::path& venvDir) -> std::string {
+#ifdef _WIN32
+		auto py = venvDir / "Scripts" / "python.exe";
+#else
+		auto py = venvDir / "bin" / "python";
+#endif
+		return std::filesystem::is_regular_file(py, ec) ? py.string() : std::string();
+	};
+	// 1. An already-activated virtualenv.
+	if (const char* ve = std::getenv("VIRTUAL_ENV")) {
+		auto p = check(ve);
+		if (!p.empty()) return p;
+	}
+	// 2. A .venv/venv/env dir, walking up from the script's dir then the project root.
+	std::vector<std::filesystem::path> bases;
+	if (!scriptPath.empty()) bases.push_back(scriptPath.parent_path());
+	if (!projectRoot.empty()) bases.push_back(projectRoot);
+	for (const auto& base : bases) {
+		auto cur = base;
+		for (int i = 0; i < 6; ++i) {
+			for (const char* name : { ".venv", "venv", "env" }) {
+				auto p = check(cur / name);
+				if (!p.empty()) return p;
+			}
+			if (!cur.has_parent_path() || cur.parent_path() == cur) break;
+			cur = cur.parent_path();
+		}
+	}
+	return {};
+}
+
 std::pair<std::string, std::filesystem::path> Editor::docScriptCommand()
 {
 	if (tabs.empty()) return {};
@@ -681,6 +715,14 @@ std::pair<std::string, std::filesystem::path> Editor::docScriptCommand()
 		script->output = "[no interpreter mapped for " + ext + "]\n";
 		script->visible = true;
 		return {};
+	}
+
+	// Python: when the interpreter is the built-in default (no explicit override),
+	// prefer a project virtualenv's python so the script runs with the venv's
+	// packages — what the user almost always wants when a venv exists.
+	if (over == interpreterOverrides.end() && (ext == ".py" || ext == ".pyw")) {
+		std::string venv = venvPythonFor(std::filesystem::path(t.filename));
+		if (!venv.empty()) interpStr = "\"" + venv + "\"";
 	}
 
 	if (isDirty()) saveFile();
@@ -6251,10 +6293,14 @@ void Editor::renderConfirmQuit()
 void Editor::renderConfirmError()
 {
 	ImGui::OpenPopup("Error");
-	ImGuiViewport* vp = ImGui::FindViewportByID(dialogViewportId);
-	if (!vp) vp = ImGui::GetMainViewport();
+	// Always anchor this global dialog to the MAIN viewport (not whatever
+	// dialogViewportId happens to be) — otherwise, triggered from a floating
+	// window like Developer Tools, the popup is confined to that window's bounds
+	// instead of popping out / centering on the main window.
+	ImGuiViewport* vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowViewport(vp->ID);
 	ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowFocus();
 
 	if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 	{
