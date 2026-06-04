@@ -795,6 +795,88 @@ void Editor::renderRunArgsPopup()
 }
 
 
+// Format the active document with clang-format (Microsoft base style = VS-like
+// spacing; brace placement from the setting; ColumnLimit 0 so it fixes braces /
+// indentation / spacing WITHOUT reflowing lines to a width). Undo-safe: the whole
+// buffer is replaced via a single select-all + replace transaction, so Ctrl+Z
+// reverts the format in one step. No-ops if clang-format isn't on PATH or the
+// language isn't one it handles.
+void Editor::formatActiveDocument()
+{
+	if (tabs.empty()) return;
+	auto& t = doc();
+
+	std::string ext;
+	if (t.filename == "untitled") ext = ".cpp";   // assume C++ for an unsaved buffer
+	else {
+		ext = std::filesystem::path(t.filename).extension().string();
+		std::transform(ext.begin(), ext.end(), ext.begin(),
+			[](unsigned char c) { return (char) std::tolower(c); });
+	}
+	static const std::unordered_set<std::string> ok = {
+		".c", ".h", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh", ".inl", ".m", ".mm",
+		".cs", ".java", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".proto",
+	};
+	if (!ok.count(ext)) {
+		showError("Format: clang-format doesn't handle '" + ext + "' files.");
+		return;
+	}
+
+	std::error_code ec;
+	auto dir = userConfigDir() / "fmt";
+	std::filesystem::create_directories(dir, ec);
+	{
+		std::ofstream cf(dir / ".clang-format", std::ios::trunc);
+		cf << "BasedOnStyle: Microsoft\n"
+		   << "BreakBeforeBraces: " << (prefFormatBraceNewLine ? "Allman" : "Attach") << "\n"
+		   << "ColumnLimit: 0\n";   // don't reflow lines to a width; just fix structure/spacing
+	}
+	auto src = dir / ("buffer" + ext);
+	{
+		std::ofstream f(src, std::ios::binary | std::ios::trunc);
+		f << t.editor.GetText();
+	}
+
+	// Run clang-format; capture the formatted source from stdout (clang-format
+	// reads the .clang-format we just wrote from the source file's directory).
+	std::string cmd = "clang-format \"" + src.string() + "\" 2>nul";
+	std::string out;
+	if (FILE* p = _popen(cmd.c_str(), "r")) {
+		char buf[8192];
+		size_t n;
+		while ((n = fread(buf, 1, sizeof(buf), p)) > 0) out.append(buf, n);
+		_pclose(p);
+	} else {
+		showError("Format: could not run clang-format (is it on PATH?).");
+		return;
+	}
+	std::filesystem::remove(src, ec);
+
+	if (out.empty()) {
+		showError("Format: clang-format produced no output (syntax error, or not on PATH).");
+		return;
+	}
+	// Normalise CRLF -> LF (the editor stores LF internally).
+	if (out.find('\r') != std::string::npos) {
+		std::string s;
+		s.reserve(out.size());
+		for (char c : out) if (c != '\r') s += c;
+		out.swap(s);
+	}
+	// Drop a single trailing newline so we don't grow the file each format.
+	if (!out.empty() && out.back() == '\n') out.pop_back();
+
+	if (out == t.editor.GetText()) return;   // already formatted — no-op (no undo churn)
+
+	int line = 0, col = 0;
+	t.editor.GetCursor(line, col, 0);
+	t.editor.SelectAll();
+	t.editor.ReplaceTextInCurrentCursor(out);   // one undoable transaction
+	t.editor.SetCursor(line, 0);
+	t.editor.ScrollToLine(line, TextEditor::Scroll::alignMiddle);
+}
+
+
 void Editor::toggleHeaderSource()
 {
 	if (tabs.empty()) return;
@@ -3546,6 +3628,7 @@ void Editor::loadSettings()
 		else if (section == "editor") {
 			if      (k == "auto_indent")    prefAutoIndent    = (v == "1" || v == "true");
 			else if (k == "complete_pairs") prefCompletePairs = (v == "1" || v == "true");
+			else if (k == "format_brace_newline") prefFormatBraceNewLine = (v == "1" || v == "true");
 			else if (k == "show_fps")       prefShowFps       = (v == "1" || v == "true");
 			else if (k == "ctrl_scroll_zoom") prefCtrlScrollZoom = (v == "1" || v == "true");
 			else if (k == "autocomplete")   autocomplete      = (v == "1" || v == "true");
@@ -3632,6 +3715,7 @@ void Editor::saveSettings()
 	f << "[editor]\n";
 	f << "auto_indent="      << (prefAutoIndent     ? "1" : "0") << "\n";
 	f << "complete_pairs="   << (prefCompletePairs  ? "1" : "0") << "\n";
+	f << "format_brace_newline=" << (prefFormatBraceNewLine ? "1" : "0") << "\n";
 	f << "show_fps="         << (prefShowFps        ? "1" : "0") << "\n";
 	f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
 	f << "autocomplete="     << (autocomplete       ? "1" : "0") << "\n";
@@ -3802,6 +3886,9 @@ void Editor::renderSettings()
 			{
 				ImGui::Checkbox("Auto-indent on new line", &prefAutoIndent);
 				ImGui::Checkbox("Auto-complete matching brackets / quotes", &prefCompletePairs);
+				ImGui::Checkbox("Format Document: braces on their own line (Allman)", &prefFormatBraceNewLine);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("Code > Format Document (Alt+Shift+F) runs clang-format.\nOn = Allman (brace on next line); off = attached (same line).");
 				ImGui::Checkbox("Show FPS on status bar", &prefShowFps);
 				ImGui::Checkbox("Ctrl + scroll wheel adjusts editor font size", &prefCtrlScrollZoom);
 				ImGui::Checkbox("Invert middle-mouse pan direction", &prefInvertPan);
@@ -4092,6 +4179,7 @@ void Editor::renderSettings()
 					{ "code.upper",      "Selection -> UPPERCASE",   "Ctrl+K Ctrl+U", "Code", true, "upperCase" },
 					{ "code.lower",      "Selection -> lowercase",   "Ctrl+K Ctrl+L", "Code", true, "lowerCase" },
 					{ "code.hSrc",       "Switch Header / Source",   "Alt+O",         "Code", true, nullptr },
+					{ "code.format",     "Format Document",          "Alt+Shift+F",   "Code", true, nullptr },
 
 					{ "view.splitR",     "Split tab right",          "Ctrl+\\",       "View", true, nullptr },
 					{ "view.zoomIn",     "Zoom in",                  "Ctrl++",        "View", true, nullptr },
@@ -5333,6 +5421,8 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Tabs To Spaces")) { e.TabsToSpaces(); }
 			if (ImGui::MenuItem("Spaces To Tabs", nullptr, nullptr, !e.IsInsertSpacesOnTabs())) { e.SpacesToTabs(); }
 			if (ImGui::MenuItem("Strip Trailing Whitespaces")) { e.StripTrailingWhitespaces(); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Format Document", "Alt+Shift+F")) { formatActiveDocument(); }
 			ImGui::EndMenu();
 		}
 
@@ -5473,6 +5563,7 @@ void Editor::renderMenuBar()
 		else if (keybindPressed("view.zoomIn", "Ctrl+="))       { increaseFontSIze(); }
 		else if (keybindPressed("view.zoomOut","Ctrl+-"))       { decreaseFontSIze(); }
 		else if (keybindPressed("code.hSrc",   "Alt+O"))        { toggleHeaderSource(); }
+		else if (keybindPressed("code.format", "Alt+Shift+F"))  { formatActiveDocument(); }
 		else if (keybindPressed("proj.run",    "F5"))           { runProjectExeOrScript(); }
 		else if (keybindPressed("proj.build",  "F6"))           { runProjectBuild(); }
 

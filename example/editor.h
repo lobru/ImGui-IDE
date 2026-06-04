@@ -337,6 +337,8 @@ private:
 	void applyKeybindOverridesToEditor(TextEditor& ed) const;
 	bool   prefAutoIndent      = true;
 	bool   prefCompletePairs   = true;
+	bool   prefFormatBraceNewLine = true;   // Format Document: braces on their own line (Allman) vs attached
+	void   formatActiveDocument();          // run clang-format over the active doc (undo-safe)
 	bool   prefShowFps         = false;   // FPS readout on the status bar
 	bool   prefCtrlScrollZoom  = true;    // Ctrl+wheel adjusts editor font size
 	bool   prefInvertPan       = false;   // flip middle-mouse pan direction
