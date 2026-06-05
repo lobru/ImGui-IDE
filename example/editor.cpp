@@ -4935,6 +4935,7 @@ void Editor::openFile(const std::string& path)
 		target->version = target->editor.GetUndoIndex();
 		target->filename = path;
 		target->wantFocus = true;
+		recordDiskMtime(*target);     // baseline for external-change watch
 		applyEditorConfig(*target);   // .editorconfig overrides indent/tab for this file
 		rememberRecentFile(path);
 		// Make this tab the active one so SetNextWindowFocus in
@@ -4968,6 +4969,7 @@ void Editor::saveFile()
 		stream << t.editor.GetText();
 		stream.close();
 		t.version = t.editor.GetUndoIndex();
+		recordDiskMtime(t);   // our own write — re-baseline so the watch ignores it
 		// Refresh the project symbol index so go-to-def / autocomplete pick up
 		// edits. Cheap: the build is one-at-a-time guarded + gen-superseded.
 		if (!projectRoot.empty()) rebuildProjectIndex();
@@ -4993,11 +4995,93 @@ void Editor::saveFile(std::string& path)
 		if (t.editor.GetLanguage() == nullptr)
 			t.editor.SetLanguage(languageForPath(path));
 		t.version = t.editor.GetUndoIndex();
+		recordDiskMtime(t);   // our own write — re-baseline so the watch ignores it
 		if (!projectRoot.empty()) rebuildProjectIndex();
 	}
 	catch (std::exception& e)
 	{
 		showError(e.what());
+	}
+}
+
+
+//
+//	External-change watch — safe co-editing with Claude / other tools
+//
+
+//	Re-baseline the on-disk write time we've reconciled with. Called after our
+//	own load/save so the watch never mistakes our write for someone else's.
+void Editor::recordDiskMtime(TabDocument& t)
+{
+	if (t.filename == "untitled") return;
+	std::error_code ec;
+	auto mt = std::filesystem::last_write_time(t.filename, ec);
+	if (!ec) t.diskMtime = mt;
+}
+
+//	Re-read the file from disk into a clean buffer, preserving the cursor —
+//	CLAMPED into the reloaded document because an external edit may have shrunk
+//	the file (a stale out-of-range cursor is the classic assert source here).
+void Editor::reloadFromDisk(TabDocument& t)
+{
+	std::ifstream stream(t.filename.c_str());
+	if (!stream.is_open()) return;
+	std::string text((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+	stream.close();
+
+	int line = 0, column = 0;
+	t.editor.GetCurrentCursor(line, column);
+
+	t.editor.SetText(text);
+	t.originalText = text;
+	t.version = t.editor.GetUndoIndex();
+	t.externalChange = false;
+	recordDiskMtime(t);
+	rememberRecentFile(t.filename);
+
+	int total = (std::max)(t.editor.GetLineCount(), 1);
+	line   = (std::max)(0, (std::min)(line, total - 1));
+	int len = static_cast<int>(t.editor.GetLineText(line).size());
+	column = (std::max)(0, (std::min)(column, len));
+	t.editor.SetCursor(line, column);
+	t.editor.ScrollToLine(line, TextEditor::Scroll::alignMiddle);
+
+	if (!projectRoot.empty()) rebuildProjectIndex();
+}
+
+//	Poll every open file's on-disk mtime (throttled). On a real change:
+//	  - clean buffer → silently reload (stay in sync with Claude)
+//	  - dirty buffer → flag a conflict; the doc shows a Reload / Keep / Diff bar
+//	A content backstop guards against benign touches and any write we missed.
+void Editor::checkExternalChanges()
+{
+	double now = ImGui::GetTime();
+	if (now - extWatchTime < 1.0) return;
+	extWatchTime = now;
+
+	for (size_t i = 0; i < tabs.size(); ++i)
+	{
+		auto& t = *tabs[i];
+		if (t.filename == "untitled") continue;
+		if (t.externalChange) continue;          // already flagged, awaiting the user
+
+		std::error_code ec;
+		auto mt = std::filesystem::last_write_time(t.filename, ec);
+		if (ec) continue;                        // deleted / locked → keep the buffer
+		if (mt == t.diskMtime) continue;         // unchanged since we last reconciled
+
+		// Content backstop: a mtime bump with identical bytes (our own save,
+		// a `touch`, a no-op formatter) is not a real change — just re-baseline.
+		std::ifstream f(t.filename.c_str());
+		std::string disk((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+		f.close();
+		disk.erase(std::remove(disk.begin(), disk.end(), '\r'), disk.end());
+		std::string mine = t.editor.GetText();
+		mine.erase(std::remove(mine.begin(), mine.end(), '\r'), mine.end());
+		if (disk == mine) { t.diskMtime = mt; continue; }
+
+		if (!isDirtyTab(i)) reloadFromDisk(t);   // clean → take their version
+		else                t.externalChange = true;   // dirty → conflict
 	}
 }
 
@@ -5046,6 +5130,8 @@ void Editor::render()
 	// work area cleanly. (We don't auto-hide the tab bar — the user wants
 	// it always visible to track open docs.)
 	ImGui::DockSpace(dockId, dockArea, ImGuiDockNodeFlags_PassthruCentralNode);
+
+	checkExternalChanges();   // reload clean docs / flag conflicts when disk changes under us
 
 	renderDockedDocuments();
 	renderNavigationPanel();
@@ -5614,6 +5700,36 @@ void Editor::renderDocumentWindow(TabDocument& t)
 											ImGui::Separator();
 											ImGui::Text("Line %d, column %d", line + 1, column + 1);
 										});
+
+	// Conflict bar: disk changed (Claude / another tool) while this buffer has
+	// unsaved edits. The user picks who wins — take theirs, keep mine, or diff.
+	if (t.externalChange)
+	{
+		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.30f, 0.20f, 0.04f, 1.0f));
+		ImGui::BeginChild("##extChangeBar", ImVec2(0.0f, ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y * 2.0f),
+			ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f),
+			"\xe2\x9a\xa0 Changed on disk while you have unsaved edits.");
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Reload (theirs)")) { reloadFromDisk(t); }
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Keep Mine"))       { recordDiskMtime(t); t.externalChange = false; }
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Diff"))
+		{
+			std::ifstream f(t.filename.c_str());
+			std::string disk((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+			f.close();
+			t.diff.SetLanguage(t.editor.GetLanguage());
+			t.diff.SetText(disk, t.editor.GetText());   // theirs (disk) vs mine (buffer)
+			dialogViewportId = ImGui::GetMainViewport()->ID;
+			dialogNeedsPlacement = true;
+			state = State::diff;
+		}
+		ImGui::EndChild();
+		ImGui::PopStyleColor();
+	}
 
 	ImVec2 editorSize = ImGui::GetContentRegionAvail();
 	t.editor.Render("##editorContent", editorSize);

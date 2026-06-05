@@ -66,6 +66,11 @@ class Editor {
 		bool        wantSplit   = false;   // dock as a split next to the active doc
 		bool        dockedOnce  = false;   // have we forced this doc into the central node yet?
 		TextEditor::Trie trie;
+		// External-change watch (safe co-editing with Claude / other tools):
+		//   diskMtime    = last on-disk write time we've reconciled with
+		//   externalChange = disk changed under a DIRTY buffer (unresolved conflict)
+		std::filesystem::file_time_type diskMtime{};
+		bool        externalChange = false;
 	};
 
 	// document management — stored as unique_ptr so addresses remain stable
@@ -96,6 +101,16 @@ class Editor {
 	void renderStatusBar();
 	void renderDockedDocuments();
 	void renderDocumentWindow(TabDocument& t);
+
+	// External-change watch — keeps open docs in sync when Claude or another
+	// tool edits the same files on disk. recordDiskMtime() re-baselines after
+	// our own load/save; checkExternalChanges() polls (throttled) and either
+	// silently reloads a clean buffer or flags a conflict on a dirty one;
+	// reloadFromDisk() re-reads, preserving a clamped cursor.
+	void recordDiskMtime(TabDocument& t);
+	void reloadFromDisk(TabDocument& t);
+	void checkExternalChanges();
+	double extWatchTime = 0.0;   // last poll time (throttle)
 
 	// index = -1  → append at end
 	// split = true → request the new doc be docked next to the active one
