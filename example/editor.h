@@ -557,6 +557,15 @@ private:
 	void renderMarkdownPreview();
 	void renderMarkdownInline(const std::string& text, float wrapWidth);  // word-wrap + inline styles
 
+	// Claude activity feed — a persistent, dockable record of external (Claude /
+	// other tool) edits to open files. Toasts are transient and easy to miss
+	// while away; this log keeps the history so it's easy to track what changed.
+	struct ExtChange { std::string file; std::string path; std::string kind; double time; };
+	std::vector<ExtChange> extChangeLog;
+	bool claudeActivityVisible = false;
+	void logExternalChange(const std::string& path, const std::string& kind);
+	void renderClaudeActivity();
+
 	// Git status (background-polled) — branch + dirty/ahead/behind for the status
 	// bar. Read-only; destructive git actions (commit/push/revert) come later.
 	struct GitInfo {

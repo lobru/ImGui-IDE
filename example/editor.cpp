@@ -3355,6 +3355,8 @@ void Editor::renderDevTools()
 			ImGui::SameLine();
 			if (ImGui::SmallButton("Test toast"))
 				pushToast("\xe2\x9c\x8e Dev Tools test toast", IM_COL32(170, 130, 250, 255));
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Activity log")) claudeActivityVisible = true;
 
 			if (ImGui::BeginTable("##watch", 2,
 				ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp))
@@ -5141,10 +5143,12 @@ void Editor::checkExternalChanges()
 			reloadFromDisk(t);    // clean → take their version, highlight changes
 			pushToast("\xe2\x9c\x8e Claude edited  " + fname + "  \xe2\x80\x94 reloaded",
 				IM_COL32(170, 130, 250, 255));
+			logExternalChange(t.filename, "reloaded");
 		} else {
 			t.externalChange = true;   // dirty → conflict, show the bar
 			pushToast("\xe2\x9a\xa0 Claude edited  " + fname + "  \xe2\x80\x94 conflict (you have unsaved edits)",
 				IM_COL32(240, 180, 70, 255));
+			logExternalChange(t.filename, "conflict");
 		}
 	}
 }
@@ -5266,6 +5270,78 @@ void Editor::renderToasts()
 	}
 }
 
+//	Append an external-change event to the persistent activity feed.
+void Editor::logExternalChange(const std::string& path, const std::string& kind)
+{
+	ExtChange e;
+	e.file = std::filesystem::path(path).filename().string();
+	e.path = path;
+	e.kind = kind;
+	e.time = ImGui::GetTime();
+	extChangeLog.push_back(e);
+	if (extChangeLog.size() > 200) extChangeLog.erase(extChangeLog.begin());
+}
+
+//	Dockable, persistent log of Claude / external edits to open files — toasts
+//	fade after 5s, this keeps the history. Click a file to (re)open it.
+void Editor::renderClaudeActivity()
+{
+	if (!claudeActivityVisible) return;
+	ImGui::SetNextWindowSize(ImVec2(440.0f, 320.0f), ImGuiCond_FirstUseEver);
+	if (ImGui::Begin("Claude Activity###claudeActivity", &claudeActivityVisible))
+	{
+		ImGui::Text("%d external change%s", (int) extChangeLog.size(), extChangeLog.size() == 1 ? "" : "s");
+		ImGui::SameLine();
+		if (ImGui::SmallButton("Clear")) extChangeLog.clear();
+		ImGui::Separator();
+
+		if (extChangeLog.empty())
+		{
+			ImGui::TextDisabled("No external edits yet.");
+			ImGui::TextWrapped("When Claude (or another tool) edits a file you have open, "
+				"it shows here — newest first. Click a row to open the file.");
+		}
+		else if (ImGui::BeginTable("##cactivity", 3,
+			ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY |
+			ImGuiTableFlags_SizingStretchProp))
+		{
+			ImGui::TableSetupColumn("When", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+			ImGui::TableSetupColumn("File");
+			ImGui::TableSetupColumn("What", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+			ImGui::TableHeadersRow();
+
+			double now = ImGui::GetTime();
+			for (int idx = (int) extChangeLog.size() - 1; idx >= 0; --idx)   // newest first
+			{
+				auto& e = extChangeLog[idx];
+				ImGui::TableNextRow();
+				ImGui::PushID(idx);
+
+				ImGui::TableNextColumn();
+				int ago = (int) (now - e.time);
+				char when[32];
+				if (ago < 60)        std::snprintf(when, sizeof(when), "%ds ago", ago);
+				else if (ago < 3600) std::snprintf(when, sizeof(when), "%dm ago", ago / 60);
+				else                 std::snprintf(when, sizeof(when), "%dh ago", ago / 3600);
+				ImGui::TextDisabled("%s", when);
+
+				ImGui::TableNextColumn();
+				if (ImGui::Selectable(e.file.c_str(), false, ImGuiSelectableFlags_SpanAllColumns))
+					openFile(e.path);
+				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.path.c_str());
+
+				ImGui::TableNextColumn();
+				ImU32 col = (e.kind == "conflict") ? IM_COL32(240, 180, 70, 255) : IM_COL32(170, 130, 250, 255);
+				ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col), "%s", e.kind.c_str());
+
+				ImGui::PopID();
+			}
+			ImGui::EndTable();
+		}
+	}
+	ImGui::End();
+}
+
 
 //
 //	Editor::render — host viewport, dockspace, per-document windows
@@ -5324,6 +5400,7 @@ void Editor::render()
 	renderDevTools();
 	renderMarkdownPreview();
 	renderGitDialogs();
+	renderClaudeActivity();   // persistent external-edit feed
 	renderSettings();
 	renderToasts();   // transient Claude-edited notifications, drawn over everything
 
@@ -6152,6 +6229,7 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
 			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
 			if (ImGui::MenuItem("Markdown Preview",  nullptr, &mdPreviewVisible)) {}
+			if (ImGui::MenuItem("Claude Activity",   nullptr, &claudeActivityVisible)) {}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
 			ImGui::Separator();
