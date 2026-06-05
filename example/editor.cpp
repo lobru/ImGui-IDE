@@ -3343,8 +3343,8 @@ void Editor::renderDevTools()
 		ImGui::Checkbox("Debug Log", &devShowDebugLog);
 		ImGui::Checkbox("Dear ImGui Demo", &devShowDemo);
 
-		// ── Live Claude co-editing watch state ───────────────────────────
-		ImGui::SeparatorText("Claude co-editing watch");
+		// ── Live external-edit watch state ───────────────────────────────
+		ImGui::SeparatorText("External edit watch");
 		{
 			auto cfg = userConfigDir();
 			ImGui::Text("Poll: 1.0s   Open docs: %d   Toasts live: %d",
@@ -3356,7 +3356,7 @@ void Editor::renderDevTools()
 			if (ImGui::SmallButton("Test toast"))
 				pushToast("\xe2\x9c\x8e Dev Tools test toast", IM_COL32(170, 130, 250, 255));
 			ImGui::SameLine();
-			if (ImGui::SmallButton("Activity log")) claudeActivityVisible = true;
+			if (ImGui::SmallButton("Activity log")) externalChangesVisible = true;
 
 			if (ImGui::BeginTable("##watch", 2,
 				ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp))
@@ -3374,8 +3374,8 @@ void Editor::renderDevTools()
 					const char* st; ImU32 col;
 					if (t.filename == "untitled")  { st = "unsaved (not watched)"; col = IM_COL32(150, 150, 150, 255); }
 					else if (t.externalChange)     { st = "CONFLICT — disk changed under edits"; col = IM_COL32(240, 180, 70, 255); }
-					else if (t.claudeTouched)      { st = "Claude edited (unseen)"; col = IM_COL32(170, 130, 250, 255); }
-					else if (t.claudeMarkers)      { st = "reloaded — change markers shown"; col = IM_COL32(130, 200, 255, 255); }
+					else if (t.externallyTouched)      { st = "external edit (unseen)"; col = IM_COL32(170, 130, 250, 255); }
+					else if (t.externalMarkers)      { st = "reloaded — change markers shown"; col = IM_COL32(130, 200, 255, 255); }
 					else                           { st = "in sync"; col = IM_COL32(120, 200, 120, 255); }
 					ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col), "%s", st);
 				}
@@ -3406,7 +3406,7 @@ void Editor::renderDevTools()
 			{ "Git actions / dialogs",    "renderGitDialogs",         "example/editor.cpp" },
 			{ "Co-editing watch",         "checkExternalChanges",     "example/editor.cpp" },
 			{ "External reload",          "reloadFromDisk",           "example/editor.cpp" },
-			{ "Claude change markers",    "markChangedLines",         "example/editor.cpp" },
+			{ "External change markers",  "markChangedLines",         "example/editor.cpp" },
 			{ "Toast notifications",      "renderToasts",             "example/editor.cpp" },
 			{ "Crash / assert capture",   "installCrashHandlers",     "example/main.cpp"   },
 			{ "Format Document",          "formatActiveDocument",     "example/editor.cpp" },
@@ -4728,7 +4728,7 @@ std::string Editor::windowLabelFor(const TabDocument& t) const
 {
 	std::string title = std::filesystem::path(t.filename).filename().string();
 	if (title.empty()) title = "untitled";
-	if (t.claudeTouched) title = "\xe2\x9c\x8e " + title;   // ✎ Claude edited this since you last viewed it
+	if (t.externallyTouched) title = "\xe2\x9c\x8e " + title;   // ✎ Claude edited this since you last viewed it
 	if (t.editor.GetUndoIndex() != t.version) title += " *";
 	title += "###Doc" + std::to_string(t.id);
 	return title;
@@ -4984,6 +4984,7 @@ void Editor::openFile(const std::string& path)
 		}
 
 		target->originalText = text;
+		target->syncedText = text;     // 3-way merge base = last reconciled content
 		target->editor.SetText(text);
 		target->editor.SetLanguage(languageForPath(path));
 		target->version = target->editor.GetUndoIndex();
@@ -5023,6 +5024,7 @@ void Editor::saveFile()
 		stream << t.editor.GetText();
 		stream.close();
 		t.version = t.editor.GetUndoIndex();
+		t.syncedText = t.editor.GetText();   // persisted content = new merge base
 		recordDiskMtime(t);   // our own write — re-baseline so the watch ignores it
 		// Refresh the project symbol index so go-to-def / autocomplete pick up
 		// edits. Cheap: the build is one-at-a-time guarded + gen-superseded.
@@ -5049,6 +5051,7 @@ void Editor::saveFile(std::string& path)
 		if (t.editor.GetLanguage() == nullptr)
 			t.editor.SetLanguage(languageForPath(path));
 		t.version = t.editor.GetUndoIndex();
+		t.syncedText = t.editor.GetText();   // persisted content = new merge base
 		recordDiskMtime(t);   // our own write — re-baseline so the watch ignores it
 		if (!projectRoot.empty()) rebuildProjectIndex();
 	}
@@ -5090,6 +5093,7 @@ void Editor::reloadFromDisk(TabDocument& t)
 
 	t.editor.SetText(text);
 	t.originalText = text;
+	t.syncedText = text;     // reconciled with disk
 	t.version = t.editor.GetUndoIndex();
 	t.externalChange = false;
 	recordDiskMtime(t);
@@ -5138,15 +5142,15 @@ void Editor::checkExternalChanges()
 		if (disk == mine) { t.diskMtime = mt; continue; }
 
 		std::string fname = std::filesystem::path(t.filename).filename().string();
-		t.claudeTouched = true;   // badge on the tab until the user views it
+		t.externallyTouched = true;   // badge on the tab until the user views it
 		if (!isDirtyTab(i)) {
 			reloadFromDisk(t);    // clean → take their version, highlight changes
-			pushToast("\xe2\x9c\x8e Claude edited  " + fname + "  \xe2\x80\x94 reloaded",
+			pushToast("\xe2\x9c\x8e External edit:  " + fname + "  \xe2\x80\x94 reloaded",
 				IM_COL32(170, 130, 250, 255));
 			logExternalChange(t.filename, "reloaded");
 		} else {
 			t.externalChange = true;   // dirty → conflict, show the bar
-			pushToast("\xe2\x9a\xa0 Claude edited  " + fname + "  \xe2\x80\x94 conflict (you have unsaved edits)",
+			pushToast("\xe2\x9a\xa0 External edit:  " + fname + "  \xe2\x80\x94 conflict (you have unsaved edits)",
 				IM_COL32(240, 180, 70, 255));
 			logExternalChange(t.filename, "conflict");
 		}
@@ -5160,7 +5164,7 @@ void Editor::checkExternalChanges()
 void Editor::markChangedLines(TabDocument& t, const std::string& oldText, const std::string& newText)
 {
 	t.editor.ClearMarkers();
-	t.claudeMarkers = false;
+	t.externalMarkers = false;
 
 	auto split = [](const std::string& s) {
 		std::vector<std::string> v; std::string cur;
@@ -5183,8 +5187,8 @@ void Editor::markChangedLines(TabDocument& t, const std::string& oldText, const 
 	if (n > 3000 || m > 3000) {             // window still huge → mark the whole window
 		const ImU32 g = IM_COL32(170, 130, 250, 255), bgc = IM_COL32(120, 90, 200, 38);
 		for (size_t k = p; k < eb; ++k)
-			t.editor.AddMarker((int)k, g, bgc, "Changed by Claude", "Changed on disk by Claude / external tool");
-		t.claudeMarkers = (eb > p);
+			t.editor.AddMarker((int)k, g, bgc, "Changed externally", "Changed on disk by an external tool");
+		t.externalMarkers = (eb > p);
 		return;
 	}
 
@@ -5207,12 +5211,168 @@ void Editor::markChangedLines(TabDocument& t, const std::string& oldText, const 
 	int changed = 0;
 	for (size_t k = 0; k < m; ++k) {
 		if (!common[k]) {
-			t.editor.AddMarker((int)(p + k), gutter, bg, "Changed by Claude",
-				"Changed on disk by Claude / external tool");
+			t.editor.AddMarker((int)(p + k), gutter, bg, "Changed externally",
+				"Changed on disk by an external tool");
 			++changed;
 		}
 	}
-	t.claudeMarkers = (changed > 0);
+	t.externalMarkers = (changed > 0);
+}
+
+// ── 3-way merge (buffer + disk over the last reconciled base) ─────────────
+
+static std::vector<std::string> mergeSplitLines(const std::string& s)
+{
+	std::vector<std::string> v; std::string cur;
+	for (char c : s) { if (c == '\r') continue; if (c == '\n') { v.push_back(cur); cur.clear(); } else cur += c; }
+	v.push_back(cur);
+	return v;
+}
+
+static std::string mergeJoinLines(const std::vector<std::string>& v)
+{
+	std::string r;
+	for (size_t k = 0; k < v.size(); ++k) { r += v[k]; if (k + 1 < v.size()) r += '\n'; }
+	return r;
+}
+
+// LCS line-match pairs (baseIdx, otherIdx), increasing in both.
+static std::vector<std::pair<int,int>> mergeLcs(const std::vector<std::string>& O, const std::vector<std::string>& X)
+{
+	int n = (int) O.size(), m = (int) X.size();
+	std::vector<std::vector<int>> dp(n + 1, std::vector<int>(m + 1, 0));
+	for (int i = n; i-- > 0; )
+		for (int j = m; j-- > 0; )
+			dp[i][j] = (O[i] == X[j]) ? dp[i + 1][j + 1] + 1 : (std::max)(dp[i + 1][j], dp[i][j + 1]);
+	std::vector<std::pair<int,int>> pairs;
+	for (int i = 0, j = 0; i < n && j < m; )
+	{
+		if (O[i] == X[j]) { pairs.push_back({ i, j }); ++i; ++j; }
+		else if (dp[i + 1][j] >= dp[i][j + 1]) ++i;
+		else ++j;
+	}
+	return pairs;
+}
+
+// Coarse fallback for very large files: 2-way prefix/suffix trim of mine vs
+// theirs, wrapping the differing window in conflict markers.
+static std::string mergeCoarse(const std::vector<std::string>& A, const std::vector<std::string>& B, bool& conflict)
+{
+	size_t n = A.size(), m = B.size();
+	size_t p = 0; while (p < n && p < m && A[p] == B[p]) ++p;
+	size_t ea = n, eb = m; while (ea > p && eb > p && A[ea - 1] == B[eb - 1]) { --ea; --eb; }
+	std::vector<std::string> out;
+	for (size_t k = 0; k < p; ++k) out.push_back(A[k]);
+	if (ea > p || eb > p)
+	{
+		conflict = true;
+		out.push_back("<<<<<<< mine (your unsaved edits)");
+		for (size_t k = p; k < ea; ++k) out.push_back(A[k]);
+		out.push_back("=======");
+		for (size_t k = p; k < eb; ++k) out.push_back(B[k]);
+		out.push_back(">>>>>>> external (on disk)");
+	}
+	for (size_t k = ea; k < n; ++k) out.push_back(A[k]);
+	return mergeJoinLines(out);
+}
+
+// diff3: O=base, A=mine, B=theirs. Auto-merges non-overlapping changes; wraps
+// overlapping (both-changed) regions in git-style conflict markers.
+static std::string merge3Text(const std::string& baseS, const std::string& mineS,
+                              const std::string& theirsS, bool& conflict)
+{
+	conflict = false;
+	auto O = mergeSplitLines(baseS), A = mergeSplitLines(mineS), B = mergeSplitLines(theirsS);
+	if (O.size() > 4000 || A.size() > 4000 || B.size() > 4000) return mergeCoarse(A, B, conflict);
+
+	auto ma = mergeLcs(O, A);
+	auto mb = mergeLcs(O, B);
+	std::unordered_map<int,int> oa, ob;
+	for (auto& p : ma) oa[p.first] = p.second;
+	for (auto& p : mb) ob[p.first] = p.second;
+	std::vector<int> sync;                       // base lines common to BOTH sides (sync points)
+	for (auto& p : ma) if (ob.count(p.first)) sync.push_back(p.first);
+
+	std::vector<std::string> out;
+	auto pushRange = [&](const std::vector<std::string>& X, int lo, int hi) { for (int k = lo; k < hi; ++k) out.push_back(X[k]); };
+	auto sameAsBase = [&](const std::vector<std::string>& X, int xLo, int xHi, int oLo, int oHi) {
+		if (xHi - xLo != oHi - oLo) return false;
+		for (int k = 0; k < xHi - xLo; ++k) if (X[xLo + k] != O[oLo + k]) return false;
+		return true;
+	};
+	auto emitChunk = [&](int oLo, int oHi, int aLo, int aHi, int bLo, int bHi) {
+		bool aSame = sameAsBase(A, aLo, aHi, oLo, oHi);
+		bool bSame = sameAsBase(B, bLo, bHi, oLo, oHi);
+		if (aSame && bSame) { pushRange(O, oLo, oHi); return; }
+		if (aSame)          { pushRange(B, bLo, bHi); return; }   // only theirs changed
+		if (bSame)          { pushRange(A, aLo, aHi); return; }   // only mine changed
+		// both changed — identical change? take one. else conflict.
+		bool abEqual = (aHi - aLo == bHi - bLo);
+		if (abEqual) for (int k = 0; k < aHi - aLo; ++k) if (A[aLo + k] != B[bLo + k]) { abEqual = false; break; }
+		if (abEqual) { pushRange(A, aLo, aHi); return; }
+		conflict = true;
+		out.push_back("<<<<<<< mine (your unsaved edits)");
+		pushRange(A, aLo, aHi);
+		out.push_back("=======");
+		pushRange(B, bLo, bHi);
+		out.push_back(">>>>>>> external (on disk)");
+	};
+
+	int prevO = -1, prevA = -1, prevB = -1;
+	for (int s : sync)
+	{
+		emitChunk(prevO + 1, s, prevA + 1, oa[s], prevB + 1, ob[s]);
+		out.push_back(O[s]);                       // the agreed-upon sync line
+		prevO = s; prevA = oa[s]; prevB = ob[s];
+	}
+	emitChunk(prevO + 1, (int) O.size(), prevA + 1, (int) A.size(), prevB + 1, (int) B.size());
+	return mergeJoinLines(out);
+}
+
+//	Merge the on-disk (external) version into the dirty buffer over the last
+//	reconciled base. Non-overlapping changes auto-merge; overlaps get git-style
+//	<<<<<<< / ======= / >>>>>>> markers. Result is left DIRTY so the user saves.
+void Editor::mergeExternalChange(TabDocument& t)
+{
+	std::ifstream f(t.filename.c_str());
+	if (!f.is_open()) return;
+	std::string theirs((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+	f.close();
+
+	std::string mine = t.editor.GetText();
+	bool conflict = false;
+	std::string merged = merge3Text(t.syncedText, mine, theirs, conflict);
+
+	int line = 0, column = 0;
+	t.editor.GetCurrentCursor(line, column);
+
+	t.editor.SetText(merged);
+	t.externalChange = false;
+	t.editor.ClearMarkers();
+	t.externalMarkers = false;
+	recordDiskMtime(t);                       // baseline to disk so the watch won't re-fire
+	t.version = t.editor.GetUndoIndex() + 1;  // merged != disk → force dirty so the user saves
+
+	int total = (std::max)(t.editor.GetLineCount(), 1);
+	line   = (std::max)(0, (std::min)(line, total - 1));
+	int len = static_cast<int>(t.editor.GetLineText(line).size());
+	column = (std::max)(0, (std::min)(column, len));
+	t.editor.SetCursor(line, column);
+	t.editor.ScrollToLine(line, TextEditor::Scroll::alignMiddle);
+
+	std::string fname = std::filesystem::path(t.filename).filename().string();
+	if (conflict)
+	{
+		pushToast("\xe2\x9a\xa0 Merged " + fname + " with conflicts \xe2\x80\x94 resolve <<<<<<< markers, then save",
+			IM_COL32(240, 180, 70, 255));
+		logExternalChange(t.filename, "merged (conflicts)");
+	}
+	else
+	{
+		pushToast("\xe2\x9c\x93 Merged " + fname + " cleanly \xe2\x80\x94 review and save",
+			IM_COL32(120, 200, 120, 255));
+		logExternalChange(t.filename, "merged");
+	}
 }
 
 //	Queue a transient corner notification.
@@ -5284,11 +5444,11 @@ void Editor::logExternalChange(const std::string& path, const std::string& kind)
 
 //	Dockable, persistent log of Claude / external edits to open files — toasts
 //	fade after 5s, this keeps the history. Click a file to (re)open it.
-void Editor::renderClaudeActivity()
+void Editor::renderExternalChanges()
 {
-	if (!claudeActivityVisible) return;
+	if (!externalChangesVisible) return;
 	ImGui::SetNextWindowSize(ImVec2(440.0f, 320.0f), ImGuiCond_FirstUseEver);
-	if (ImGui::Begin("Claude Activity###claudeActivity", &claudeActivityVisible))
+	if (ImGui::Begin("External Changes###externalChanges", &externalChangesVisible))
 	{
 		ImGui::Text("%d external change%s", (int) extChangeLog.size(), extChangeLog.size() == 1 ? "" : "s");
 		ImGui::SameLine();
@@ -5298,7 +5458,7 @@ void Editor::renderClaudeActivity()
 		if (extChangeLog.empty())
 		{
 			ImGui::TextDisabled("No external edits yet.");
-			ImGui::TextWrapped("When Claude (or another tool) edits a file you have open, "
+			ImGui::TextWrapped("When an external tool (e.g. Claude) edits a file you have open, "
 				"it shows here — newest first. Click a row to open the file.");
 		}
 		else if (ImGui::BeginTable("##cactivity", 3,
@@ -5400,7 +5560,7 @@ void Editor::render()
 	renderDevTools();
 	renderMarkdownPreview();
 	renderGitDialogs();
-	renderClaudeActivity();   // persistent external-edit feed
+	renderExternalChanges();   // persistent external-edit feed
 	renderSettings();
 	renderToasts();   // transient Claude-edited notifications, drawn over everything
 
@@ -5624,15 +5784,15 @@ void Editor::renderDocumentWindow(TabDocument& t)
 		{
 			if (tabs[i].get() == &t) { activeTab = i; break; }
 		}
-		t.claudeTouched = false;   // user is looking at it now → drop the tab badge
+		t.externallyTouched = false;   // user is looking at it now → drop the tab badge
 	}
 
 	// Once the user starts editing again, the Claude-changed gutter markers have
 	// served their purpose — clear them so they don't linger over fresh edits.
-	if (t.claudeMarkers && t.editor.GetUndoIndex() != t.version)
+	if (t.externalMarkers && t.editor.GetUndoIndex() != t.version)
 	{
 		t.editor.ClearMarkers();
-		t.claudeMarkers = false;
+		t.externalMarkers = false;
 	}
 
 
@@ -5984,6 +6144,9 @@ void Editor::renderDocumentWindow(TabDocument& t)
 		ImGui::SameLine();
 		if (ImGui::SmallButton("Keep Mine"))       { recordDiskMtime(t); t.externalChange = false; }
 		ImGui::SameLine();
+		if (ImGui::SmallButton("Merge"))           { mergeExternalChange(t); }
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("3-way merge your edits with the on-disk version (conflicts get <<<<<<< markers)");
+		ImGui::SameLine();
 		if (ImGui::SmallButton("Diff"))
 		{
 			std::ifstream f(t.filename.c_str());
@@ -6229,7 +6392,7 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
 			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
 			if (ImGui::MenuItem("Markdown Preview",  nullptr, &mdPreviewVisible)) {}
-			if (ImGui::MenuItem("Claude Activity",   nullptr, &claudeActivityVisible)) {}
+			if (ImGui::MenuItem("External Changes",  nullptr, &externalChangesVisible)) {}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
 			ImGui::Separator();

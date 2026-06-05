@@ -71,8 +71,9 @@ class Editor {
 		//   externalChange = disk changed under a DIRTY buffer (unresolved conflict)
 		std::filesystem::file_time_type diskMtime{};
 		bool        externalChange = false;
-		bool        claudeTouched  = false;   // edited on disk since you last viewed this tab (badge)
-		bool        claudeMarkers  = false;   // gutter markers on Claude-changed lines are live
+		bool        externallyTouched = false;   // edited on disk since you last viewed this tab (badge)
+		bool        externalMarkers   = false;   // gutter markers on externally-changed lines are live
+		std::string syncedText;                  // last persisted content (load/save/reload) = 3-way merge base
 	};
 
 	// document management — stored as unique_ptr so addresses remain stable
@@ -557,14 +558,15 @@ private:
 	void renderMarkdownPreview();
 	void renderMarkdownInline(const std::string& text, float wrapWidth);  // word-wrap + inline styles
 
-	// Claude activity feed — a persistent, dockable record of external (Claude /
-	// other tool) edits to open files. Toasts are transient and easy to miss
+	// External-changes feed — a persistent, dockable record of external (another
+	// tool / Claude) edits to open files. Toasts are transient and easy to miss
 	// while away; this log keeps the history so it's easy to track what changed.
 	struct ExtChange { std::string file; std::string path; std::string kind; double time; };
 	std::vector<ExtChange> extChangeLog;
-	bool claudeActivityVisible = false;
+	bool externalChangesVisible = false;
 	void logExternalChange(const std::string& path, const std::string& kind);
-	void renderClaudeActivity();
+	void renderExternalChanges();
+	void mergeExternalChange(TabDocument& t);   // 3-way merge buffer + disk over the synced base
 
 	// Git status (background-polled) — branch + dirty/ahead/behind for the status
 	// bar. Read-only; destructive git actions (commit/push/revert) come later.
