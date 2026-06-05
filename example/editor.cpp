@@ -5984,6 +5984,48 @@ void Editor::renderMenuBar()
 //	Editor::renderStatusBar
 //
 
+// Refresh git branch/dirty/ahead-behind off the UI thread, throttled. Captures
+// the shared_ptr by value so the worker outlives the Editor if it quits mid-run.
+void Editor::pollGitStatus()
+{
+	std::string root = projectRoot.empty() ? std::string() : projectRoot.string();
+	if (root.empty() && !tabs.empty() && doc().filename != "untitled")
+		root = std::filesystem::path(doc().filename).parent_path().string();
+	if (root.empty()) return;
+
+	double now = ImGui::GetTime();
+	if (root == gitPollRoot && (now - gitPollTime) < 2.5) return;   // throttle
+	gitPollRoot = root;
+	gitPollTime = now;
+
+	auto gi = gitInfo;
+	if (gi->building.exchange(true)) return;   // a poll is already running
+	std::thread([gi, root]() {
+		std::string branch;
+		int dirty = 0, ahead = 0, behind = 0;
+		std::string cmd = "git -C \"" + root + "\" status --porcelain=v2 --branch 2>nul";
+		if (FILE* p = _popen(cmd.c_str(), "r")) {
+			char buf[8192];
+			std::string out;
+			while (fgets(buf, sizeof(buf), p)) out += buf;
+			_pclose(p);
+			std::istringstream ss(out);
+			std::string line;
+			while (std::getline(ss, line)) {
+				if (!line.empty() && line.back() == '\r') line.pop_back();
+				if (line.rfind("# branch.head ", 0) == 0) branch = line.substr(14);
+				else if (line.rfind("# branch.ab ", 0) == 0) std::sscanf(line.c_str() + 12, "+%d -%d", &ahead, &behind);
+				else if (!line.empty() && line[0] != '#') ++dirty;   // a changed tracked/untracked entry
+			}
+		}
+		{
+			std::lock_guard<std::mutex> lk(gi->mutex);
+			gi->branch = branch; gi->dirty = dirty; gi->ahead = ahead; gi->behind = behind;
+		}
+		gi->building = false;
+	}).detach();
+}
+
 void Editor::renderStatusBar()
 {
 	// Built-in language list + every runtime-defined language discovered at
@@ -6043,6 +6085,24 @@ void Editor::renderStatusBar()
 
 	ImGui::SameLine(0.0f, 0.0f);
 	ImGui::AlignTextToFramePadding();
+
+	// Git branch / dirty / ahead-behind indicator (background-polled).
+	pollGitStatus();
+	{
+		std::string gb; int gd = 0, ga = 0, gbh = 0;
+		{ std::lock_guard<std::mutex> lk(gitInfo->mutex); gb = gitInfo->branch; gd = gitInfo->dirty; ga = gitInfo->ahead; gbh = gitInfo->behind; }
+		if (!gb.empty()) {
+			std::string label = "git: " + gb;
+			if (gd > 0)  label += "  " + std::to_string(gd) + "*";
+			if (ga > 0)  label += "  \xe2\x86\x91" + std::to_string(ga);   // up arrow
+			if (gbh > 0) label += " \xe2\x86\x93" + std::to_string(gbh);   // down arrow
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextDisabled("%s", label.c_str());
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("branch %s — %d changed, %d ahead, %d behind", gb.c_str(), gd, ga, gbh);
+		}
+	}
 
 	// Toolchain selector — only when a project is loaded AND the active doc
 	// language is one we recognize a toolchain for. Renders as a combo so

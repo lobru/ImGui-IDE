@@ -531,6 +531,19 @@ private:
 	void renderMarkdownPreview();
 	void renderMarkdownInline(const std::string& text, float wrapWidth);  // word-wrap + inline styles
 
+	// Git status (background-polled) — branch + dirty/ahead/behind for the status
+	// bar. Read-only; destructive git actions (commit/push/revert) come later.
+	struct GitInfo {
+		std::mutex          mutex;
+		std::atomic<bool>   building{ false };
+		std::string         branch;
+		int                 dirty = 0, ahead = 0, behind = 0;
+	};
+	std::shared_ptr<GitInfo> gitInfo = std::make_shared<GitInfo>();
+	std::string gitPollRoot;
+	double      gitPollTime = -1000.0;
+	void        pollGitStatus();
+
 	// Project-wide Go to Definition — greps files under projectRoot (or the
 	// active doc's directory) for definition patterns (class/struct/interface/
 	// enum/record, method signatures, #define, etc.). Opens the first hit at
