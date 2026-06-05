@@ -6178,24 +6178,6 @@ void Editor::renderStatusBar()
 	ImGui::SameLine(0.0f, 0.0f);
 	ImGui::AlignTextToFramePadding();
 
-	// Git branch / dirty / ahead-behind indicator (background-polled).
-	pollGitStatus();
-	{
-		std::string gb; int gd = 0, ga = 0, gbh = 0;
-		{ std::lock_guard<std::mutex> lk(gitInfo->mutex); gb = gitInfo->branch; gd = gitInfo->dirty; ga = gitInfo->ahead; gbh = gitInfo->behind; }
-		if (!gb.empty()) {
-			std::string label = "git: " + gb;
-			if (gd > 0)  label += "  " + std::to_string(gd) + "*";
-			if (ga > 0)  label += "  \xe2\x86\x91" + std::to_string(ga);   // up arrow
-			if (gbh > 0) label += " \xe2\x86\x93" + std::to_string(gbh);   // down arrow
-			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextDisabled("%s", label.c_str());
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("branch %s — %d changed, %d ahead, %d behind", gb.c_str(), gd, ga, gbh);
-		}
-	}
-
 	// Toolchain selector — only when a project is loaded AND the active doc
 	// language is one we recognize a toolchain for. Renders as a combo so
 	// the user can switch active MSVC / .NET inline without leaving the
@@ -6242,6 +6224,26 @@ void Editor::renderStatusBar()
 				}
 				ImGui::EndCombo();
 			}
+		}
+	}
+
+	// Git branch / dirty / ahead-behind indicator (background-polled). Sits
+	// after the language + toolchain selectors so the repo-wide status reads
+	// last in the left cluster.
+	pollGitStatus();
+	{
+		std::string gb; int gd = 0, ga = 0, gbh = 0;
+		{ std::lock_guard<std::mutex> lk(gitInfo->mutex); gb = gitInfo->branch; gd = gitInfo->dirty; ga = gitInfo->ahead; gbh = gitInfo->behind; }
+		if (!gb.empty()) {
+			std::string label = "git: " + gb;
+			if (gd > 0)  label += "  " + std::to_string(gd) + "*";
+			if (ga > 0)  label += "  \xe2\x86\x91" + std::to_string(ga);   // up arrow
+			if (gbh > 0) label += " \xe2\x86\x93" + std::to_string(gbh);   // down arrow
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextDisabled("%s", label.c_str());
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("branch %s — %d changed, %d ahead, %d behind", gb.c_str(), gd, ga, gbh);
 		}
 	}
 
