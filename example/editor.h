@@ -332,6 +332,12 @@ private:
 	// split node to the right of the current one. Builds via DockBuilder.
 	void splitActiveTabRight();
 	bool wantSplitRight = false;
+	bool wantSplitLeft  = false;   // same, to the left (from the tab context menu)
+
+	// Per-tab context menu (right-click a document tab). tabCtxIdx is the tab
+	// the menu targets; detection uses the docked tab's screen rect.
+	void renderTabContextMenu(int idx);
+	int  tabCtxIdx = -1;
 
 	// Open a file into a split pane on the left (dir<0) or right (dir>0) of the
 	// document area — used by the nav panel's "Open to Left/Right". Opens the

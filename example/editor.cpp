@@ -1610,7 +1610,7 @@ void Editor::middleMousePanScroll(int windowKey)
 void Editor::renderNavigationPanel()
 {
 	if (!navPanelVisible) return;
-	ImGui::SetNextWindowSize(ImVec2(280.0f, 480.0f), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(180.0f, 480.0f), ImGuiCond_FirstUseEver);
 	if (ImGui::Begin("Navigation##projectNav", &navPanelVisible))
 	{
 		auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
@@ -5739,15 +5739,17 @@ void Editor::renderDockedDocuments()
 
 	// Honor a pending "split right" request by splitting the central node and
 	// re-docking the active doc into the new right pane.
-	if (wantSplitRight && tabs.size() >= 2 && activeTab < tabs.size()) {
-		ImGuiID rightId = 0, leftId = 0;
-		ImGui::DockBuilderSplitNode(centralId, ImGuiDir_Right, 0.5f, &rightId, &leftId);
+	if ((wantSplitRight || wantSplitLeft) && tabs.size() >= 2 && activeTab < tabs.size()) {
+		ImGuiID newId = 0, otherId = 0;
+		ImGui::DockBuilderSplitNode(centralId, wantSplitLeft ? ImGuiDir_Left : ImGuiDir_Right,
+			0.5f, &newId, &otherId);
 		auto label = windowLabelFor(*tabs[activeTab]);
-		ImGui::DockBuilderDockWindow(label.c_str(), rightId);
+		ImGui::DockBuilderDockWindow(label.c_str(), newId);
 		ImGui::DockBuilderFinish(rootId);
 		tabs[activeTab]->wantFocus = true;
 		tabs[activeTab]->dockedOnce = true;
 		wantSplitRight = false;
+		wantSplitLeft = false;
 	}
 
 	// Honor a pending "open to left/right" — a file opened from the nav panel
@@ -5803,6 +5805,77 @@ void Editor::renderDockedDocuments()
 		}
 		ImGui::DockNodeEndAmendTabBar();
 	}
+
+	// Mouse-wheel over the central tab strip cycles tabs.
+	if (central && tabs.size() > 1) {
+		ImVec2 mn = central->Pos;
+		ImVec2 mx(central->Pos.x + central->Size.x, central->Pos.y + ImGui::GetFrameHeight());
+		if (ImGui::IsMouseHoveringRect(mn, mx, false)) {
+			float wheel = ImGui::GetIO().MouseWheel;
+			if (wheel != 0.0f) {
+				int n = (int) tabs.size();
+				activeTab = (wheel < 0.0f) ? (activeTab + 1) % n : (activeTab + n - 1) % n;
+				tabs[activeTab]->wantFocus = true;
+			}
+		}
+	}
+
+	// Right-click a document tab → context menu. Find each tab's docked rect
+	// (persists per-window) so even a non-active tab can be targeted.
+	for (size_t i = 0; i < tabs.size(); ++i) {
+		ImGuiWindow* w = ImGui::FindWindowByName(windowLabelFor(*tabs[i]).c_str());
+		if (!w) continue;
+		const ImRect& r = w->DC.DockTabItemRect;
+		if (r.GetWidth() <= 0.0f) continue;
+		if (ImGui::IsMouseHoveringRect(r.Min, r.Max, false) && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+			tabCtxIdx = (int) i;
+			ImGui::OpenPopup("##tabCtxMenu");
+			break;
+		}
+	}
+	if (tabCtxIdx >= 0 && tabCtxIdx < (int) tabs.size() && ImGui::BeginPopup("##tabCtxMenu")) {
+		renderTabContextMenu(tabCtxIdx);
+		ImGui::EndPopup();
+	}
+}
+
+//	Right-click-a-tab context menu. Close actions just flag open=false and let
+//	the render() cleanup run the normal dirty-confirm path (no data loss).
+void Editor::renderTabContextMenu(int idx)
+{
+	if (idx < 0 || idx >= (int) tabs.size()) return;
+	auto& t = *tabs[idx];
+	bool hasPath = t.filename != "untitled";
+	int  n = (int) tabs.size();
+
+	ImGui::TextDisabled("%s", std::filesystem::path(t.filename).filename().string().c_str());
+	ImGui::Separator();
+
+	if (ImGui::MenuItem("Close"))            { t.open = false; }
+	if (ImGui::MenuItem("Close Others", nullptr, false, n > 1))
+		for (int j = 0; j < n; ++j) if (j != idx) tabs[j]->open = false;
+	if (ImGui::MenuItem("Close to the Right", nullptr, false, idx < n - 1))
+		for (int j = idx + 1; j < n; ++j) tabs[j]->open = false;
+	if (ImGui::MenuItem("Close to the Left", nullptr, false, idx > 0))
+		for (int j = 0; j < idx; ++j) tabs[j]->open = false;
+
+	ImGui::Separator();
+	if (ImGui::MenuItem("Split Left",  nullptr, false, n >= 2)) { activeTab = idx; wantSplitLeft = true; }
+	if (ImGui::MenuItem("Split Right", nullptr, false, n >= 2)) { activeTab = idx; wantSplitRight = true; }
+
+	ImGui::Separator();
+	if (ImGui::MenuItem("Diff with Current Tab", nullptr, false, idx != (int) activeTab)) {
+		auto& cur = doc();
+		cur.diff.SetLanguage(cur.editor.GetLanguage());
+		cur.diff.SetText(t.editor.GetText(), cur.editor.GetText());   // this tab (left) vs current (right)
+		dialogViewportId = ImGui::GetMainViewport()->ID;
+		dialogNeedsPlacement = true;
+		state = State::diff;
+	}
+
+	ImGui::Separator();
+	if (ImGui::MenuItem("Reveal in Explorer", nullptr, false, hasPath)) navOpenPathInExplorer(t.filename);
+	if (ImGui::MenuItem("Copy File Path",     nullptr, false, hasPath)) ImGui::SetClipboardText(t.filename.c_str());
 }
 
 
@@ -6350,23 +6423,7 @@ void Editor::renderMenuBar()
 				ImGui::SetClipboardText(doc().filename.c_str());
 			}
 			ImGui::Separator();
-			// "Switch Header/Source" only really applies to C/C++ files — hide
-			// it for other languages so the menu stays focused. Render it ABOVE
-			// Exit so Exit is always the last item in the menu.
-			bool isCxxDoc = false;
-			if (hasPath) {
-				auto* lang = doc().editor.GetLanguage();
-				if (lang) {
-					const std::string& n = lang->name;
-					isCxxDoc = (n == "C" || n == "C++");
-				}
-			}
-			if (isCxxDoc) {
-				if (ImGui::MenuItem("Switch Header/Source", "Alt+O")) {
-					toggleHeaderSource();
-				}
-				ImGui::Separator();
-			}
+
 			// Close the application (respects unsaved-changes confirmation).
 			if (ImGui::MenuItem("Exit")) { tryToQuit(); }
 			ImGui::EndMenu();
@@ -6484,6 +6541,23 @@ void Editor::renderMenuBar()
 					ImGui::Separator();
 					if (ImGui::MenuItem("Preview Markdown", nullptr, &mdPreviewVisible)) {}
 				}
+			}
+						// "Switch Header/Source" only really applies to C/C++ files — hide
+			// it for other languages so the menu stays focused. Render it ABOVE
+			// Exit so Exit is always the last item in the menu.
+			bool isCxxDoc = false;
+			if (!tabs.empty() && doc().filename != "untitled") {
+				auto* lang = doc().editor.GetLanguage();
+				if (lang) {
+					const std::string& n = lang->name;
+					isCxxDoc = (n == "C" || n == "C++");
+				}
+			}
+			if (isCxxDoc) {
+				if (ImGui::MenuItem("Switch Header/Source", "Alt+O")) {
+					toggleHeaderSource();
+				}
+				ImGui::Separator();
 			}
 			ImGui::EndMenu();
 		}
