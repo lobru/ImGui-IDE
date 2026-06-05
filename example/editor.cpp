@@ -5728,6 +5728,8 @@ void Editor::updateFpsWatch(double renderMs)
 
 void Editor::renderDockedDocuments()
 {
+	size_t activeAtStart = activeTab;   // restore point if a right-click only opens a tab menu
+
 	// Target the dockspace's CENTRAL node for new documents. DockBuilderGetCentralNode
 	// returns it regardless of the saved layout, so new docs always land in the
 	// editing area as tabs — never derived from a (possibly floating/popped-out)
@@ -5830,6 +5832,17 @@ void Editor::renderDockedDocuments()
 		if (ImGui::IsMouseHoveringRect(r.Min, r.Max, false) && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
 			tabCtxIdx = (int) i;
 			ImGui::OpenPopup("##tabCtxMenu");
+			// Don't let a right-click switch tabs. ImGui selects/focuses the clicked
+			// tab; restore our active index and re-request the original tab in the
+			// dock tab bar (NextSelectedTabId, not SetWindowFocus — the latter would
+			// close this popup).
+			if (activeAtStart < tabs.size()) {
+				activeTab = activeAtStart;
+				if (central && central->TabBar) {
+					ImGuiWindow* ow = ImGui::FindWindowByName(windowLabelFor(*tabs[activeAtStart]).c_str());
+					if (ow) central->TabBar->NextSelectedTabId = ow->TabId;
+				}
+			}
 			break;
 		}
 	}
