@@ -6879,33 +6879,33 @@ void Editor::renderStatusBar()
 		}
 	}
 
-	// FPS readout — its own left-cluster item (not folded into the right-aligned
-	// status string, where a wide git label could push it off the edge). Color
-	// shifts amber/red as the framerate drops so perf trouble is obvious.
-	if (prefShowFps) {
-		float fps = ImGui::GetIO().Framerate;
-		ImU32 c = (fps >= 55.0f) ? IM_COL32(120, 200, 120, 255)
-			: (fps >= 30.0f) ? IM_COL32(240, 200, 90, 255)
-			: IM_COL32(240, 110, 90, 255);
-		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(c), "%.0f fps", fps);
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("worst frame last 3s: %.1f ms  (%d slow frames total)", fpsWorstMs, fpsSlowCount);
-	}
-
 	int line, column;
 	e.GetCurrentCursor(line, column);
 	float glyphWidth = ImGui::CalcTextSize("#").x;
 	char status[256];
-	int statusSize = std::snprintf(status, sizeof(status),
-		"Ln %d, Col %d  Tab: %d  %s",
-		line + 1, column + 1, e.GetTabSize(),
-		std::filesystem::path(t.filename).filename().string().c_str());
+	// FPS readout (settings-toggleable) prefixes the right-aligned status string.
+	int statusSize = 0;
+	if (prefShowFps) {
+		statusSize = std::snprintf(status, sizeof(status),
+			"%.0f fps  Ln %d, Col %d  Tab: %d  %s",
+			ImGui::GetIO().Framerate, line + 1, column + 1, e.GetTabSize(),
+			std::filesystem::path(t.filename).filename().string().c_str());
+	} else {
+		statusSize = std::snprintf(status, sizeof(status),
+			"Ln %d, Col %d  Tab: %d  %s",
+			line + 1, column + 1, e.GetTabSize(),
+			std::filesystem::path(t.filename).filename().string().c_str());
+	}
 
-	float size = glyphWidth * static_cast<float>(statusSize + 3);
+	// Right-align, but CLAMP the lead so it never goes negative — that was the
+	// bug that hid the fps: a wide git label shrank the available width, the
+	// (width - size) offset went negative, and the string's left end (the fps)
+	// got pushed off / under the previous item. Now it stays fully visible.
+	float size = ImGui::CalcTextSize(status).x;
 	float width = ImGui::GetContentRegionAvail().x;
-	ImGui::SameLine(0.0f, width - size);
+	float lead = width - size - glyphWidth;
+	if (lead < ImGui::GetStyle().ItemSpacing.x) lead = ImGui::GetStyle().ItemSpacing.x;
+	ImGui::SameLine(0.0f, lead);
 	ImGui::TextUnformatted(status);
 
 	ImGui::SameLine(0.0f, glyphWidth);
