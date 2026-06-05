@@ -496,6 +496,10 @@ private:
 	bool                            referencesAllFiles = false;   // false = active file only (default), true = whole project
 	TabDocument*                    referencesTab = nullptr;      // tab the last search ran against (for the All-files re-run)
 	void findReferencesOf(TabDocument& t, const std::string& word);
+	// Apply a .editorconfig cascade (file dir upward, stop at root=true) to a tab:
+	// indent_style / indent_size / tab_width override the editor defaults. Standard
+	// per-project + per-language settings hierarchy (interops with VS / VSCode).
+	void applyEditorConfig(TabDocument& t);
 	void renderReferencesPanel();
 
 	// Find in Files — project-wide text search with a query box + options.

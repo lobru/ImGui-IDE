@@ -4704,6 +4704,142 @@ void Editor::newFile(std::string& path)
 //	Editor::openFile
 //
 
+// ── .editorconfig — per-project / per-language settings cascade ────────
+
+// Wildcard match (*, ?) of a filename-only editorconfig pattern against `s`.
+static bool ecWildMatch(const std::string& pat, const std::string& s)
+{
+	size_t pi = 0, si = 0, star = std::string::npos, ss = 0;
+	while (si < s.size()) {
+		if (pi < pat.size() && (pat[pi] == '?' || pat[pi] == s[si])) { ++pi; ++si; }
+		else if (pi < pat.size() && pat[pi] == '*') { star = pi++; ss = si; }
+		else if (star != std::string::npos) { pi = star + 1; si = ++ss; }
+		else return false;
+	}
+	while (pi < pat.size() && pat[pi] == '*') ++pi;
+	return pi == pat.size();
+}
+
+// Match an editorconfig section glob against a basename. Supports *, ?, **
+// (treated as *), and one level of {a,b,c} brace alternation.
+static bool ecGlobMatch(const std::string& pattern, const std::string& name)
+{
+	auto lb = pattern.find('{');
+	if (lb != std::string::npos) {
+		auto rb = pattern.find('}', lb);
+		if (rb != std::string::npos) {
+			std::string pre = pattern.substr(0, lb), post = pattern.substr(rb + 1);
+			std::string inner = pattern.substr(lb + 1, rb - lb - 1);
+			for (size_t start = 0;;) {
+				size_t comma = inner.find(',', start);
+				std::string alt = inner.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+				if (ecGlobMatch(pre + alt + post, name)) return true;
+				if (comma == std::string::npos) break;
+				start = comma + 1;
+			}
+			return false;
+		}
+	}
+	std::string p = pattern;
+	for (size_t i; (i = p.find("**")) != std::string::npos; ) p.replace(i, 2, "*");
+	auto sl = p.find_last_of("/\\");
+	if (sl != std::string::npos) p = p.substr(sl + 1);   // basename only
+	return ecWildMatch(p, name);
+}
+
+// Does this .editorconfig have `root = true` in its preamble (before any section)?
+static bool ecFileIsRoot(const std::filesystem::path& cfg)
+{
+	std::ifstream f(cfg);
+	std::string line;
+	while (std::getline(f, line)) {
+		size_t a = line.find_first_not_of(" \t\r");
+		if (a == std::string::npos) continue;
+		if (line[a] == '#' || line[a] == ';') continue;
+		if (line[a] == '[') return false;
+		auto eq = line.find('=');
+		if (eq == std::string::npos) continue;
+		std::string k = line.substr(a, eq - a);
+		while (!k.empty() && (k.back() == ' ' || k.back() == '\t')) k.pop_back();
+		std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+		if (k == "root") {
+			std::string v = line.substr(eq + 1);
+			size_t b = v.find_first_not_of(" \t");
+			v = (b == std::string::npos) ? std::string() : v.substr(b);
+			std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+			return v.rfind("true", 0) == 0;
+		}
+	}
+	return false;
+}
+
+void Editor::applyEditorConfig(TabDocument& t)
+{
+	if (t.filename == "untitled") return;
+	std::error_code ec;
+	std::filesystem::path file = t.filename;
+	std::string fname = file.filename().string();
+
+	std::vector<std::filesystem::path> configs;   // nearest first
+	for (auto cur = file.parent_path(); ; ) {
+		auto cfg = cur / ".editorconfig";
+		if (std::filesystem::is_regular_file(cfg, ec)) {
+			configs.push_back(cfg);
+			if (ecFileIsRoot(cfg)) break;   // stop the upward search
+		}
+		if (!cur.has_parent_path() || cur.parent_path() == cur) break;
+		cur = cur.parent_path();
+	}
+	if (configs.empty()) return;
+
+	auto trim = [](std::string s) {
+		size_t a = s.find_first_not_of(" \t");
+		size_t b = s.find_last_not_of(" \t");
+		return (a == std::string::npos) ? std::string() : s.substr(a, b - a + 1);
+	};
+	auto lower = [](std::string s) {
+		std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+		return s;
+	};
+
+	// Resolve properties: process farthest -> nearest so nearer files override.
+	std::unordered_map<std::string, std::string> props;
+	for (auto it = configs.rbegin(); it != configs.rend(); ++it) {
+		std::ifstream f(*it);
+		std::string line;
+		bool sawSection = false, sectionMatches = false;
+		while (std::getline(f, line)) {
+			if (!line.empty() && line.back() == '\r') line.pop_back();
+			std::string s = trim(line);
+			if (s.empty() || s[0] == '#' || s[0] == ';') continue;
+			if (s[0] == '[') {
+				auto rb = s.find(']');
+				if (rb == std::string::npos) continue;
+				sawSection = true;
+				sectionMatches = ecGlobMatch(s.substr(1, rb - 1), fname);
+				continue;
+			}
+			auto eq = s.find('=');
+			if (eq == std::string::npos) continue;
+			if (sawSection && sectionMatches)
+				props[lower(trim(s.substr(0, eq)))] = trim(s.substr(eq + 1));
+		}
+	}
+
+	auto& e = t.editor;
+	int tabWidth = -1;
+	if (auto p = props.find("tab_width"); p != props.end()) tabWidth = std::atoi(p->second.c_str());
+	if (auto p = props.find("indent_style"); p != props.end())
+		e.SetInsertSpacesOnTabs(lower(p->second) == "space");
+	if (auto p = props.find("indent_size"); p != props.end()) {
+		if (lower(p->second) == "tab") { if (tabWidth > 0 && tabWidth <= 32) e.SetTabSize(tabWidth); }
+		else { int n = std::atoi(p->second.c_str()); if (n > 0 && n <= 32) e.SetTabSize(n); }
+	} else if (tabWidth > 0 && tabWidth <= 32) {
+		e.SetTabSize(tabWidth);
+	}
+}
+
+
 void Editor::openFile()
 {
 	showFileOpen();
@@ -4799,6 +4935,7 @@ void Editor::openFile(const std::string& path)
 		target->version = target->editor.GetUndoIndex();
 		target->filename = path;
 		target->wantFocus = true;
+		applyEditorConfig(*target);   // .editorconfig overrides indent/tab for this file
 		rememberRecentFile(path);
 		// Make this tab the active one so SetNextWindowFocus in
 		// renderDockedDocuments actually points at this doc.
