@@ -116,7 +116,17 @@ class Editor {
 	void markChangedLines(TabDocument& t, const std::string& oldText, const std::string& newText);
 	double extWatchTime = 0.0;   // last poll time (throttle)
 
-	// Transient corner notifications — used to make Claude's edits loud. Each
+	// Frame-time watchdog — flags potential perf issues. Measures the wall-clock
+	// cost of building one frame's UI (the thing that historically tanked fps,
+	// e.g. per-keystroke fold rebuilds). Publishes a rolling 3s worst + a running
+	// count of frames over the 30fps budget; logs slow frames to stderr.
+	float  fpsWorstMs       = 0.0f;
+	int    fpsSlowCount     = 0;
+	double fpsWindowStart   = 0.0;
+	float  fpsWindowWorstMs = 0.0f;
+	void   updateFpsWatch(double renderMs);
+
+	// Transient corner notifications — used to make external edits loud. Each
 	// toast fades out after `expiry`. pushToast() enqueues; renderToasts()
 	// draws them stacked over the main viewport.
 	struct Toast { std::string text; double expiry; ImU32 accent; };
@@ -314,6 +324,7 @@ public:
 	// Public so the static nav-render helpers (navRenderEntry/navRenderFlat) can
 	// draw an image thumbnail in a file's hover tooltip.
 	static bool  isImageExt(const std::string& ext);
+	static bool  isMarkdownExt(const std::string& ext);
 	void         navShowImageThumbnail(const std::string& path);
 private:
 

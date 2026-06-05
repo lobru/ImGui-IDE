@@ -1669,6 +1669,14 @@ void Editor::renderNavigationPanel()
 			if (!isDir && ImGui::MenuItem("Open")) { openFile(ctxPath); }
 			if (!isDir && ImGui::MenuItem("Open to Left"))  { openFileToSide(ctxPath, -1); }
 			if (!isDir && ImGui::MenuItem("Open to Right")) { openFileToSide(ctxPath, +1); }
+			{
+				auto mext = std::filesystem::path(ctxPath).extension().string();
+				std::transform(mext.begin(), mext.end(), mext.begin(), [](unsigned char c){ return (char) std::tolower(c); });
+				if (!isDir && isMarkdownExt(mext) && ImGui::MenuItem("Preview Markdown")) {
+					openFile(ctxPath);          // make it the active doc
+					mdPreviewVisible = true;    // preview renders the active markdown doc
+				}
+			}
 			// Shell/path actions — separated from the editor-open group above, since
 			// "Open in Explorer" is a different meaning of "open" than "Open" (editor).
 			ImGui::Separator();
@@ -3349,6 +3357,16 @@ void Editor::renderDevTools()
 			auto cfg = userConfigDir();
 			ImGui::Text("Poll: 1.0s   Open docs: %d   Toasts live: %d",
 				(int) tabs.size(), (int) toasts.size());
+			{
+				float fps = ImGui::GetIO().Framerate;
+				ImU32 pc = (fps >= 55.0f) ? IM_COL32(120, 200, 120, 255)
+					: (fps >= 30.0f) ? IM_COL32(240, 200, 90, 255) : IM_COL32(240, 110, 90, 255);
+				ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(pc),
+					"Perf: %.0f fps   worst UI build (3s): %.1f ms   slow frames: %d",
+					fps, fpsWorstMs, fpsSlowCount);
+				ImGui::SameLine();
+				if (ImGui::SmallButton("Reset perf")) { fpsSlowCount = 0; fpsWorstMs = 0.0f; fpsWindowWorstMs = 0.0f; }
+			}
 			if (ImGui::SmallButton("Open crash.log"))   navOpenExternally((cfg / "crash.log").string());
 			ImGui::SameLine();
 			if (ImGui::SmallButton("Open config dir"))  navOpenExternally(cfg.string());
@@ -3607,6 +3625,11 @@ bool Editor::isImageExt(const std::string& ext)
 	return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp"
 		|| ext == ".tga" || ext == ".gif" || ext == ".psd" || ext == ".hdr"
 		|| ext == ".pic";
+}
+
+bool Editor::isMarkdownExt(const std::string& ext)
+{
+	return ext == ".md" || ext == ".markdown" || ext == ".mdown" || ext == ".mkd" || ext == ".mdwn";
 }
 
 bool Editor::isBinaryExt(const std::string& ext)
@@ -5147,12 +5170,12 @@ void Editor::checkExternalChanges()
 			reloadFromDisk(t);    // clean → take their version, highlight changes
 			pushToast("\xe2\x9c\x8e External edit:  " + fname + "  \xe2\x80\x94 reloaded",
 				IM_COL32(170, 130, 250, 255));
-			logExternalChange(t.filename, "reloaded");
+			logExternalChange(t.filename, "reloaded (clean)");
 		} else {
 			t.externalChange = true;   // dirty → conflict, show the bar
 			pushToast("\xe2\x9a\xa0 External edit:  " + fname + "  \xe2\x80\x94 conflict (you have unsaved edits)",
 				IM_COL32(240, 180, 70, 255));
-			logExternalChange(t.filename, "conflict");
+			logExternalChange(t.filename, "conflict (unsaved)");
 		}
 	}
 }
@@ -5453,6 +5476,7 @@ void Editor::renderExternalChanges()
 		ImGui::Text("%d external change%s", (int) extChangeLog.size(), extChangeLog.size() == 1 ? "" : "s");
 		ImGui::SameLine();
 		if (ImGui::SmallButton("Clear")) extChangeLog.clear();
+		ImGui::TextDisabled("On-disk edits to open files (you, Claude, git, any tool). Click a row to open.");
 		ImGui::Separator();
 
 		if (extChangeLog.empty())
@@ -5491,7 +5515,9 @@ void Editor::renderExternalChanges()
 				if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.path.c_str());
 
 				ImGui::TableNextColumn();
-				ImU32 col = (e.kind == "conflict") ? IM_COL32(240, 180, 70, 255) : IM_COL32(170, 130, 250, 255);
+				ImU32 col = (e.kind.find("conflict") != std::string::npos) ? IM_COL32(240, 180, 70, 255)
+					: (e.kind.find("merged") != std::string::npos) ? IM_COL32(120, 200, 120, 255)
+					: IM_COL32(170, 130, 250, 255);
 				ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col), "%s", e.kind.c_str());
 
 				ImGui::PopID();
@@ -5509,6 +5535,8 @@ void Editor::renderExternalChanges()
 
 void Editor::render()
 {
+	auto perfT0 = std::chrono::steady_clock::now();   // frame-build cost (fps watchdog)
+
 	// Publish a finished background decompile (opens the cached .cs read-only,
 	// or falls back to the Learn page on failure). Cheap atomic check per frame.
 	pollDecompile();
@@ -5673,6 +5701,34 @@ void Editor::render()
 
 	// guarantee at least one document exists
 	if (tabs.empty()) newTab();
+
+	auto perfT1 = std::chrono::steady_clock::now();
+	updateFpsWatch(std::chrono::duration<double, std::milli>(perfT1 - perfT0).count());
+}
+
+//	Frame-time watchdog. renderMs = wall cost of building this frame's UI. Tracks
+//	a rolling 3s worst (shown in the fps tooltip + Dev Tools) and counts frames
+//	over the 30fps budget, logging the first ones to stderr so a perf regression
+//	leaves a trail without a profiler.
+void Editor::updateFpsWatch(double renderMs)
+{
+	double now = ImGui::GetTime();
+	if (fpsWindowStart == 0.0) fpsWindowStart = now;
+	if (renderMs > fpsWindowWorstMs) fpsWindowWorstMs = static_cast<float>(renderMs);
+
+	if (renderMs > 33.0 && now > 2.0)   // skip warm-up; 33ms = a 30fps frame
+	{
+		++fpsSlowCount;
+		if (fpsSlowCount <= 20 || (fpsSlowCount % 100) == 0)
+			std::fprintf(stderr, "[perf] slow frame: UI build %.1f ms (#%d)\n", renderMs, fpsSlowCount);
+	}
+
+	if (now - fpsWindowStart >= 3.0)    // publish the rolling window
+	{
+		fpsWorstMs = fpsWindowWorstMs;
+		fpsWindowWorstMs = 0.0f;
+		fpsWindowStart = now;
+	}
 }
 
 
@@ -6391,7 +6447,6 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Navigation Panel",  nullptr, &navPanelVisible)) {}
 			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
 			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
-			if (ImGui::MenuItem("Markdown Preview",  nullptr, &mdPreviewVisible)) {}
 			if (ImGui::MenuItem("External Changes",  nullptr, &externalChangesVisible)) {}
 			ImGui::Separator();
 			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
@@ -6428,6 +6483,16 @@ void Editor::renderMenuBar()
 			flag = e.IsCompletingPairedGlyphs(); if (ImGui::MenuItem("Auto-complete Brackets", nullptr, &flag)) { e.SetCompletePairedGlyphs(flag); prefCompletePairs = flag; }
 			flag = e.IsAutoIndentEnabled();      if (ImGui::MenuItem("Auto-indent",            nullptr, &flag)) { e.SetAutoIndentEnabled(flag); prefAutoIndent = flag; }
 			if (ImGui::MenuItem("Autocomplete (Trie)", nullptr, &autocomplete)) { setAutocompleteMode(autocomplete); }
+			// Markdown preview — context-sensitive: only when the active document
+			// is a markdown file (not an always-on global toggle).
+			{
+				auto ext = std::filesystem::path(doc().filename).extension().string();
+				std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c){ return (char) std::tolower(c); });
+				if (isMarkdownExt(ext)) {
+					ImGui::Separator();
+					if (ImGui::MenuItem("Preview Markdown", nullptr, &mdPreviewVisible)) {}
+				}
+			}
 			ImGui::EndMenu();
 		}
 
@@ -6470,6 +6535,20 @@ void Editor::renderMenuBar()
 			ImGui::Separator();
 			if (ImGui::MenuItem("Diff Against File…"))                        { openDiffOtherDialog(); }
 			ImGui::EndMenu();
+		}
+
+		// Active project name — right-aligned so the workspace is always visible.
+		// Folder (or project-file parent) name; full path on hover.
+		if (!projectRoot.empty()) {
+			std::string pname = projectRoot.filename().string();
+			if (pname.empty()) pname = projectRoot.string();
+			std::string label = "project: " + pname;
+			float w = ImGui::CalcTextSize(label.c_str()).x;
+			float avail = ImGui::GetContentRegionAvail().x;
+			if (avail > w + 16.0f) ImGui::SameLine(ImGui::GetCursorPosX() + avail - w - 12.0f);
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextDisabled("%s", label.c_str());
+			if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", projectRoot.string().c_str());
 		}
 
 		ImGui::PopStyleVar();   // WindowPadding pushed after BeginMenuBar
@@ -6800,25 +6879,29 @@ void Editor::renderStatusBar()
 		}
 	}
 
+	// FPS readout — its own left-cluster item (not folded into the right-aligned
+	// status string, where a wide git label could push it off the edge). Color
+	// shifts amber/red as the framerate drops so perf trouble is obvious.
+	if (prefShowFps) {
+		float fps = ImGui::GetIO().Framerate;
+		ImU32 c = (fps >= 55.0f) ? IM_COL32(120, 200, 120, 255)
+			: (fps >= 30.0f) ? IM_COL32(240, 200, 90, 255)
+			: IM_COL32(240, 110, 90, 255);
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(c), "%.0f fps", fps);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("worst frame last 3s: %.1f ms  (%d slow frames total)", fpsWorstMs, fpsSlowCount);
+	}
+
 	int line, column;
 	e.GetCurrentCursor(line, column);
 	float glyphWidth = ImGui::CalcTextSize("#").x;
 	char status[256];
-	// Optionally prepend an FPS readout — settings-toggleable so it's not in
-	// the user's face by default. The value is the smoothed framerate ImGui
-	// already maintains for its own debug widgets.
-	int statusSize = 0;
-	if (prefShowFps) {
-		statusSize = std::snprintf(status, sizeof(status),
-			"%.0f fps  Ln %d, Col %d  Tab: %d  %s",
-			ImGui::GetIO().Framerate, line + 1, column + 1, e.GetTabSize(),
-			std::filesystem::path(t.filename).filename().string().c_str());
-	} else {
-		statusSize = std::snprintf(status, sizeof(status),
-			"Ln %d, Col %d  Tab: %d  %s",
-			line + 1, column + 1, e.GetTabSize(),
-			std::filesystem::path(t.filename).filename().string().c_str());
-	}
+	int statusSize = std::snprintf(status, sizeof(status),
+		"Ln %d, Col %d  Tab: %d  %s",
+		line + 1, column + 1, e.GetTabSize(),
+		std::filesystem::path(t.filename).filename().string().c_str());
 
 	float size = glyphWidth * static_cast<float>(statusSize + 3);
 	float width = ImGui::GetContentRegionAvail().x;
