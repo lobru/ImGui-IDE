@@ -5808,16 +5808,15 @@ void Editor::renderDockedDocuments()
 		ImGui::DockNodeEndAmendTabBar();
 	}
 
-	// Mouse-wheel over the central tab strip cycles tabs.
-	if (central && tabs.size() > 1) {
-		ImVec2 mn = central->Pos;
-		ImVec2 mx(central->Pos.x + central->Size.x, central->Pos.y + ImGui::GetFrameHeight());
-		if (ImGui::IsMouseHoveringRect(mn, mx, false)) {
-			float wheel = ImGui::GetIO().MouseWheel;
+	// Mouse-wheel over the tab strip scrolls it horizontally (like the scroll
+	// arrows) instead of changing the selection.
+	if (central && central->TabBar) {
+		ImGuiTabBar* tb = central->TabBar;
+		if (ImGui::IsMouseHoveringRect(tb->BarRect.Min, tb->BarRect.Max, false)) {
+			float wheel = ImGui::GetIO().MouseWheel + ImGui::GetIO().MouseWheelH;
 			if (wheel != 0.0f) {
-				int n = (int) tabs.size();
-				activeTab = (wheel < 0.0f) ? (activeTab + 1) % n : (activeTab + n - 1) % n;
-				tabs[activeTab]->wantFocus = true;
+				float maxScroll = (std::max)(0.0f, tb->WidthAllTabs - tb->BarRect.GetWidth());
+				tb->ScrollingTarget = ImClamp(tb->ScrollingTarget - wheel * 80.0f, 0.0f, maxScroll);
 			}
 		}
 	}
@@ -5831,21 +5830,26 @@ void Editor::renderDockedDocuments()
 		if (r.GetWidth() <= 0.0f) continue;
 		if (ImGui::IsMouseHoveringRect(r.Min, r.Max, false) && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
 			tabCtxIdx = (int) i;
+			tabCtxRestore = (int) activeAtStart;   // re-asserted every frame the menu is open
 			ImGui::OpenPopup("##tabCtxMenu");
-			// Don't let a right-click switch tabs. ImGui selects/focuses the clicked
-			// tab; restore our active index and re-request the original tab in the
-			// dock tab bar (NextSelectedTabId, not SetWindowFocus — the latter would
-			// close this popup).
-			if (activeAtStart < tabs.size()) {
-				activeTab = activeAtStart;
-				if (central && central->TabBar) {
-					ImGuiWindow* ow = ImGui::FindWindowByName(windowLabelFor(*tabs[activeAtStart]).c_str());
-					if (ow) central->TabBar->NextSelectedTabId = ow->TabId;
-				}
-			}
 			break;
 		}
 	}
+
+	// Block ImGui's "right-click selects the tab" (it re-selects on BOTH mouse
+	// down and release). While the menu is open, keep restoring our active tab
+	// and re-request the original tab in the dock bar — every frame, so the
+	// release event can't sneak the selection through.
+	bool tabMenuOpen = ImGui::IsPopupOpen("##tabCtxMenu");
+	if (tabMenuOpen && tabCtxRestore >= 0 && tabCtxRestore < (int) tabs.size()) {
+		activeTab = (size_t) tabCtxRestore;
+		if (central && central->TabBar) {
+			ImGuiWindow* ow = ImGui::FindWindowByName(windowLabelFor(*tabs[tabCtxRestore]).c_str());
+			if (ow) central->TabBar->NextSelectedTabId = ow->TabId;
+		}
+	}
+	if (!tabMenuOpen) tabCtxRestore = -1;
+
 	if (tabCtxIdx >= 0 && tabCtxIdx < (int) tabs.size() && ImGui::BeginPopup("##tabCtxMenu")) {
 		renderTabContextMenu(tabCtxIdx);
 		ImGui::EndPopup();
@@ -6505,49 +6509,14 @@ void Editor::renderMenuBar()
 			ImGui::EndMenu();
 		}
 
-		// VIEW — appearance toggles.
-		if (ImGui::BeginMenu("View"))
+		if (ImGui::BeginMenu("Find"))
 		{
-			if (ImGui::MenuItem("Zoom In",  " " SHORTCUT "+")) { increaseFontSIze(); }
-			if (ImGui::MenuItem("Zoom Out", " " SHORTCUT "-")) { decreaseFontSIze(); }
+			if (ImGui::MenuItem("Find",        " " SHORTCUT "F"))      { e.OpenFindReplaceWindow(); }
+			if (ImGui::MenuItem("Find Next",   "F3",                   nullptr, e.HasFindString())) { e.FindNext(); }
+			if (ImGui::MenuItem("Find All",    "^" SHORTCUT "G",       nullptr, e.HasFindString())) { e.FindAll(); }
+			if (ImGui::MenuItem("Find in Files…", "^" SHORTCUT "F"))   { openFindInFiles(); }
 			ImGui::Separator();
-			bool flag;
-			flag = e.IsShowLineNumbersEnabled();        if (ImGui::MenuItem("Show Line Numbers",         nullptr, &flag)) { e.SetShowLineNumbersEnabled(flag); }
-			flag = e.IsShowWhitespacesEnabled();        if (ImGui::MenuItem("Show Whitespaces",          nullptr, &flag)) { e.SetShowWhitespacesEnabled(flag); }
-			flag = e.IsShowSpacesEnabled();             if (ImGui::MenuItem("Show Spaces",               nullptr, &flag)) { e.SetShowSpacesEnabled(flag); }
-			flag = e.IsShowTabsEnabled();               if (ImGui::MenuItem("Show Tabs",                 nullptr, &flag)) { e.SetShowTabsEnabled(flag); }
-			flag = e.IsShowingMatchingBrackets();       if (ImGui::MenuItem("Show Matching Brackets",    nullptr, &flag)) { e.SetShowMatchingBrackets(flag); }
-			flag = e.IsShowPanScrollIndicatorEnabled(); if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag)) { e.SetShowPanScrollIndicatorEnabled(flag); }
-			flag = e.IsMiddleMousePanMode();            if (ImGui::MenuItem("Middle Mouse Pan",          nullptr, &flag)) { if (flag) e.SetMiddleMousePanMode(); else e.SetMiddleMouseScrollMode(); }
-			if (ImGui::MenuItem("Word Wrap", nullptr, &prefWordWrap)) {
-				for (auto& up : tabs) up->editor.SetWordWrap(prefWordWrap);
-			}
-			ImGui::EndMenu();
-		}
-		if (ImGui::BeginMenu("Window"))
-		{
-			if (ImGui::MenuItem("Navigation Panel",  nullptr, &navPanelVisible)) {}
-			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
-			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
-			if (ImGui::MenuItem("External Changes",  nullptr, &externalChangesVisible)) {}
-			ImGui::Separator();
-			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
-			ImGui::Separator();
-			if (ImGui::MenuItem("Pop Out Left",  "Ctrl+Alt+←")) { popOutActiveDoc(-1); }
-			if (ImGui::MenuItem("Pop Out Right", "Ctrl+Alt+→")) { popOutActiveDoc(+1); }
-			if (ImGui::MenuItem("Merge Window Back", "Ctrl+Alt+M")) { remergeActiveWindow(); }
-			if (ImGui::MenuItem("Merge All Windows", "Ctrl+Alt+Shift+M")) { remergeAllWindows(); }
-			ImGui::Separator();
-			if (ImGui::MenuItem("Save Layout Now"))  { if (auto* fn = ImGui::GetIO().IniFilename) ImGui::SaveIniSettingsToDisk(fn); }
-			if (ImGui::MenuItem("Reset Layout"))
-			{
-				// Clear the saved layout AND re-arm the default-layout builder so
-				// next frame rebuilds Nav-left / Refs-right / Output-bottom.
-				ImGui::LoadIniSettingsFromMemory("");
-				ImGui::DockBuilderRemoveNode(ImGui::GetID("MainDockSpace"));
-				dockLayoutInitialized = false;
-				centralDockId = 0;
-			}
+			if (ImGui::MenuItem("Go to Line…", " " SHORTCUT "G"))      { showGotoLine(); }
 			ImGui::EndMenu();
 		}
 
@@ -6594,6 +6563,52 @@ void Editor::renderMenuBar()
 			}
 			ImGui::EndMenu();
 		}
+		// VIEW — appearance toggles.
+		if (ImGui::BeginMenu("View"))
+		{
+			if (ImGui::MenuItem("Zoom In",  " " SHORTCUT "+")) { increaseFontSIze(); }
+			if (ImGui::MenuItem("Zoom Out", " " SHORTCUT "-")) { decreaseFontSIze(); }
+			ImGui::Separator();
+			bool flag;
+			flag = e.IsShowLineNumbersEnabled();        if (ImGui::MenuItem("Show Line Numbers",         nullptr, &flag)) { e.SetShowLineNumbersEnabled(flag); }
+			flag = e.IsShowWhitespacesEnabled();        if (ImGui::MenuItem("Show Whitespaces",          nullptr, &flag)) { e.SetShowWhitespacesEnabled(flag); }
+			flag = e.IsShowSpacesEnabled();             if (ImGui::MenuItem("Show Spaces",               nullptr, &flag)) { e.SetShowSpacesEnabled(flag); }
+			flag = e.IsShowTabsEnabled();               if (ImGui::MenuItem("Show Tabs",                 nullptr, &flag)) { e.SetShowTabsEnabled(flag); }
+			flag = e.IsShowingMatchingBrackets();       if (ImGui::MenuItem("Show Matching Brackets",    nullptr, &flag)) { e.SetShowMatchingBrackets(flag); }
+			flag = e.IsShowPanScrollIndicatorEnabled(); if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag)) { e.SetShowPanScrollIndicatorEnabled(flag); }
+			flag = e.IsMiddleMousePanMode();            if (ImGui::MenuItem("Middle Mouse Pan",          nullptr, &flag)) { if (flag) e.SetMiddleMousePanMode(); else e.SetMiddleMouseScrollMode(); }
+			if (ImGui::MenuItem("Word Wrap", nullptr, &prefWordWrap)) {
+				for (auto& up : tabs) up->editor.SetWordWrap(prefWordWrap);
+			}
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu("Window"))
+		{
+			if (ImGui::MenuItem("Navigation Panel",  nullptr, &navPanelVisible)) {}
+			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
+			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
+			if (ImGui::MenuItem("External Changes",  nullptr, &externalChangesVisible)) {}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Split Right",       SHORTCUT "\\")) { splitActiveTabRight(); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Pop Out Left",  "Ctrl+Alt+←")) { popOutActiveDoc(-1); }
+			if (ImGui::MenuItem("Pop Out Right", "Ctrl+Alt+→")) { popOutActiveDoc(+1); }
+			if (ImGui::MenuItem("Merge Window Back", "Ctrl+Alt+M")) { remergeActiveWindow(); }
+			if (ImGui::MenuItem("Merge All Windows", "Ctrl+Alt+Shift+M")) { remergeAllWindows(); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Save Layout Now"))  { if (auto* fn = ImGui::GetIO().IniFilename) ImGui::SaveIniSettingsToDisk(fn); }
+			if (ImGui::MenuItem("Reset Layout"))
+			{
+				// Clear the saved layout AND re-arm the default-layout builder so
+				// next frame rebuilds Nav-left / Refs-right / Output-bottom.
+				ImGui::LoadIniSettingsFromMemory("");
+				ImGui::DockBuilderRemoveNode(ImGui::GetID("MainDockSpace"));
+				dockLayoutInitialized = false;
+				centralDockId = 0;
+			}
+			ImGui::EndMenu();
+		}
+
 
 		// PROJECT — build / run / project tooling.
 		if (ImGui::BeginMenu("Project"))
@@ -6604,19 +6619,6 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Run Active Document (script)")) { runScriptForDoc(); }
 			ImGui::Separator();
 			if (ImGui::MenuItem("Open Project...")) { openProjectFolderPicker(); }
-			ImGui::EndMenu();
-		}
-
-		if (ImGui::BeginMenu("Find"))
-		{
-			if (ImGui::MenuItem("Find",        " " SHORTCUT "F"))      { e.OpenFindReplaceWindow(); }
-			if (ImGui::MenuItem("Find Next",   "F3",                   nullptr, e.HasFindString())) { e.FindNext(); }
-			if (ImGui::MenuItem("Find All",    "^" SHORTCUT "G",       nullptr, e.HasFindString())) { e.FindAll(); }
-			if (ImGui::MenuItem("Find in Files…", "^" SHORTCUT "F"))   { openFindInFiles(); }
-			ImGui::Separator();
-			if (ImGui::MenuItem("Go to Line…", " " SHORTCUT "G"))      { showGotoLine(); }
-			ImGui::EndMenu();
-		}
 
 		if (ImGui::BeginMenu("Git"))
 		{
@@ -6635,6 +6637,9 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Diff Against File…"))                        { openDiffOtherDialog(); }
 			ImGui::EndMenu();
 		}
+			ImGui::EndMenu();
+		}
+
 
 		// Active project name — right-aligned so the workspace is always visible.
 		// Folder (or project-file parent) name; full path on hover.

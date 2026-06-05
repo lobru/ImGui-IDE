@@ -338,6 +338,7 @@ private:
 	// the menu targets; detection uses the docked tab's screen rect.
 	void renderTabContextMenu(int idx);
 	int  tabCtxIdx = -1;
+	int  tabCtxRestore = -1;   // tab to re-select while the menu is open (block right-click switch)
 
 	// Open a file into a split pane on the left (dir<0) or right (dir>0) of the
 	// document area — used by the nav panel's "Open to Left/Right". Opens the
