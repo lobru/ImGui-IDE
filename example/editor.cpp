@@ -6887,12 +6887,14 @@ void Editor::renderStatusBar()
 			std::filesystem::path(t.filename).filename().string().c_str());
 	}
 
-	// Right-align, clamped so a wide left cluster can't push the lead negative
-	// (that hid the fps prefix off the left edge).
+	// Right-align via SameLine's ABSOLUTE offset (offset_from_start_x), not its
+	// spacing arg: the spacing form adds to the previous item's end, so a wide
+	// left cluster (lang+MSVC+git) pushed the whole string off the right edge.
 	float size = ImGui::CalcTextSize(status).x;
-	float lead = ImGui::GetContentRegionAvail().x - size - glyphWidth;
-	if (lead < ImGui::GetStyle().ItemSpacing.x) lead = ImGui::GetStyle().ItemSpacing.x;
-	ImGui::SameLine(0.0f, lead);
+	float off = ImGui::GetContentRegionAvail().x - size - glyphWidth;
+	if (off < 0.0f) off = 0.0f;
+	ImGui::SameLine(off);
+	ImGui::AlignTextToFramePadding();
 	ImGui::TextUnformatted(status);
 
 	ImGui::SameLine(0.0f, glyphWidth);
