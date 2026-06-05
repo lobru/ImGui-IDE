@@ -5861,16 +5861,36 @@ void Editor::renderTabContextMenu(int idx)
 	bool hasPath = t.filename != "untitled";
 	int  n = (int) tabs.size();
 
+	// Build the visual tab order of the SAME dock node as this tab, so the
+	// left/right/others closes never touch tabs in another split or pop-out.
+	std::vector<int> nodeOrder;   // indices into `tabs`, in this node's tab order
+	int posInNode = -1;
+	{
+		ImGuiWindow* tw = ImGui::FindWindowByName(windowLabelFor(t).c_str());
+		ImGuiDockNode* node = tw ? tw->DockNode : nullptr;
+		if (node && node->TabBar) {
+			for (int ti = 0; ti < node->TabBar->Tabs.Size; ++ti) {
+				ImGuiWindow* tiw = node->TabBar->Tabs[ti].Window;
+				if (!tiw) continue;
+				for (int j = 0; j < n; ++j) {
+					ImGuiWindow* w = ImGui::FindWindowByName(windowLabelFor(*tabs[j]).c_str());
+					if (w == tiw) { if (j == idx) posInNode = (int) nodeOrder.size(); nodeOrder.push_back(j); break; }
+				}
+			}
+		}
+	}
+	bool grouped = posInNode >= 0 && nodeOrder.size() > 1;
+
 	ImGui::TextDisabled("%s", std::filesystem::path(t.filename).filename().string().c_str());
 	ImGui::Separator();
 
 	if (ImGui::MenuItem("Close"))            { t.open = false; }
-	if (ImGui::MenuItem("Close Others", nullptr, false, n > 1))
-		for (int j = 0; j < n; ++j) if (j != idx) tabs[j]->open = false;
-	if (ImGui::MenuItem("Close to the Right", nullptr, false, idx < n - 1))
-		for (int j = idx + 1; j < n; ++j) tabs[j]->open = false;
-	if (ImGui::MenuItem("Close to the Left", nullptr, false, idx > 0))
-		for (int j = 0; j < idx; ++j) tabs[j]->open = false;
+	if (ImGui::MenuItem("Close Others", nullptr, false, grouped))
+		for (int j : nodeOrder) if (j != idx) tabs[j]->open = false;
+	if (ImGui::MenuItem("Close to the Right", nullptr, false, grouped && posInNode < (int) nodeOrder.size() - 1))
+		for (int k = posInNode + 1; k < (int) nodeOrder.size(); ++k) tabs[nodeOrder[k]]->open = false;
+	if (ImGui::MenuItem("Close to the Left", nullptr, false, grouped && posInNode > 0))
+		for (int k = 0; k < posInNode; ++k) tabs[nodeOrder[k]]->open = false;
 
 	ImGui::Separator();
 	if (ImGui::MenuItem("Split Left",  nullptr, false, n >= 2)) { activeTab = idx; wantSplitLeft = true; }
