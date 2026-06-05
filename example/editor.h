@@ -543,6 +543,14 @@ private:
 	std::string gitPollRoot;
 	double      gitPollTime = -1000.0;
 	void        pollGitStatus();
+	// Git actions (shell out to `git`, output in the Output panel). Commit opens a
+	// message dialog; Discard confirms first (destructive).
+	std::string gitRoot();
+	void        runGit(const std::string& args);
+	bool        gitCommitRequest  = false;
+	char        gitCommitMsg[1024] = {};
+	bool        gitDiscardRequest = false;
+	void        renderGitDialogs();   // commit message + discard confirm modals
 
 	// Project-wide Go to Definition — greps files under projectRoot (or the
 	// active doc's directory) for definition patterns (class/struct/interface/

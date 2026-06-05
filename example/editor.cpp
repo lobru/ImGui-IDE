@@ -5056,6 +5056,7 @@ void Editor::render()
 	renderFindInFilesPanel();
 	renderDevTools();
 	renderMarkdownPreview();
+	renderGitDialogs();
 	renderSettings();
 
 	// Diff-against-other file picker — overlay on any state.
@@ -5900,6 +5901,24 @@ void Editor::renderMenuBar()
 			ImGui::EndMenu();
 		}
 
+		if (ImGui::BeginMenu("Git"))
+		{
+			bool inRepo;
+			{ std::lock_guard<std::mutex> lk(gitInfo->mutex); inRepo = !gitInfo->branch.empty(); }
+			if (!inRepo) ImGui::TextDisabled("(not a git repository)");
+			if (ImGui::MenuItem("Fetch", nullptr, false, inRepo))             { runGit("fetch"); }
+			if (ImGui::MenuItem("Pull", nullptr, false, inRepo))              { runGit("pull"); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Commit All…", nullptr, false, inRepo))       { gitCommitMsg[0] = '\0'; gitCommitRequest = true; }
+			if (ImGui::MenuItem("Push", nullptr, false, inRepo))             { runGit("push"); }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Status", nullptr, false, inRepo))            { runGit("status"); }
+			if (ImGui::MenuItem("Discard All Changes…", nullptr, false, inRepo)) { gitDiscardRequest = true; }
+			ImGui::Separator();
+			if (ImGui::MenuItem("Diff Against File…"))                        { openDiffOtherDialog(); }
+			ImGui::EndMenu();
+		}
+
 		ImGui::PopStyleVar();   // WindowPadding pushed after BeginMenuBar
 		ImGui::EndMenuBar();
 	}
@@ -6024,6 +6043,79 @@ void Editor::pollGitStatus()
 		}
 		gi->building = false;
 	}).detach();
+}
+
+std::string Editor::gitRoot()
+{
+	if (!projectRoot.empty()) return projectRoot.string();
+	if (!tabs.empty() && doc().filename != "untitled")
+		return std::filesystem::path(doc().filename).parent_path().string();
+	return {};
+}
+
+void Editor::runGit(const std::string& args)
+{
+	std::string root = gitRoot();
+	if (root.empty()) { showError("Git: no project / repository directory."); return; }
+	runCommandInOutputPanel("git " + args, root);
+	gitPollTime = -1000.0;   // force the status indicator to refresh after the action
+}
+
+// Commit-message + discard-confirm modals (rendered at render() top level so they
+// pop out properly; anchored to the main viewport like the other dialogs).
+void Editor::renderGitDialogs()
+{
+	if (gitCommitRequest) {
+		ImGui::OpenPopup("Git Commit");
+		gitCommitRequest = false;
+		ImGuiViewport* vp = ImGui::GetMainViewport();
+		ImGui::SetNextWindowViewport(vp->ID);
+		ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+	}
+	if (ImGui::BeginPopupModal("Git Commit", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::TextDisabled("Stages all changes (git add -A) then commits.");
+		if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+		ImGui::InputTextMultiline("##gitmsg", gitCommitMsg, sizeof(gitCommitMsg), ImVec2(420.0f, 110.0f));
+		ImGui::Separator();
+		bool hasMsg = gitCommitMsg[0] != '\0';
+		if (!hasMsg) ImGui::BeginDisabled();
+		if (ImGui::Button("Commit", ImVec2(90.0f, 0.0f))) {
+			std::string root = gitRoot();
+			std::error_code ec;
+			auto tmp = userConfigDir() / "git_commit_msg.txt";
+			std::filesystem::create_directories(tmp.parent_path(), ec);
+			{ std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f << gitCommitMsg; }
+			runCommandInOutputPanel("git add -A && git commit -F \"" + tmp.string() + "\"", root);
+			gitPollTime = -1000.0;
+			ImGui::CloseCurrentPopup();
+		}
+		if (!hasMsg) ImGui::EndDisabled();
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
+
+	if (gitDiscardRequest) {
+		ImGui::OpenPopup("Discard Changes");
+		gitDiscardRequest = false;
+		ImGuiViewport* vp = ImGui::GetMainViewport();
+		ImGui::SetNextWindowViewport(vp->ID);
+		ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+	}
+	if (ImGui::BeginPopupModal("Discard Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("Discard ALL tracked changes in the working tree?");
+		ImGui::TextDisabled("Runs git checkout -- .  (untracked files are kept).");
+		ImGui::Separator();
+		if (ImGui::Button("Discard", ImVec2(90.0f, 0.0f))) {
+			runGit("checkout -- .");
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
 }
 
 void Editor::renderStatusBar()
