@@ -81,9 +81,8 @@ Core IDE features ship and the build is green (`/W4 /WX`); a headless self-test 
 non-UI logic (colorizer, folding, language mapping). Verification of visual/cursor features is
 runtime-owned — they're confirmed in the running app, not just by "it compiles."
 
-**Open / in progress:** a working-tree reformat of the app shell needs review (a co-edit merge
-appears to have collapsed some menu structure); ImGui Test Engine for headless GUI testing;
-deeper agent integration tied to a live session.
+**Open / in progress:** ImGui Test Engine for headless GUI testing; deeper agent integration
+tied to a live session.
 
 ## Roadmap
 1. Tighter live-agent integration (attribution beyond on-disk diffing).
