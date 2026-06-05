@@ -71,6 +71,8 @@ class Editor {
 		//   externalChange = disk changed under a DIRTY buffer (unresolved conflict)
 		std::filesystem::file_time_type diskMtime{};
 		bool        externalChange = false;
+		bool        claudeTouched  = false;   // edited on disk since you last viewed this tab (badge)
+		bool        claudeMarkers  = false;   // gutter markers on Claude-changed lines are live
 	};
 
 	// document management — stored as unique_ptr so addresses remain stable
@@ -110,7 +112,16 @@ class Editor {
 	void recordDiskMtime(TabDocument& t);
 	void reloadFromDisk(TabDocument& t);
 	void checkExternalChanges();
+	void markChangedLines(TabDocument& t, const std::string& oldText, const std::string& newText);
 	double extWatchTime = 0.0;   // last poll time (throttle)
+
+	// Transient corner notifications — used to make Claude's edits loud. Each
+	// toast fades out after `expiry`. pushToast() enqueues; renderToasts()
+	// draws them stacked over the main viewport.
+	struct Toast { std::string text; double expiry; ImU32 accent; };
+	std::vector<Toast> toasts;
+	void pushToast(const std::string& text, ImU32 accent);
+	void renderToasts();
 
 	// index = -1  → append at end
 	// split = true → request the new doc be docked next to the active one

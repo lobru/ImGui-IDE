@@ -4675,6 +4675,7 @@ std::string Editor::windowLabelFor(const TabDocument& t) const
 {
 	std::string title = std::filesystem::path(t.filename).filename().string();
 	if (title.empty()) title = "untitled";
+	if (t.claudeTouched) title = "\xe2\x9c\x8e " + title;   // ✎ Claude edited this since you last viewed it
 	if (t.editor.GetUndoIndex() != t.version) title += " *";
 	title += "###Doc" + std::to_string(t.id);
 	return title;
@@ -5029,6 +5030,8 @@ void Editor::reloadFromDisk(TabDocument& t)
 	std::string text((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
 	stream.close();
 
+	std::string oldText = t.editor.GetText();   // pre-reload buffer, for change markers
+
 	int line = 0, column = 0;
 	t.editor.GetCurrentCursor(line, column);
 
@@ -5038,6 +5041,7 @@ void Editor::reloadFromDisk(TabDocument& t)
 	t.externalChange = false;
 	recordDiskMtime(t);
 	rememberRecentFile(t.filename);
+	markChangedLines(t, oldText, text);   // gutter-highlight exactly what changed
 
 	int total = (std::max)(t.editor.GetLineCount(), 1);
 	line   = (std::max)(0, (std::min)(line, total - 1));
@@ -5080,8 +5084,134 @@ void Editor::checkExternalChanges()
 		mine.erase(std::remove(mine.begin(), mine.end(), '\r'), mine.end());
 		if (disk == mine) { t.diskMtime = mt; continue; }
 
-		if (!isDirtyTab(i)) reloadFromDisk(t);   // clean → take their version
-		else                t.externalChange = true;   // dirty → conflict
+		std::string fname = std::filesystem::path(t.filename).filename().string();
+		t.claudeTouched = true;   // badge on the tab until the user views it
+		if (!isDirtyTab(i)) {
+			reloadFromDisk(t);    // clean → take their version, highlight changes
+			pushToast("\xe2\x9c\x8e Claude edited  " + fname + "  \xe2\x80\x94 reloaded",
+				IM_COL32(170, 130, 250, 255));
+		} else {
+			t.externalChange = true;   // dirty → conflict, show the bar
+			pushToast("\xe2\x9a\xa0 Claude edited  " + fname + "  \xe2\x80\x94 conflict (you have unsaved edits)",
+				IM_COL32(240, 180, 70, 255));
+		}
+	}
+}
+
+//	Gutter-highlight the lines that actually changed in a reload so the user can
+//	see at a glance WHAT Claude touched. Trims the common prefix/suffix first so
+//	a localized edit in a huge file diffs only the small changed window; the LCS
+//	on that window is then cheap and bounded.
+void Editor::markChangedLines(TabDocument& t, const std::string& oldText, const std::string& newText)
+{
+	t.editor.ClearMarkers();
+	t.claudeMarkers = false;
+
+	auto split = [](const std::string& s) {
+		std::vector<std::string> v; std::string cur;
+		for (char c : s) { if (c == '\r') continue; if (c == '\n') { v.push_back(cur); cur.clear(); } else cur += c; }
+		v.push_back(cur);
+		return v;
+	};
+	std::vector<std::string> a = split(oldText), b = split(newText);
+	size_t N = a.size(), M = b.size();
+	if (M == 0) return;
+
+	// Trim equal prefix / suffix — Claude edits are usually localized.
+	size_t p = 0;
+	while (p < N && p < M && a[p] == b[p]) ++p;
+	size_t ea = N, eb = M;
+	while (ea > p && eb > p && a[ea - 1] == b[eb - 1]) { --ea; --eb; }
+
+	size_t n = ea - p, m = eb - p;          // sizes of the differing windows
+	if (m == 0) return;                     // pure deletion — nothing to mark in b
+	if (n > 3000 || m > 3000) {             // window still huge → mark the whole window
+		const ImU32 g = IM_COL32(170, 130, 250, 255), bgc = IM_COL32(120, 90, 200, 38);
+		for (size_t k = p; k < eb; ++k)
+			t.editor.AddMarker((int)k, g, bgc, "Changed by Claude", "Changed on disk by Claude / external tool");
+		t.claudeMarkers = (eb > p);
+		return;
+	}
+
+	// LCS over the differing window only.
+	std::vector<std::vector<int>> dp(n + 1, std::vector<int>(m + 1, 0));
+	for (size_t i = n; i-- > 0; )
+		for (size_t j = m; j-- > 0; )
+			dp[i][j] = (a[p + i] == b[p + j]) ? dp[i + 1][j + 1] + 1
+											  : (std::max)(dp[i + 1][j], dp[i][j + 1]);
+
+	std::vector<char> common(m, 0);
+	for (size_t i = 0, j = 0; i < n && j < m; ) {
+		if (a[p + i] == b[p + j]) { common[j] = 1; ++i; ++j; }
+		else if (dp[i + 1][j] >= dp[i][j + 1]) ++i;
+		else ++j;
+	}
+
+	const ImU32 gutter = IM_COL32(170, 130, 250, 255);
+	const ImU32 bg     = IM_COL32(120, 90, 200, 38);
+	int changed = 0;
+	for (size_t k = 0; k < m; ++k) {
+		if (!common[k]) {
+			t.editor.AddMarker((int)(p + k), gutter, bg, "Changed by Claude",
+				"Changed on disk by Claude / external tool");
+			++changed;
+		}
+	}
+	t.claudeMarkers = (changed > 0);
+}
+
+//	Queue a transient corner notification.
+void Editor::pushToast(const std::string& text, ImU32 accent)
+{
+	toasts.push_back({ text, ImGui::GetTime() + 5.0, accent });
+	if (toasts.size() > 6) toasts.erase(toasts.begin());
+}
+
+//	Draw queued toasts stacked at the top-right of the work area, fading out in
+//	their final second. NoInputs so they never eat clicks.
+void Editor::renderToasts()
+{
+	if (toasts.empty()) return;
+	double now = ImGui::GetTime();
+	toasts.erase(std::remove_if(toasts.begin(), toasts.end(),
+		[now](const Toast& t) { return now >= t.expiry; }), toasts.end());
+	if (toasts.empty()) return;
+
+	ImGuiViewport* vp = ImGui::GetMainViewport();
+	const float pad = 14.0f;
+	float y = vp->WorkPos.y + pad;
+
+	ImGuiWindowFlags flags =
+		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+		ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+		ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoDocking;
+
+	for (size_t i = 0; i < toasts.size(); ++i)
+	{
+		auto& to = toasts[i];
+		float remain = static_cast<float>(to.expiry - now);
+		float alpha = remain < 1.0f ? remain : 1.0f;   // fade the last second
+		ImU32 accent = (to.accent & 0x00FFFFFFu) | (static_cast<ImU32>(alpha * 255.0f) << 24);
+
+		char id[32];
+		std::snprintf(id, sizeof(id), "##toast%zu", i);
+		ImGui::SetNextWindowViewport(vp->ID);
+		ImGui::SetNextWindowBgAlpha(0.93f * alpha);
+		ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - pad, y),
+			ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 8.0f));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+		ImGui::PushStyleColor(ImGuiCol_Border, accent);
+		if (ImGui::Begin(id, nullptr, flags))
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, accent);
+			ImGui::TextUnformatted(to.text.c_str());
+			ImGui::PopStyleColor();
+			y += ImGui::GetWindowHeight() + 8.0f;
+		}
+		ImGui::End();
+		ImGui::PopStyleColor();
+		ImGui::PopStyleVar(2);
 	}
 }
 
@@ -5144,6 +5274,7 @@ void Editor::render()
 	renderMarkdownPreview();
 	renderGitDialogs();
 	renderSettings();
+	renderToasts();   // transient Claude-edited notifications, drawn over everything
 
 	// Diff-against-other file picker — overlay on any state.
 	if (diffOtherMode) {
@@ -5365,6 +5496,15 @@ void Editor::renderDocumentWindow(TabDocument& t)
 		{
 			if (tabs[i].get() == &t) { activeTab = i; break; }
 		}
+		t.claudeTouched = false;   // user is looking at it now → drop the tab badge
+	}
+
+	// Once the user starts editing again, the Claude-changed gutter markers have
+	// served their purpose — clear them so they don't linger over fresh edits.
+	if (t.claudeMarkers && t.editor.GetUndoIndex() != t.version)
+	{
+		t.editor.ClearMarkers();
+		t.claudeMarkers = false;
 	}
 
 
