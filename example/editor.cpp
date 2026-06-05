@@ -3343,6 +3343,44 @@ void Editor::renderDevTools()
 		ImGui::Checkbox("Debug Log", &devShowDebugLog);
 		ImGui::Checkbox("Dear ImGui Demo", &devShowDemo);
 
+		// ── Live Claude co-editing watch state ───────────────────────────
+		ImGui::SeparatorText("Claude co-editing watch");
+		{
+			auto cfg = userConfigDir();
+			ImGui::Text("Poll: 1.0s   Open docs: %d   Toasts live: %d",
+				(int) tabs.size(), (int) toasts.size());
+			if (ImGui::SmallButton("Open crash.log"))   navOpenExternally((cfg / "crash.log").string());
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Open config dir"))  navOpenExternally(cfg.string());
+			ImGui::SameLine();
+			if (ImGui::SmallButton("Test toast"))
+				pushToast("\xe2\x9c\x8e Dev Tools test toast", IM_COL32(170, 130, 250, 255));
+
+			if (ImGui::BeginTable("##watch", 2,
+				ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp))
+			{
+				ImGui::TableSetupColumn("Open document");
+				ImGui::TableSetupColumn("Watch state");
+				ImGui::TableHeadersRow();
+				for (size_t i = 0; i < tabs.size(); ++i)
+				{
+					auto& t = *tabs[i];
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn();
+					ImGui::TextUnformatted(std::filesystem::path(t.filename).filename().string().c_str());
+					ImGui::TableNextColumn();
+					const char* st; ImU32 col;
+					if (t.filename == "untitled")  { st = "unsaved (not watched)"; col = IM_COL32(150, 150, 150, 255); }
+					else if (t.externalChange)     { st = "CONFLICT — disk changed under edits"; col = IM_COL32(240, 180, 70, 255); }
+					else if (t.claudeTouched)      { st = "Claude edited (unseen)"; col = IM_COL32(170, 130, 250, 255); }
+					else if (t.claudeMarkers)      { st = "reloaded — change markers shown"; col = IM_COL32(130, 200, 255, 255); }
+					else                           { st = "in sync"; col = IM_COL32(120, 200, 120, 255); }
+					ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(col), "%s", st);
+				}
+				ImGui::EndTable();
+			}
+		}
+
 		ImGui::SeparatorText("Where is this feature's code?");
 		ImGui::TextWrapped("Click a row to jump to the function (project-wide go-to-def). "
 			"Open the editor's own repo as the project for these to resolve.");
@@ -3362,10 +3400,23 @@ void Editor::renderDevTools()
 			{ "Keybind dispatch",         "keybindPressed",           "example/editor.cpp" },
 			{ "System include discovery", "systemIncludeDirs",        "example/editor.cpp" },
 			{ "Settings persistence",     "saveSettings",             "example/editor.cpp" },
+			{ "Git status poll",          "pollGitStatus",            "example/editor.cpp" },
+			{ "Git actions / dialogs",    "renderGitDialogs",         "example/editor.cpp" },
+			{ "Co-editing watch",         "checkExternalChanges",     "example/editor.cpp" },
+			{ "External reload",          "reloadFromDisk",           "example/editor.cpp" },
+			{ "Claude change markers",    "markChangedLines",         "example/editor.cpp" },
+			{ "Toast notifications",      "renderToasts",             "example/editor.cpp" },
+			{ "Crash / assert capture",   "installCrashHandlers",     "example/main.cpp"   },
+			{ "Format Document",          "formatActiveDocument",     "example/editor.cpp" },
+			{ ".editorconfig cascade",    "applyEditorConfig",        "example/editor.cpp" },
+			{ "Markdown preview",         "renderMarkdownPreview",    "example/editor.cpp" },
+			{ "Image viewer",             "renderImageWindows",       "example/editor.cpp" },
+			{ "Diff viewer",              "renderDiff",               "example/editor.cpp" },
 			{ "Editor text render",       "renderText",               "TextEditor.cpp" },
 			{ "Find / Replace bar",       "renderFindReplace",        "TextEditor.cpp" },
 			{ "Syntax colorizer",         "updateChangedLines",       "TextEditor.cpp" },
 			{ "Folding (build ranges)",   "rebuildFoldRanges",        "TextEditor.cpp" },
+			{ "Gutter markers",           "renderMarkers",            "TextEditor.cpp" },
 			{ "Mouse / pan-scroll",       "handleMouseInteractions",  "TextEditor.cpp" },
 		};
 		if (ImGui::BeginTable("##devmap", 2,
