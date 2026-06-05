@@ -1617,24 +1617,20 @@ void Editor::renderNavigationPanel()
 		ImGui::TextDisabled("%s", root.string().c_str());
 		ImGui::SameLine();
 		if (ImGui::SmallButton("...")) { openProjectFolderPicker(); }
-		// Toggle row — defaults are persisted in [editor] of settings.txt.
-		// Hover the icons for what each filter does.
-		ImGui::Checkbox(".dot", &navShowDotFiles);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show dotfiles (.git, .env, etc.)");
+		// Filters tucked into a popup; defaults persisted in [editor] of settings.txt.
+		if (ImGui::SmallButton("Filters")) ImGui::OpenPopup("##navFilters");
+		if (ImGui::BeginPopup("##navFilters")) {
+			ImGui::Checkbox("Show dotfiles (.git, .env, …)", &navShowDotFiles);
+			ImGui::Checkbox("Code / project files only", &navCodeOnly);
+			ImGui::Checkbox("Show excluded items", &navShowExcluded);
+			ImGui::Checkbox("Flat view (no folder nesting)", &navFlatFiles);
+			ImGui::EndPopup();
+		}
 		ImGui::SameLine();
-		ImGui::Checkbox("code", &navCodeOnly);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Code/project files only — hide build artefacts and docs.");
-		ImGui::SameLine();
-		ImGui::Checkbox("excl", &navShowExcluded);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show items you've excluded so you can re-include them.");
-		ImGui::SameLine();
-		ImGui::Checkbox("flat", &navFlatFiles);
-		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flat view — every file in one list, no folder nesting.");
-		ImGui::SameLine();
-		if (ImGui::SmallButton("-")) navSetAllOpen = 0;   // collapse all folders
+		if (ImGui::SmallButton("-")) navSetAllOpen = 0;
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Collapse all folders");
 		ImGui::SameLine();
-		if (ImGui::SmallButton("+")) navSetAllOpen = 1;   // expand all folders
+		if (ImGui::SmallButton("+")) navSetAllOpen = 1;
 		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Expand all folders");
 		ImGui::Separator();
 
@@ -5133,10 +5129,8 @@ void Editor::reloadFromDisk(TabDocument& t)
 	if (!projectRoot.empty()) rebuildProjectIndex();
 }
 
-//	Poll every open file's on-disk mtime (throttled). On a real change:
-//	  - clean buffer → silently reload (stay in sync with Claude)
-//	  - dirty buffer → flag a conflict; the doc shows a Reload / Keep / Diff bar
-//	A content backstop guards against benign touches and any write we missed.
+//	Poll open files' mtime (throttled). Real change: clean buffer reloads, dirty
+//	buffer flags a conflict. Content backstop ignores benign/own touches.
 void Editor::checkExternalChanges()
 {
 	double now = ImGui::GetTime();
@@ -5180,10 +5174,8 @@ void Editor::checkExternalChanges()
 	}
 }
 
-//	Gutter-highlight the lines that actually changed in a reload so the user can
-//	see at a glance WHAT Claude touched. Trims the common prefix/suffix first so
-//	a localized edit in a huge file diffs only the small changed window; the LCS
-//	on that window is then cheap and bounded.
+//	Gutter-highlight the lines a reload changed. Prefix/suffix trim keeps the LCS
+//	bounded so a localized edit in a huge file is cheap.
 void Editor::markChangedLines(TabDocument& t, const std::string& oldText, const std::string& newText)
 {
 	t.editor.ClearMarkers();
@@ -5706,10 +5698,8 @@ void Editor::render()
 	updateFpsWatch(std::chrono::duration<double, std::milli>(perfT1 - perfT0).count());
 }
 
-//	Frame-time watchdog. renderMs = wall cost of building this frame's UI. Tracks
-//	a rolling 3s worst (shown in the fps tooltip + Dev Tools) and counts frames
-//	over the 30fps budget, logging the first ones to stderr so a perf regression
-//	leaves a trail without a profiler.
+//	Frame-time watchdog: rolling 3s worst UI-build time + count of frames over the
+//	30fps budget (shown in Dev Tools, slow frames logged to stderr).
 void Editor::updateFpsWatch(double renderMs)
 {
 	double now = ImGui::GetTime();
@@ -6425,8 +6415,7 @@ void Editor::renderMenuBar()
 			ImGui::EndMenu();
 		}
 
-		// VIEW — strictly window / appearance toggles. Code-editing toggles
-		// moved to Edit; folding to Code; history/diff to File; build to Project.
+		// VIEW — appearance toggles.
 		if (ImGui::BeginMenu("View"))
 		{
 			if (ImGui::MenuItem("Zoom In",  " " SHORTCUT "+")) { increaseFontSIze(); }
@@ -6443,7 +6432,10 @@ void Editor::renderMenuBar()
 			if (ImGui::MenuItem("Word Wrap", nullptr, &prefWordWrap)) {
 				for (auto& up : tabs) up->editor.SetWordWrap(prefWordWrap);
 			}
-			ImGui::Separator();
+			ImGui::EndMenu();
+		}
+		if (ImGui::BeginMenu("Window"))
+		{
 			if (ImGui::MenuItem("Navigation Panel",  nullptr, &navPanelVisible)) {}
 			if (ImGui::MenuItem("Output",            "F5",    &script->visible)) {}
 			if (ImGui::MenuItem("Developer Tools",   nullptr, &devToolsVisible)) {}
@@ -6883,27 +6875,22 @@ void Editor::renderStatusBar()
 	e.GetCurrentCursor(line, column);
 	float glyphWidth = ImGui::CalcTextSize("#").x;
 	char status[256];
-	// FPS readout (settings-toggleable) prefixes the right-aligned status string.
-	int statusSize = 0;
 	if (prefShowFps) {
-		statusSize = std::snprintf(status, sizeof(status),
+		std::snprintf(status, sizeof(status),
 			"%.0f fps  Ln %d, Col %d  Tab: %d  %s",
 			ImGui::GetIO().Framerate, line + 1, column + 1, e.GetTabSize(),
 			std::filesystem::path(t.filename).filename().string().c_str());
 	} else {
-		statusSize = std::snprintf(status, sizeof(status),
+		std::snprintf(status, sizeof(status),
 			"Ln %d, Col %d  Tab: %d  %s",
 			line + 1, column + 1, e.GetTabSize(),
 			std::filesystem::path(t.filename).filename().string().c_str());
 	}
 
-	// Right-align, but CLAMP the lead so it never goes negative — that was the
-	// bug that hid the fps: a wide git label shrank the available width, the
-	// (width - size) offset went negative, and the string's left end (the fps)
-	// got pushed off / under the previous item. Now it stays fully visible.
+	// Right-align, clamped so a wide left cluster can't push the lead negative
+	// (that hid the fps prefix off the left edge).
 	float size = ImGui::CalcTextSize(status).x;
-	float width = ImGui::GetContentRegionAvail().x;
-	float lead = width - size - glyphWidth;
+	float lead = ImGui::GetContentRegionAvail().x - size - glyphWidth;
 	if (lead < ImGui::GetStyle().ItemSpacing.x) lead = ImGui::GetStyle().ItemSpacing.x;
 	ImGui::SameLine(0.0f, lead);
 	ImGui::TextUnformatted(status);
