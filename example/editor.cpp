@@ -4376,6 +4376,17 @@ void Editor::renderDevTools()
 // browser on click.
 void Editor::renderMarkdownInline(const std::string &text, float wrapWidth)
 {
+    // Fast path: a line with no inline markup needs no per-word styling/measuring.
+    // ImGui::TextUnformatted with a wrap pos wraps AND clips off-screen cheaply —
+    // this is the bulk of typical markdown and the main perf win.
+    if (text.find_first_of("*_`[") == std::string::npos)
+    {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
+        ImGui::TextUnformatted(text.c_str());
+        ImGui::PopTextWrapPos();
+        return;
+    }
+
     struct Word
     {
         std::string s;
@@ -4543,8 +4554,17 @@ void Editor::renderMarkdownPreview()
             return;
         }
 
+        // Cache the serialized text — re-fetch only when the doc or its edit
+        // count changes, so we don't allocate a whole-document copy every frame.
+        std::string key = t.filename + ":" + std::to_string(t.editor.GetUndoIndex());
+        if (key != mdCacheKey)
+        {
+            mdCacheText = t.editor.GetText();
+            mdCacheKey = key;
+        }
+
         const float avail = ImGui::GetContentRegionAvail().x;
-        std::istringstream ss(t.editor.GetText());
+        std::istringstream ss(mdCacheText);
         std::string line;
         bool inCode = false;
         while (std::getline(ss, line))
@@ -7280,6 +7300,20 @@ void Editor::renderDockedDocuments()
         }
         pendingSideDir = 0;
         pendingSideDocId = 0;
+    }
+
+    // Markdown preview: the first frame it opens, dock it into a split to the
+    // RIGHT of the documents so it sits beside the .md file (not floating).
+    if (mdPreviewVisible && !mdPreviewWasVisible)
+        mdPreviewWantDock = true;
+    mdPreviewWasVisible = mdPreviewVisible;
+    if (mdPreviewWantDock && central)
+    {
+        ImGuiID sideId = 0, restId = 0;
+        ImGui::DockBuilderSplitNode(centralId, ImGuiDir_Right, 0.4f, &sideId, &restId);
+        ImGui::DockBuilderDockWindow("Markdown Preview###mdPreview", sideId);
+        ImGui::DockBuilderFinish(rootId);
+        mdPreviewWantDock = false;
     }
 
     for (size_t i = 0; i < tabs.size(); ++i)

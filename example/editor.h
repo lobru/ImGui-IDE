@@ -576,6 +576,10 @@ private:
 	// fences, blockquotes, rules, and inline bold/italic/code/links).
 	bool mdPreviewVisible = false;
 	void renderMarkdownPreview();
+	std::string mdCacheText;            // cached GetText() for the preview (perf)
+	std::string mdCacheKey;            // filename + undo index the cache was built for
+	bool        mdPreviewWantDock = false;   // one-shot: dock the preview beside the doc
+	bool        mdPreviewWasVisible = false; // edge-detect the open transition
 	void renderMarkdownInline(const std::string& text, float wrapWidth);  // word-wrap + inline styles
 
 	// External-changes feed — a persistent, dockable record of external (another
