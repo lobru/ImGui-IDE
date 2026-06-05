@@ -7022,6 +7022,7 @@ void Editor::render()
     // Sticky single-doc layout: PassthruCentralNode lets the doc fill the
     // work area cleanly. (We don't auto-hide the tab bar — the user wants
     // it always visible to track open docs.)
+    handleTabContextInput();   // eat tab right-clicks BEFORE the dock tab bar selects on them
     ImGui::DockSpace(dockId, dockArea, ImGuiDockNodeFlags_PassthruCentralNode);
 
     checkExternalChanges(); // reload clean docs / flag conflicts when disk changes under us
@@ -7219,8 +7220,6 @@ void Editor::updateFpsWatch(double renderMs)
 
 void Editor::renderDockedDocuments()
 {
-    size_t activeAtStart = activeTab; // restore point if a right-click only opens a tab menu
-
     // Target the dockspace's CENTRAL node for new documents. DockBuilderGetCentralNode
     // returns it regardless of the saved layout, so new docs always land in the
     // editing area as tabs — never derived from a (possibly floating/popped-out)
@@ -7234,14 +7233,21 @@ void Editor::renderDockedDocuments()
     // re-docking the active doc into the new right pane.
     if ((wantSplitRight || wantSplitLeft) && tabs.size() >= 2 && activeTab < tabs.size())
     {
-        ImGuiID newId = 0, otherId = 0;
-        ImGui::DockBuilderSplitNode(centralId, wantSplitLeft ? ImGuiDir_Left : ImGuiDir_Right,
-                                    0.5f, &newId, &otherId);
-        auto label = windowLabelFor(*tabs[activeTab]);
-        ImGui::DockBuilderDockWindow(label.c_str(), newId);
-        ImGui::DockBuilderFinish(rootId);
-        tabs[activeTab]->wantFocus = true;
-        tabs[activeTab]->dockedOnce = true;
+        if (countDocNodes() >= 2)
+        {
+            pushToast("Split limit: only two side-by-side editor panes", IM_COL32(240, 200, 90, 255));
+        }
+        else
+        {
+            ImGuiID newId = 0, otherId = 0;
+            ImGui::DockBuilderSplitNode(centralId, wantSplitLeft ? ImGuiDir_Left : ImGuiDir_Right,
+                                        0.5f, &newId, &otherId);
+            auto label = windowLabelFor(*tabs[activeTab]);
+            ImGui::DockBuilderDockWindow(label.c_str(), newId);
+            ImGui::DockBuilderFinish(rootId);
+            tabs[activeTab]->wantFocus = true;
+            tabs[activeTab]->dockedOnce = true;
+        }
         wantSplitRight = false;
         wantSplitLeft = false;
     }
@@ -7250,19 +7256,27 @@ void Editor::renderDockedDocuments()
     // that should land in a split beside the central docs, not as a tab.
     if (pendingSideDir != 0)
     {
-        for (auto &up : tabs)
+        if (countDocNodes() >= 2)
         {
-            if (up->id != pendingSideDocId)
-                continue;
-            ImGuiID sideId = 0, restId = 0;
-            ImGui::DockBuilderSplitNode(centralId,
-                                        pendingSideDir < 0 ? ImGuiDir_Left : ImGuiDir_Right,
-                                        0.5f, &sideId, &restId);
-            ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), sideId);
-            ImGui::DockBuilderFinish(rootId);
-            up->dockedOnce = true; // don't let the loop re-dock it to centre
-            up->wantFocus = true;
-            break;
+            // Already two panes — the file stays opened as a central tab.
+            pushToast("Split limit: only two side-by-side editor panes", IM_COL32(240, 200, 90, 255));
+        }
+        else
+        {
+            for (auto &up : tabs)
+            {
+                if (up->id != pendingSideDocId)
+                    continue;
+                ImGuiID sideId = 0, restId = 0;
+                ImGui::DockBuilderSplitNode(centralId,
+                                            pendingSideDir < 0 ? ImGuiDir_Left : ImGuiDir_Right,
+                                            0.5f, &sideId, &restId);
+                ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), sideId);
+                ImGui::DockBuilderFinish(rootId);
+                up->dockedOnce = true; // don't let the loop re-dock it to centre
+                up->wantFocus = true;
+                break;
+            }
         }
         pendingSideDir = 0;
         pendingSideDocId = 0;
@@ -7319,48 +7333,67 @@ void Editor::renderDockedDocuments()
         }
     }
 
-    // Right-click a document tab → context menu. Find each tab's docked rect
-    // (persists per-window) so even a non-active tab can be targeted.
-    for (size_t i = 0; i < tabs.size(); ++i)
-    {
-        ImGuiWindow *w = ImGui::FindWindowByName(windowLabelFor(*tabs[i]).c_str());
-        if (!w)
-            continue;
-        const ImRect &r = w->DC.DockTabItemRect;
-        if (r.GetWidth() <= 0.0f)
-            continue;
-        if (ImGui::IsMouseHoveringRect(r.Min, r.Max, false) && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-        {
-            tabCtxIdx = (int)i;
-            tabCtxRestore = (int)activeAtStart; // re-asserted every frame the menu is open
-            ImGui::OpenPopup("##tabCtxMenu");
-            break;
-        }
-    }
-
-    // Block ImGui's "right-click selects the tab" (it re-selects on BOTH mouse
-    // down and release). While the menu is open, keep restoring our active tab
-    // and re-request the original tab in the dock bar — every frame, so the
-    // release event can't sneak the selection through.
-    bool tabMenuOpen = ImGui::IsPopupOpen("##tabCtxMenu");
-    if (tabMenuOpen && tabCtxRestore >= 0 && tabCtxRestore < (int)tabs.size())
-    {
-        activeTab = (size_t)tabCtxRestore;
-        if (central && central->TabBar)
-        {
-            ImGuiWindow *ow = ImGui::FindWindowByName(windowLabelFor(*tabs[tabCtxRestore]).c_str());
-            if (ow)
-                central->TabBar->NextSelectedTabId = ow->TabId;
-        }
-    }
-    if (!tabMenuOpen)
-        tabCtxRestore = -1;
-
+    // The tab context menu itself. Detection + right-click suppression happen in
+    // handleTabContextInput() (before the dock tab bar processes the click).
     if (tabCtxIdx >= 0 && tabCtxIdx < (int)tabs.size() && ImGui::BeginPopup("##tabCtxMenu"))
     {
         renderTabContextMenu(tabCtxIdx);
         ImGui::EndPopup();
     }
+}
+
+//	Detect a right-click directly on a document tab and OPEN the context menu,
+//	while eating the right button so ImGui's tab bar never selects the tab (it
+//	reacts on both mouse-down and mouse-release — line 10754 in imgui_widgets).
+//	IsMouseClicked reads MouseDown+MouseDownDuration; IsMouseReleased reads
+//	MouseReleased — so those are the fields to clobber. Runs before DockSpace().
+void Editor::handleTabContextInput()
+{
+    ImGuiIO &io = ImGui::GetIO();
+
+    if (suppressTabRClick)
+    {
+        bool stillDown = io.MouseDown[ImGuiMouseButton_Right];
+        io.MouseDownDuration[ImGuiMouseButton_Right] = -1.0f;   // IsMouseClicked(1) → false
+        io.MouseReleased[ImGuiMouseButton_Right] = false;       // IsMouseReleased(1) → false
+        if (!stillDown)
+            suppressTabRClick = false;
+    }
+
+    if (!suppressTabRClick && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+    {
+        for (size_t i = 0; i < tabs.size(); ++i)
+        {
+            ImGuiWindow *w = ImGui::FindWindowByName(windowLabelFor(*tabs[i]).c_str());
+            if (!w)
+                continue;
+            const ImRect &r = w->DC.DockTabItemRect;   // last frame's tab rect (persists)
+            if (r.GetWidth() <= 0.0f)
+                continue;
+            if (ImGui::IsMouseHoveringRect(r.Min, r.Max, false))
+            {
+                tabCtxIdx = (int)i;
+                ImGui::OpenPopup("##tabCtxMenu");
+                suppressTabRClick = true;
+                io.MouseDownDuration[ImGuiMouseButton_Right] = -1.0f;   // eat this frame too
+                break;
+            }
+        }
+    }
+}
+
+//	Count distinct dock nodes that currently host document tabs — used to cap
+//	the editor at two side-by-side document panes (plus nav / panels).
+int Editor::countDocNodes() const
+{
+    std::unordered_set<ImGuiID> nodes;
+    for (auto &up : tabs)
+    {
+        ImGuiWindow *w = ImGui::FindWindowByName(windowLabelFor(*up).c_str());
+        if (w && w->DockNode)
+            nodes.insert(w->DockNode->ID);
+    }
+    return (int)nodes.size();
 }
 
 //	Right-click-a-tab context menu. Close actions just flag open=false and let
@@ -8235,40 +8268,7 @@ void Editor::renderMenuBar()
             {
                 setAutocompleteMode(autocomplete);
             }
-            // Markdown preview — context-sensitive: only when the active document
-            // is a markdown file (not an always-on global toggle).
-            {
-                auto ext = std::filesystem::path(doc().filename).extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-                if (isMarkdownExt(ext))
-                {
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Preview Markdown", nullptr, &mdPreviewVisible))
-                    {
-                    }
-                }
-            }
-            // "Switch Header/Source" only really applies to C/C++ files — hide
-            // it for other languages so the menu stays focused. Render it ABOVE
-            // Exit so Exit is always the last item in the menu.
-            bool isCxxDoc = false;
-            if (!tabs.empty() && doc().filename != "untitled")
-            {
-                auto *lang = doc().editor.GetLanguage();
-                if (lang)
-                {
-                    const std::string &n = lang->name;
-                    isCxxDoc = (n == "C" || n == "C++");
-                }
-            }
-            if (isCxxDoc)
-            {
-                if (ImGui::MenuItem("Switch Header/Source", "Alt+O"))
-                {
-                    toggleHeaderSource();
-                }
-                ImGui::Separator();
-            }
+
             if (ImGui::MenuItem("Format Document", "Alt+Shift+F"))
             {
                 formatActiveDocument();
@@ -8420,12 +8420,46 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("External Changes", nullptr, &externalChangesVisible))
             {
             }
-            ImGui::Separator();
+             // Markdown preview — context-sensitive: only when the active document
+            // is a markdown file (not an always-on global toggle).
+            {
+                auto ext = std::filesystem::path(doc().filename).extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                if (isMarkdownExt(ext))
+                {
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Preview Markdown", nullptr, &mdPreviewVisible))
+                    {
+                    }
+                }
+            }
+            // "Switch Header/Source" only really applies to C/C++ files — hide
+            // it for other languages so the menu stays focused. Render it ABOVE
+            // Exit so Exit is always the last item in the menu.
+            bool isCxxDoc = false;
+            if (!tabs.empty() && doc().filename != "untitled")
+            {
+                auto *lang = doc().editor.GetLanguage();
+                if (lang)
+                {
+                    const std::string &n = lang->name;
+                    isCxxDoc = (n == "C" || n == "C++");
+                }
+            }
+            if (isCxxDoc)
+            {
+                if (ImGui::MenuItem("Switch Header/Source", "Alt+O"))
+                {
+                    toggleHeaderSource();
+                }
+                ImGui::Separator();
+            }
+ 			ImGui::Separator();
             if (ImGui::MenuItem("Split Right", SHORTCUT "\\"))
             {
                 splitActiveTabRight();
             }
-            ImGui::Separator();
+
             if (ImGui::MenuItem("Pop Out Left", "Ctrl+Alt+←"))
             {
                 popOutActiveDoc(-1);
@@ -8450,12 +8484,11 @@ void Editor::renderMenuBar()
             }
             if (ImGui::MenuItem("Reset Layout"))
             {
-                // Clear the saved layout AND re-arm the default-layout builder so
-                // next frame rebuilds Nav-left / Refs-right / Output-bottom.
+                // Drop the saved layout, then rebuild the default AND re-dock every
+                // open document back into the central node — remergeAllWindows pulls
+                // split / popped-out docs back in (the plain reset left them adrift).
                 ImGui::LoadIniSettingsFromMemory("");
-                ImGui::DockBuilderRemoveNode(ImGui::GetID("MainDockSpace"));
-                dockLayoutInitialized = false;
-                centralDockId = 0;
+                remergeAllWindows();
             }
 
             ImGui::EndMenu();
@@ -8464,29 +8497,7 @@ void Editor::renderMenuBar()
         // PROJECT — build / run / project tooling.
         if (ImGui::BeginMenu("Project"))
         {
-            if (ImGui::MenuItem("Build Project", "F6"))
-            {
-                runProjectBuild();
-            }
-            if (ImGui::MenuItem("Run", "F5"))
-            {
-                runProjectExeOrScript();
-            }
-            if (ImGui::MenuItem("Run with Arguments..."))
-            {
-                runProjectWithArgs();
-            }
-            if (ImGui::MenuItem("Run Active Document (script)"))
-            {
-                runScriptForDoc();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Open Project..."))
-            {
-                openProjectFolderPicker();
-            }
-
-            if (ImGui::BeginMenu("Git"))
+        	   if (ImGui::BeginMenu("Git"))
             {
                 bool inRepo;
                 {
@@ -8529,8 +8540,31 @@ void Editor::renderMenuBar()
                 }
                 ImGui::EndMenu();
             }
-            ImGui::EndMenu();
+
+            if (ImGui::MenuItem("Build Project", "F6"))
+            {
+                runProjectBuild();
+            }
+            if (ImGui::MenuItem("Run", "F5"))
+            {
+                runProjectExeOrScript();
+            }
+            if (ImGui::MenuItem("Run with Arguments..."))
+            {
+                runProjectWithArgs();
+            }
+            if (ImGui::MenuItem("Run Active Document (script)"))
+            {
+                runScriptForDoc();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Open Project..."))
+            {
+                openProjectFolderPicker();
+            }
+       ImGui::EndMenu();
         }
+
 
         // Active project name — right-aligned so the workspace is always visible.
         // Folder (or project-file parent) name; full path on hover.
