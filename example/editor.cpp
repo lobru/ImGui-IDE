@@ -5895,16 +5895,21 @@ void Editor::renderDocumentWindow(TabDocument& t)
 void Editor::tryToQuit()
 {
 	// Persist file-dialog favourites + editor settings BEFORE the quit path
-	// can pull us out of the message loop.
-	saveFileDialogPlaces();
-	// Snapshot the current tab set into projectSessions for whatever
-	// projectRoot is active, so next launch with the same --project arg
-	// restores the workspace.
-	saveCurrentProjectSession();
-	saveSettings();
-	// Flush the ImGui layout right now too, so window positions / docking
-	// state are guaranteed-persisted even on abrupt close.
-	if (auto* fn = ImGui::GetIO().IniFilename) ImGui::SaveIniSettingsToDisk(fn);
+	// can pull us out of the message loop. Wrapped: a filesystem throw here must
+	// not escape into the SDL event handler and abort the process on close.
+	try {
+		saveFileDialogPlaces();
+		// Snapshot the current tab set into projectSessions for whatever
+		// projectRoot is active, so next launch with the same --project arg
+		// restores the workspace.
+		saveCurrentProjectSession();
+		saveSettings();
+		// Flush the ImGui layout right now too, so window positions / docking
+		// state are guaranteed-persisted even on abrupt close.
+		if (auto* fn = ImGui::GetIO().IniFilename) ImGui::SaveIniSettingsToDisk(fn);
+	}
+	catch (const std::exception& e) { std::fprintf(stderr, "tryToQuit: save failed: %s\n", e.what()); }
+	catch (...)                     { std::fprintf(stderr, "tryToQuit: save failed (unknown)\n"); }
 
 	bool anyDirty = false;
 	for (size_t i = 0; i < tabs.size(); ++i)

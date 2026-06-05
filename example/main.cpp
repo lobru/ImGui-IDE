@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -26,10 +27,76 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#include <crtdbg.h>
 #endif
 
 #include "editor.h"
 #include "dejavu.h"
+
+
+//
+//	Crash / assert capture — the "Debug Error" on close has been hard to pin
+//	without the underlying text. Route every failure path (CRT assert, unhandled
+//	C++ exception, SEH access violation) to a crash.log next to the settings, so
+//	the next occurrence is self-reported instead of needing a manual repro.
+//
+
+static std::string gCrashLogPath;
+
+static void writeCrashLine(const char* tag, const char* msg) {
+	if (!gCrashLogPath.empty()) {
+		FILE* f = nullptr;
+		if (fopen_s(&f, gCrashLogPath.c_str(), "a") == 0 && f) {
+			std::fprintf(f, "[%s] %s\n", tag, msg ? msg : "(null)");
+			std::fflush(f);
+			std::fclose(f);
+		}
+	}
+	std::fprintf(stderr, "[%s] %s\n", tag, msg ? msg : "(null)");
+	std::fflush(stderr);
+}
+
+#ifdef _WIN32
+// Intercepts the Debug CRT assert/error MESSAGE (file, line, expression) before
+// the dialog. Returning FALSE keeps the normal report behavior intact.
+static int __cdecl crtReportHook(int reportType, char* message, int* returnValue) {
+	const char* kind = (reportType == _CRT_ASSERT) ? "CRT_ASSERT"
+		: (reportType == _CRT_ERROR) ? "CRT_ERROR" : "CRT_WARN";
+	if (reportType != _CRT_WARN) writeCrashLine(kind, message);
+	if (returnValue) *returnValue = 0;   // don't force a debugger break
+	return FALSE;                        // let default reporting proceed
+}
+
+static LONG WINAPI crashFilter(EXCEPTION_POINTERS* ep) {
+	char buf[160];
+	std::snprintf(buf, sizeof(buf), "code=0x%08lX addr=%p",
+		ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0UL,
+		ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : nullptr);
+	writeCrashLine("SEH", buf);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
+static void onTerminate() {
+	const char* what = "(no active exception)";
+	try {
+		auto e = std::current_exception();
+		if (e) std::rethrow_exception(e);
+	}
+	catch (const std::exception& ex) { what = ex.what(); }
+	catch (...)                      { what = "(non-std exception)"; }
+	writeCrashLine("TERMINATE", what);
+	std::abort();
+}
+
+static void installCrashHandlers() {
+	gCrashLogPath = (Editor::userConfigDir() / "crash.log").string();
+	std::set_terminate(onTerminate);
+#ifdef _WIN32
+	_CrtSetReportHook(crtReportHook);
+	SetUnhandledExceptionFilter(crashFilter);
+#endif
+}
 
 
 //
@@ -63,6 +130,9 @@ int main(int argc, char** argv) {
 		freopen_s(&fp, "CONIN$",  "r", stdin);
 	}
 #endif
+	// Route asserts / crashes to crash.log as early as possible.
+	installCrashHandlers();
+
 	// Parse --project <dir> and positional args. Positionals are sorted into
 	// (a) project root (last folder OR project file we see — supports shell
 	// context-menu integration: right-click a .sln in Explorer → opens here)
