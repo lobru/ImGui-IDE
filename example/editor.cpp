@@ -3444,13 +3444,46 @@ bool Editor::tsGoToDefinition(const std::string &symbol)
         if (++scanned > kFileCap)
             break;
 
-        std::ifstream f(walk->path(), std::ios::binary);
-        if (!f.is_open())
-            continue;
-        std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        f.close();
+        // Per-file parse cache: re-parse only files whose mtime changed since the
+        // last jump, so repeated go-to-defs don't re-read + re-parse the whole
+        // tree. Function-static (keyed by absolute path) so it spans calls.
+        static std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::vector<ts::Symbol>>> cache;
+        std::string path = walk->path().string();
+        std::error_code mec;
+        auto mtime = std::filesystem::last_write_time(walk->path(), mec);
 
-        for (auto &s : ts::extractSymbols(lang, src))
+        const std::vector<ts::Symbol>* symsPtr = nullptr;
+        auto cit = cache.find(path);
+        if (!mec && cit != cache.end() && cit->second.first == mtime)
+        {
+            symsPtr = &cit->second.second;
+        }
+        else
+        {
+            std::ifstream f(walk->path(), std::ios::binary);
+            if (!f.is_open())
+                continue;
+            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            f.close();
+            std::vector<ts::Symbol> parsed = ts::extractSymbols(lang, src);
+            if (!mec)
+            {
+                if (cache.size() > 8000)
+                    cache.clear();   // bound memory
+                auto& slot = cache[path];
+                slot.first = mtime;
+                slot.second = std::move(parsed);
+                symsPtr = &slot.second;
+            }
+            else
+            {
+                static std::vector<ts::Symbol> scratch;   // uncacheable (no mtime)
+                scratch = std::move(parsed);
+                symsPtr = &scratch;
+            }
+        }
+
+        for (auto &s : *symsPtr)
         {
             if (!s.isDefinition || s.name != symbol)
                 continue;
