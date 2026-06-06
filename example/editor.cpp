@@ -7397,6 +7397,9 @@ void Editor::renderDockedDocuments()
         wantSplitLeft = false;
     }
 
+    // Re-fetch central (a split above may have reallocated nodes).
+    central = ImGui::DockBuilderGetCentralNode(rootId);
+
     // Honor a pending "open to left/right" — a file opened from the nav panel
     // that should land in a split beside the central docs, not as a tab.
     if (pendingSideDir != 0)
@@ -7429,6 +7432,10 @@ void Editor::renderDockedDocuments()
         pendingSideDir = 0;
         pendingSideDocId = 0;
     }
+
+    // Re-fetch central: the split / open-to-side DockBuilder ops above may have
+    // reallocated nodes, invalidating the cached pointer.
+    central = ImGui::DockBuilderGetCentralNode(rootId);
 
     // Markdown preview: the first frame it opens, dock it into a split to the
     // RIGHT of the documents so it sits beside the .md file (not floating).
@@ -7476,6 +7483,13 @@ void Editor::renderDockedDocuments()
             ImGui::SetWindowFocus(windowLabelFor(t).c_str());
         }
     }
+
+    // Re-fetch the central node: the split/side/markdown-preview DockBuilder
+    // operations above can reallocate the dock-node pool, leaving the `central`
+    // pointer cached at the top of this function DANGLING. Reading the stale
+    // pointer (e.g. central->TabBar->BarRect below) reads freed memory and
+    // crashes — this is the "markdown preview crash".
+    central = ImGui::DockBuilderGetCentralNode(rootId);
 
     // "+" button on the central node's tab bar → new tab. AmendTabBar lets us
     // append our own widget to a dock node's auto-generated tab bar.
