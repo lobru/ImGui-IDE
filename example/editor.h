@@ -295,6 +295,11 @@ private:
 	bool                  navPanelVisible = true;      // docked by default
 	bool                  dockLayoutInitialized = false; // first-time DockBuilder split
 	unsigned int          centralDockId = 0;           // node new doc windows dock into
+	// Root dockspace ID, captured in the ##EditorHost window's ID-stack context.
+	// MUST be reused (not recomputed via GetID) by menu/keybind handlers — GetID is
+	// ID-stack-relative, so calling it from a menu popup yields a DIFFERENT id and
+	// the reset/remerge would rebuild a phantom node, leaving windows adrift.
+	unsigned int          mainDockId = 0;
 	std::filesystem::path projectRoot;            // empty = none set; default to cwd
 
 	// Nav tree context menu state — set when a file/folder is right-clicked.
@@ -550,6 +555,21 @@ private:
 	// per-project + per-language settings hierarchy (interops with VS / VSCode).
 	void applyEditorConfig(TabDocument& t);
 	void renderReferencesPanel();
+
+	// Symbol / definition browser (View → Symbols). Two modes the user toggles:
+	//  - Document: live outline of the active file (tree-sitter parse, cached by
+	//    filename + edit count so it re-parses only on change).
+	//  - Project: every indexed symbol + index status — "monitor the index".
+	bool                            symbolsPanelVisible = false;
+	bool                            symbolsProjectMode  = false;   // false = document outline
+	char                            symbolsFilter[128]  = {};
+	void renderSymbolsPanel();
+	std::string                     symbolsCacheFile;              // doc-mode cache key (filename)
+	size_t                          symbolsCacheUndo = (size_t) -1;// doc-mode cache key (edit count)
+	std::vector<ts::Symbol>         symbolsCacheSyms;              // parsed outline of the active doc
+	struct SymRow { std::string name; std::string file; int line; ts::Kind kind; };
+	std::vector<SymRow>             symbolsProjectRows;            // flattened project index
+	int                             symbolsProjectGen = -1;        // index gen symbolsProjectRows is from
 
 	// Find in Files — project-wide text search with a query box + options.
 	bool                            findInFilesVisible = false;
