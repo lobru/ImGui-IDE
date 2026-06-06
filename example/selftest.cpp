@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "TextEditor.h"
+#include "tsindex.h"
 
 static int gFailures = 0;
 static int gChecks = 0;
@@ -189,6 +190,38 @@ int main()
 			"backslash-continued line is preprocessor");
 		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 2, 0) != kPre,
 			"line after the continuation is back to normal code");
+	}
+
+	// ── Tree-sitter symbol extraction (go-to-def/decl foundation) ──
+	{
+		std::string cpp =
+			"namespace ns {\n"
+			"class Foo {\n"
+			"public:\n"
+			"    int bar(int x);\n"
+			"};\n"
+			"}\n"
+			"int ns::Foo::bar(int x) { return baz(x); }\n"
+			"void baz() {}\n";
+		auto syms = ts::extractSymbols(ts::Lang::Cpp, cpp);
+
+		// Dump what we got so the capture→kind mapping is visible while iterating.
+		std::fprintf(stderr, "[ts] available=%d  symbols=%zu\n", (int) ts::available(), syms.size());
+		for (auto& s : syms)
+			std::fprintf(stderr, "[ts]   %-16s kind=%d def=%d  @%d:%d\n",
+				s.name.c_str(), (int) s.kind, (int) s.isDefinition, s.line, s.column);
+
+		bool foo = false, bar = false, baz = false;
+		for (auto& s : syms) {
+			if (s.name == "Foo") foo = true;
+			if (s.name == "bar") bar = true;
+			if (s.name == "baz") baz = true;
+		}
+		CHECK(ts::available(), "tree-sitter C++ grammar available");
+		CHECK(!syms.empty(), "tree-sitter extracts symbols from C++");
+		CHECK(foo, "tree-sitter finds class Foo");
+		CHECK(bar, "tree-sitter finds method bar");
+		CHECK(baz, "tree-sitter finds function baz");
 	}
 
 	if (gFailures == 0) {

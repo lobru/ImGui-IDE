@@ -48,13 +48,23 @@ target_compile_options(TextEditorLib PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
+# ── Tree-sitter symbol index ─────────────────────────────────────────────
+# Pure logic (parse → tagged symbols), no ImGui/SDL — links into both the app
+# and the headless self-test. Pulls in the isolated treesitter dep.
+add_library(tsindex STATIC tsindex.cpp tsindex.h)
+target_link_libraries(tsindex PUBLIC treesitter)
+target_include_directories(tsindex PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(tsindex PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
 # ── Example executable ───────────────────────────────────────────────────
 add_executable(example
 	editor.cpp
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex)
 
 # The example executable owns main(); the editor library doesn't.
 target_compile_definitions(example PRIVATE STANDALONE=1)
@@ -90,7 +100,7 @@ add_custom_command(TARGET example POST_BUILD
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
 add_executable(selftest selftest.cpp)
-target_link_libraries(selftest PRIVATE TextEditorLib imguifd)
+target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex)
 target_compile_options(selftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
