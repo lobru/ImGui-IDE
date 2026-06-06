@@ -489,7 +489,6 @@ void TextEditor::renderSelections()
 	ImVec2 clipMax(windowRightX, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y);
 	drawList->PushClipRect(clipMin, clipMax, true);
 
-	auto cursorIndex = 0;
 	for (auto& cursor : cursors)
 	{
 		if (!cursor.hasSelection())
@@ -543,7 +542,6 @@ void TextEditor::renderSelections()
 			(void)hovered;
 
 		}
-		cursorIndex++;
 	}
 
 	drawList->PopClipRect();
