@@ -103,6 +103,10 @@ private:
 	float rightTextPos;
 	float rightTextEnd;
 	float textScroll;
+	// Middle-mouse pan state — the diff honors the editor's invert + accel prefs.
+	bool   diffPanning = false;
+	ImVec2 diffPanAnchor;
+	ImVec2 diffPanLast;
 	// Right-edge gutter inside each text column so glyphs don't kiss the
 	// next column's line-number strip.
 	static constexpr float textRightPadding = 10.0f;

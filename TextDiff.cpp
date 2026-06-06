@@ -507,6 +507,33 @@ void TextDiff::renderSideBySideTextScrollbars() {
 		}
 	}
 
+	// Middle-mouse pan — the diff previously had none, so it ignored the editor's
+	// scroll settings. Mirror the document editor: drag-to-pan with the same
+	// distance-based acceleration and the invert-direction preference.
+	if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+		diffPanning = true;
+		diffPanAnchor = diffPanLast = ImGui::GetMousePos();
+	}
+	if (diffPanning) {
+		if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+			diffPanning = false;
+		} else {
+			ImVec2 p = ImGui::GetMousePos();
+			ImVec2 d(p.x - diffPanLast.x, p.y - diffPanLast.y);
+			diffPanLast = p;
+			ImVec2 r(p.x - diffPanAnchor.x, p.y - diffPanAnchor.y);
+			float dist = std::sqrt(r.x * r.x + r.y * r.y);
+			float ref = ImGui::GetTextLineHeightWithSpacing() * 8.0f;
+			float tt = (ref > 0.0f) ? dist / ref : 0.0f;
+			float gain = GetPanScrollAccel();
+			float accel = (gain <= 0.0f) ? 1.0f : std::min(1.0f + tt * tt * gain * 0.25f, 16.0f);
+			float sign = IsPanInverted() ? -1.0f : 1.0f;
+			ImGui::SetScrollY(std::clamp(ImGui::GetScrollY() - sign * d.y * accel, 0.0f, ImGui::GetScrollMaxY()));
+			if (maxColumnsWidth > visibleColumnsWidth)
+				textScroll = std::clamp(textScroll - sign * d.x * accel, 0.0f, maxColumnsWidth - visibleColumnsWidth);
+		}
+	}
+
 	if (ImGui::IsWindowHovered()) {
 		if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
 			if (ImGui::IsKeyDown(ImGuiMod_Ctrl)) {

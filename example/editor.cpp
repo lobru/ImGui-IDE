@@ -285,6 +285,8 @@ Editor::TabDocument &Editor::newTab()
     t->editor.SetCompletePairedGlyphs(prefCompletePairs);
     t->editor.SetPanInverted(prefInvertPan);
     t->editor.SetPanScrollAccel(prefPanScrollAccel);
+    t->diff.SetPanInverted(prefInvertPan);          // the diff view honors the same scroll prefs
+    t->diff.SetPanScrollAccel(prefPanScrollAccel);
     t->editor.SetWordWrap(prefWordWrap);
     t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
     applyKeybindOverridesToEditor(t->editor); // user keybind remaps into this editor
@@ -5551,6 +5553,8 @@ void Editor::renderSettings()
                 {
                     up->editor.SetPanInverted(prefInvertPan);
                     up->editor.SetPanScrollAccel(prefPanScrollAccel);
+                    up->diff.SetPanInverted(prefInvertPan);
+                    up->diff.SetPanScrollAccel(prefPanScrollAccel);
                     up->editor.SetWordWrap(prefWordWrap);
                     up->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
                 }
