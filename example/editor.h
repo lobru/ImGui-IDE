@@ -644,6 +644,7 @@ private:
 	// Tree-sitter-accurate definition jump for the active doc's language (C++/C#).
 	// Returns true if it resolved + navigated; false → fall through to grep.
 	bool tsGoToDefinition(const std::string& symbol);
+	bool tsGoToDefinitionInDoc(const std::string& symbol);   // live current-doc parse, index-free
 	void openCSharpLearn(const std::string& rawSymbol);   // C# SDK types -> Microsoft Learn docs (no on-disk source)
 
 	// MSVC toolchain + Windows SDK include directories, discovered ourselves

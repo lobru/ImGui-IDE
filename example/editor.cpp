@@ -3530,6 +3530,36 @@ bool Editor::tsGoToDefinition(const std::string &symbol)
     return true;
 }
 
+// Go-to-definition within the CURRENT document via a live tree-sitter parse.
+// Index-free, so it works for the FIRST jumps right after opening a file (before
+// the background index finishes) and for any same-file definition in every
+// supported language — directly addressing "go-to-def rarely usable".
+bool Editor::tsGoToDefinitionInDoc(const std::string &symbol)
+{
+    if (symbol.empty() || tabs.empty())
+        return false;
+    std::string ext = std::filesystem::path(doc().filename).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    ts::Lang lang = ts::langForExtension(ext);
+    if (lang == ts::Lang::None)
+        return false;
+    auto syms = ts::extractSymbols(lang, doc().editor.GetText());
+    int bestLine = -1, bestRank = -1;
+    for (auto &s : syms)
+        if (s.isDefinition && s.name == symbol)
+        {
+            int r = rankKind(s.kind);
+            if (r > bestRank) { bestRank = r; bestLine = s.line; }
+        }
+    if (bestLine < 0)
+        return false;
+    auto &e = doc().editor;
+    e.SetCursor(bestLine, 0);
+    e.SelectLine(bestLine);
+    e.ScrollToLine(bestLine, TextEditor::Scroll::alignMiddle);
+    return true;
+}
+
 void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration)
 {
     ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
@@ -3573,8 +3603,14 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     // is now fast for declarations too because deps/ is excluded from the walk.
     if (!declaration)
     {
-        // Tree-sitter first: a real parse beats the grep index for accuracy
-        // (this is the fix for C# go-to-def landing on the wrong site).
+        // Current document first: a live parse is instant and index-free, so the
+        // first jumps after opening a file resolve same-file defs without waiting
+        // on the background index.
+        if (tsGoToDefinitionInDoc(symbol))
+            return;
+
+        // Then the prebuilt project index: a real parse beats the grep index for
+        // accuracy (this is the fix for C# go-to-def landing on the wrong site).
         if (tsGoToDefinition(symbol))
             return;
 
