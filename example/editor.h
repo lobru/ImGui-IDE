@@ -171,7 +171,7 @@ public:
 
 	// Persistent settings root — same absolute location every run regardless
 	// of cwd, so layout / favourites / etc. actually round-trip.
-	//   Windows: %APPDATA%\ImGuiColorTextEdit\
+	//   Windows: %APPDATA%\ImGuiColorTextEdit
 	//   POSIX:   $XDG_CONFIG_HOME/imguicolortext  (or  $HOME/.config/...)
 	// The directory is created on first call. Public so main.cpp can route
 	// the ImGui ini path through it too.

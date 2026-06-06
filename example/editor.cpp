@@ -8,14 +8,27 @@
 //	Include files
 //
 #define _CRT_SECURE_NO_WARNINGS // for std::getenv used in #include resolution
+#ifndef _WIN32
+// Expose POSIX declarations (popen/pclose, etc.) under strict -std=c++17, which
+// defines __STRICT_ANSI__ and would otherwise hide them in glibc. Must come
+// before any standard header is included.
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
+#endif
 #ifdef _WIN32
 #include <Windows.h>
 #include <process.h>  // _popen / _pclose
 #include <shellapi.h> // SHFileOperation for recycle-bin delete
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h> // _NSGetExecutablePath for get_module_path()
 #endif
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <exception>
 #include <filesystem>
@@ -23,6 +36,15 @@
 #include <sstream>
 #include <thread>
 #include <unordered_set>
+
+#ifndef _WIN32
+// The codebase uses the MSVC spellings _popen/_pclose at several call sites that
+// aren't individually platform-guarded; map them to the POSIX names so they
+// compile and work on Linux/macOS. (Guarded call sites already use popen/pclose
+// directly in their #else branch, so this only affects the unguarded ones.)
+#define _popen popen
+#define _pclose pclose
+#endif
 
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
@@ -38,10 +60,21 @@
 #define STBI_NO_PIC
 #define STBI_NO_PNM
 #define STBI_NO_HDR
+#if defined(_MSC_VER)
 #pragma warning(push)
 #pragma warning(disable : 4505)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#endif
 #include "stb/stb_image.h"
+#if defined(_MSC_VER)
 #pragma warning(pop)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 #include "editor.h"
 #include "tsindex.h"
@@ -124,12 +157,29 @@ std::unordered_map<std::string, const TextEditor::Language *> &Editor::runtimeLa
 
 static std::filesystem::path get_module_path()
 {
+#ifdef _WIN32
     char buf[256]{};
     if (auto d = GetModuleFileNameA(nullptr, buf, sizeof(buf)))
     {
+        (void)d;
         return std::filesystem::path(buf);
     }
     return std::filesystem::current_path();
+#elif defined(__APPLE__)
+    char buf[1024];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0)
+    {
+        std::error_code ec;
+        auto canon = std::filesystem::weakly_canonical(std::filesystem::path(buf), ec);
+        return ec ? std::filesystem::path(buf) : canon;
+    }
+    return std::filesystem::current_path();
+#else
+    std::error_code ec;
+    auto p = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return ec ? std::filesystem::current_path() : p;
+#endif
 }
 
 void Editor::loadRuntimeLanguages()
@@ -3381,6 +3431,8 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
     }
 
     // 4. Windows SDK (covers <windows.h>, CRT headers). KitsRoot10 from registry.
+    //    Windows-only: the registry + Windows-SDK layout don't exist elsewhere.
+#ifdef _WIN32
     {
         std::filesystem::path kits;
         char val[1024];
@@ -3412,6 +3464,7 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
             }
         }
     }
+#endif
 
     return sysIncludeDirs_;
 }
@@ -3588,7 +3641,7 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
         static const std::unordered_set<std::string> ok = {
             ".c", ".h", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh",
             ".m", ".mm", ".inl",
-            ".cs", ".vb", ".fs", ".fsx",
+            ".cs", ".vb", ".fs", ".fsx",".fxh",".fx",".hlsl",".glsl",
             ".java", ".kt", ".kts", ".scala", ".groovy",
             ".py", ".pyw", ".rb", ".php", ".pl",
             ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
@@ -5344,7 +5397,7 @@ void Editor::detectToolchains()
     if (toolchainsDetected)
         return;
     toolchainsDetected = true;
-    std::error_code ec;
+    [[maybe_unused]] std::error_code ec;
 
 #ifdef _WIN32
     // Enumerate MSVC installations under each VS edition.
@@ -9265,8 +9318,8 @@ std::filesystem::path Editor::userConfigDir()
     // Stable absolute path so settings round-trip across launches regardless
     // of which directory the editor was started from. Used for both the
     // favourites blob and the ImGui layout .ini file.
-    //   Windows: %APPDATA%\ImGuiColorTextEdit\
-	//   POSIX:   $XDG_CONFIG_HOME/imguicolortext  (or  $HOME/.config/...)
+    //   Windows: %APPDATA%\ImGuiColorTextEdit
+    //   POSIX:   $XDG_CONFIG_HOME/imguicolortext  (or  $HOME/.config/...)
     static std::filesystem::path cached;
     if (!cached.empty())
         return cached;

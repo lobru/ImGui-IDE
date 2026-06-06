@@ -9,6 +9,8 @@
 //	Include files
 //
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,7 +50,11 @@ static std::string gCrashLogPath;
 static void writeCrashLine(const char* tag, const char* msg) {
 	if (!gCrashLogPath.empty()) {
 		FILE* f = nullptr;
+#ifdef _WIN32
 		if (fopen_s(&f, gCrashLogPath.c_str(), "a") == 0 && f) {
+#else
+		if ((f = std::fopen(gCrashLogPath.c_str(), "a")) != nullptr) {
+#endif
 			std::fprintf(f, "[%s] %s\n", tag, msg ? msg : "(null)");
 			std::fflush(f);
 			std::fclose(f);

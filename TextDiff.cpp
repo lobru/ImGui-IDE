@@ -10,12 +10,10 @@
 //
 
 #include <cmath>
-#define NOMINMAX
 #include "imgui_internal.h"
 
 #include "dtl.h"
 #include "TextDiff.h"
-#include <Windows.h>
 #include <cstdio>
 #include <string_view>
 #include <vector>

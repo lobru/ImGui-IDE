@@ -30,7 +30,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
-#include <string.h>
+#include <cstring>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -3823,7 +3823,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 		const std::string text = document.getLineText(line);
 
 		// Braces { }
-		for (int it = 0; it < text.size(); ++it)
+		for (int it = 0; it < static_cast<int>(text.size()); ++it)
 		{
 			char c = text[it];
 			if (c == '{')
