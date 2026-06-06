@@ -37,7 +37,7 @@ struct Symbol {
 };
 
 // Languages we currently have a grammar + tags query for.
-enum class Lang { None, Cpp, CSharp };
+enum class Lang { None, Cpp, CSharp, Python, JavaScript };
 
 // Map a file extension (".cpp", ".h", …) to a supported grammar, or Lang::None.
 Lang langForExtension(const std::string& ext);

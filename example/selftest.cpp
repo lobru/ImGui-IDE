@@ -375,6 +375,44 @@ int main()
 		CHECK(rcs("/*C1*/", "X")     == "int",    "C# field X -> int");
 	}
 
+	// ── Additional language grammars (Python, JavaScript) ──
+	{
+		CHECK(ts::langForExtension(".py") == ts::Lang::Python,      ".py -> Python grammar");
+		CHECK(ts::langForExtension(".js") == ts::Lang::JavaScript,  ".js -> JavaScript grammar");
+		CHECK(ts::langForExtension(".jsx") == ts::Lang::JavaScript, ".jsx -> JavaScript grammar");
+
+		std::string py =
+			"class Animal:\n"
+			"    def speak(self):\n"
+			"        return 1\n"
+			"def helper(x):\n"
+			"    return x\n";
+		auto pys = ts::extractSymbols(ts::Lang::Python, py);
+		std::fprintf(stderr, "[ts:py] symbols=%zu\n", pys.size());
+		bool animal = false, helper = false;
+		for (auto& s : pys) {
+			if (s.name == "Animal" && s.isDefinition) animal = true;
+			if (s.name == "helper" && s.isDefinition) helper = true;
+		}
+		CHECK(animal, "Python: class Animal found");
+		CHECK(helper, "Python: function helper found");
+
+		std::string js =
+			"class Foo {\n"
+			"  bar() { return 1; }\n"
+			"}\n"
+			"function baz() { return 2; }\n";
+		auto jss = ts::extractSymbols(ts::Lang::JavaScript, js);
+		std::fprintf(stderr, "[ts:js] symbols=%zu\n", jss.size());
+		bool foo = false, baz = false;
+		for (auto& s : jss) {
+			if (s.name == "Foo" && s.isDefinition) foo = true;
+			if (s.name == "baz" && s.isDefinition) baz = true;
+		}
+		CHECK(foo, "JS: class Foo found");
+		CHECK(baz, "JS: function baz found");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

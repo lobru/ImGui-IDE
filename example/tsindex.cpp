@@ -15,12 +15,20 @@
 // Grammar entry points (defined in the generated parser.c files).
 extern "C" const TSLanguage* tree_sitter_cpp(void);
 extern "C" const TSLanguage* tree_sitter_c_sharp(void);
+extern "C" const TSLanguage* tree_sitter_python(void);
+extern "C" const TSLanguage* tree_sitter_javascript(void);
 
 #ifndef TS_CPP_TAGS_SCM
 #define TS_CPP_TAGS_SCM ""
 #endif
 #ifndef TS_CSHARP_TAGS_SCM
 #define TS_CSHARP_TAGS_SCM ""
+#endif
+#ifndef TS_PYTHON_TAGS_SCM
+#define TS_PYTHON_TAGS_SCM ""
+#endif
+#ifndef TS_JS_TAGS_SCM
+#define TS_JS_TAGS_SCM ""
 #endif
 
 namespace ts {
@@ -30,9 +38,11 @@ namespace {
 const TSLanguage* languageFor(Lang lang)
 {
 	switch (lang) {
-		case Lang::Cpp:    return tree_sitter_cpp();
-		case Lang::CSharp: return tree_sitter_c_sharp();
-		default:           return nullptr;
+		case Lang::Cpp:        return tree_sitter_cpp();
+		case Lang::CSharp:     return tree_sitter_c_sharp();
+		case Lang::Python:     return tree_sitter_python();
+		case Lang::JavaScript: return tree_sitter_javascript();
+		default:               return nullptr;
 	}
 }
 
@@ -73,12 +83,18 @@ const std::string& tagsQueryFor(Lang lang)
 			"(property_declaration name: (identifier) @name) @definition.field\n";
 		return base;
 	}();
+	// Python + JavaScript: stock tags.scm is enough (class/function/method
+	// captures); no augmentation needed.
+	static const std::string python     = readFile(TS_PYTHON_TAGS_SCM);
+	static const std::string javascript = readFile(TS_JS_TAGS_SCM);
 	static const std::string none;
 
 	switch (lang) {
-		case Lang::Cpp:    return cpp;
-		case Lang::CSharp: return csharp;
-		default:           return none;
+		case Lang::Cpp:        return cpp;
+		case Lang::CSharp:     return csharp;
+		case Lang::Python:     return python;
+		case Lang::JavaScript: return javascript;
+		default:               return none;
 	}
 }
 
@@ -123,7 +139,9 @@ std::string enclosingTypeOf(TSNode nameNode, const std::string& src)
 		std::string ty = t ? t : "";
 		if (ty == "class_specifier" || ty == "struct_specifier" || ty == "enum_specifier" ||
 			ty == "class_declaration" || ty == "struct_declaration" || ty == "interface_declaration" ||
-			ty == "enum_declaration" || ty == "record_declaration")
+			ty == "enum_declaration" || ty == "record_declaration" ||
+			ty == "class_definition" ||                       // Python
+			ty == "class")                                    // JavaScript class expression
 		{
 			TSNode nameField = ts_node_child_by_field_name(n, "name", 4);
 			// If this container's own name IS our node, it's the type's own
@@ -149,6 +167,10 @@ Lang langForExtension(const std::string& extIn)
 		return Lang::Cpp;
 	if (ext == ".cs")
 		return Lang::CSharp;
+	if (ext == ".py" || ext == ".pyw" || ext == ".pyi")
+		return Lang::Python;
+	if (ext == ".js" || ext == ".jsx" || ext == ".mjs" || ext == ".cjs")
+		return Lang::JavaScript;
 	return Lang::None;
 }
 
