@@ -339,4 +339,482 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 	return out;
 }
 
+// ── Scope-aware receiver-type resolver ───────────────────────────────────────
+// Position-anchored: land at the cursor, walk enclosing scopes nearest-first,
+// return the simple type name of the receiver's declaration. A manual cursor walk
+// (not a tags query) because resolution must respect scope + declaration-before-
+// use — a query has no position anchor and would replicate the old scope-blindness.
+
+namespace {
+
+inline std::string tyOf(TSNode n) { const char* t = ts_node_type(n); return t ? t : std::string(); }
+
+// Reduce a C++ type node to its simple name ("vector" from std::vector<int>).
+std::string reduceCppType(TSNode t, const std::string& src)
+{
+	if (ts_node_is_null(t)) return {};
+	std::string ty = tyOf(t);
+	if (ty == "type_identifier" || ty == "primitive_type" ||
+		ty == "sized_type_specifier" || ty == "namespace_identifier")
+		return nodeText(t, src);
+	if (ty == "qualified_identifier")
+		return reduceCppType(ts_node_child_by_field_name(t, "name", 4), src);
+	if (ty == "template_type")
+		return reduceCppType(ts_node_child_by_field_name(t, "name", 4), src);
+	if (ty == "class_specifier" || ty == "struct_specifier" ||
+		ty == "union_specifier" || ty == "enum_specifier")
+	{
+		TSNode name = ts_node_child_by_field_name(t, "name", 4);
+		return ts_node_is_null(name) ? std::string() : nodeText(name, src);
+	}
+	// placeholder_type_specifier (auto), decltype, dependent_type → unresolvable
+	return {};
+}
+
+// Reduce a C# type node to its simple name ("List" from System.List<T>).
+std::string reduceCsType(TSNode t, const std::string& src)
+{
+	if (ts_node_is_null(t)) return {};
+	std::string ty = tyOf(t);
+	if (ty == "identifier" || ty == "predefined_type") return nodeText(t, src);
+	if (ty == "qualified_name")
+		return reduceCsType(ts_node_child_by_field_name(t, "name", 4), src);
+	if (ty == "generic_name")
+	{
+		uint32_t n = ts_node_named_child_count(t);
+		for (uint32_t i = 0; i < n; ++i)
+		{
+			TSNode c = ts_node_named_child(t, i);
+			if (tyOf(c) == "identifier") return nodeText(c, src);
+		}
+		return {};
+	}
+	if (ty == "nullable_type" || ty == "array_type" || ty == "pointer_type")
+		return reduceCsType(ts_node_child_by_field_name(t, "type", 4), src);
+	// implicit_type (var) → unresolvable here (caller infers from initializer)
+	return {};
+}
+
+// Descend a C++ declarator chain to the declared identifier's text.
+std::string cppDeclName(TSNode d, const std::string& src)
+{
+	if (ts_node_is_null(d)) return {};
+	std::string ty = tyOf(d);
+	if (ty == "identifier" || ty == "field_identifier") return nodeText(d, src);
+	if (ty == "pointer_declarator" || ty == "array_declarator" ||
+		ty == "function_declarator" || ty == "init_declarator")
+		return cppDeclName(ts_node_child_by_field_name(d, "declarator", 10), src);
+	if (ty == "reference_declarator" || ty == "parenthesized_declarator" ||
+		ty == "attributed_declarator")
+	{
+		// No `declarator` field — inner is a positional named child.
+		uint32_t n = ts_node_named_child_count(d);
+		for (uint32_t i = 0; i < n; ++i)
+		{
+			std::string r = cppDeclName(ts_node_named_child(d, i), src);
+			if (!r.empty()) return r;
+		}
+		return {};
+	}
+	if (ty == "qualified_identifier")
+		return cppDeclName(ts_node_child_by_field_name(d, "name", 4), src);
+	return {};
+}
+
+// Walk pointer/reference wrappers to the function_declarator (null node if none).
+TSNode cppFuncDeclarator(TSNode d)
+{
+	if (ts_node_is_null(d)) return TSNode{};
+	std::string ty = tyOf(d);
+	if (ty == "function_declarator") return d;
+	if (ty == "pointer_declarator" || ty == "array_declarator" ||
+		ty == "reference_declarator" || ty == "parenthesized_declarator")
+	{
+		TSNode inner = ts_node_child_by_field_name(d, "declarator", 10);
+		if (!ts_node_is_null(inner)) return cppFuncDeclarator(inner);
+		uint32_t n = ts_node_named_child_count(d);
+		for (uint32_t i = 0; i < n; ++i)
+		{
+			TSNode r = cppFuncDeclarator(ts_node_named_child(d, i));
+			if (!ts_node_is_null(r)) return r;
+		}
+	}
+	return TSNode{};
+}
+
+// Match a C++ `declaration` (one type, possibly several declarators) to recv;
+// resolves `auto` from a new-expression or constructor call initializer.
+std::string matchCppDecl(TSNode decl, const std::string& src, const std::string& recv)
+{
+	TSNode typeNode = ts_node_child_by_field_name(decl, "type", 4);
+	if (ts_node_is_null(typeNode)) return {};
+	bool isAuto = (tyOf(typeNode) == "placeholder_type_specifier");
+	uint32_t n = ts_node_named_child_count(decl);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode child = ts_node_named_child(decl, i);
+		if (ts_node_eq(child, typeNode)) continue;
+		std::string cty = tyOf(child);
+		if (cty == "init_declarator")
+		{
+			if (cppDeclName(ts_node_child_by_field_name(child, "declarator", 10), src) != recv)
+				continue;
+			if (!isAuto) return reduceCppType(typeNode, src);
+			TSNode val = ts_node_child_by_field_name(child, "value", 5);
+			if (ts_node_is_null(val)) return {};
+			std::string vty = tyOf(val);
+			if (vty == "new_expression")
+				return reduceCppType(ts_node_child_by_field_name(val, "type", 4), src);
+			if (vty == "call_expression")
+			{
+				TSNode fn = ts_node_child_by_field_name(val, "function", 8);
+				if (ts_node_is_null(fn)) return {};
+				std::string fty = tyOf(fn);
+				if (fty == "identifier") return nodeText(fn, src);
+				if (fty == "qualified_identifier" || fty == "template_function")
+				{
+					TSNode nm = ts_node_child_by_field_name(fn, "name", 4);
+					if (!ts_node_is_null(nm)) return nodeText(nm, src);
+				}
+			}
+			return {};   // auto with unresolvable initializer
+		}
+		if (isAuto) continue;
+		if (cppDeclName(child, src) == recv) return reduceCppType(typeNode, src);
+	}
+	return {};
+}
+
+std::string searchCppBlock(TSNode block, const std::string& src, const std::string& recv, TSPoint cur)
+{
+	uint32_t n = ts_node_named_child_count(block);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode child = ts_node_named_child(block, i);
+		TSPoint sp = ts_node_start_point(child);
+		if (sp.row > cur.row || (sp.row == cur.row && sp.column >= cur.column))
+			break;   // declaration-before-use
+		if (tyOf(child) == "declaration")
+		{
+			std::string r = matchCppDecl(child, src, recv);
+			if (!r.empty()) return r;
+		}
+	}
+	return {};
+}
+
+std::string searchCppParams(TSNode funcDef, const std::string& src, const std::string& recv)
+{
+	TSNode fd = cppFuncDeclarator(ts_node_child_by_field_name(funcDef, "declarator", 10));
+	if (ts_node_is_null(fd)) return {};
+	TSNode params = ts_node_child_by_field_name(fd, "parameters", 10);
+	if (ts_node_is_null(params)) return {};
+	uint32_t n = ts_node_named_child_count(params);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode p = ts_node_named_child(params, i);
+		std::string pty = tyOf(p);
+		if (pty != "parameter_declaration" && pty != "optional_parameter_declaration") continue;
+		TSNode pdecl = ts_node_child_by_field_name(p, "declarator", 10);
+		if (ts_node_is_null(pdecl) || cppDeclName(pdecl, src) != recv) continue;
+		TSNode typeNode = ts_node_child_by_field_name(p, "type", 4);
+		if (ts_node_is_null(typeNode) || tyOf(typeNode) == "placeholder_type_specifier") return {};
+		return reduceCppType(typeNode, src);
+	}
+	return {};
+}
+
+std::string searchCppClassMembers(TSNode cls, const std::string& src, const std::string& recv)
+{
+	TSNode body = ts_node_child_by_field_name(cls, "body", 4);
+	if (ts_node_is_null(body)) return {};
+	uint32_t n = ts_node_named_child_count(body);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode child = ts_node_named_child(body, i);
+		if (tyOf(child) != "field_declaration") continue;
+		TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
+		if (ts_node_is_null(typeNode)) continue;
+		uint32_t m = ts_node_named_child_count(child);
+		for (uint32_t j = 0; j < m; ++j)
+		{
+			TSNode fd = ts_node_named_child(child, j);
+			if (ts_node_eq(fd, typeNode)) continue;
+			if (cppDeclName(fd, src) == recv) return reduceCppType(typeNode, src);
+		}
+	}
+	return {};
+}
+
+std::string searchCppForRange(TSNode f, const std::string& src, const std::string& recv)
+{
+	TSNode typeNode = ts_node_child_by_field_name(f, "type", 4);
+	TSNode decl = ts_node_child_by_field_name(f, "declarator", 10);
+	if (ts_node_is_null(typeNode) || ts_node_is_null(decl)) return {};
+	if (cppDeclName(decl, src) != recv) return {};
+	if (tyOf(typeNode) == "placeholder_type_specifier") return {};   // `for (auto& x : ...)`
+	return reduceCppType(typeNode, src);
+}
+
+std::string searchCppForInit(TSNode f, const std::string& src, const std::string& recv)
+{
+	TSNode init = ts_node_child_by_field_name(f, "initializer", 11);
+	if (ts_node_is_null(init)) return {};
+	if (tyOf(init) == "init_statement")
+	{
+		uint32_t n = ts_node_named_child_count(init);
+		for (uint32_t i = 0; i < n; ++i)
+		{
+			TSNode c = ts_node_named_child(init, i);
+			if (tyOf(c) == "declaration") { init = c; break; }
+		}
+	}
+	if (tyOf(init) != "declaration") return {};
+	return matchCppDecl(init, src, recv);
+}
+
+std::string resolveThisCpp(TSNode start, const std::string& src)
+{
+	for (TSNode n = start; !ts_node_is_null(n); n = ts_node_parent(n))
+	{
+		std::string ty = tyOf(n);
+		if (ty == "class_specifier" || ty == "struct_specifier" || ty == "union_specifier")
+		{
+			TSNode name = ts_node_child_by_field_name(n, "name", 4);
+			return ts_node_is_null(name) ? std::string() : lastSegment(nodeText(name, src));
+		}
+		if (ty == "function_definition")
+		{
+			TSNode fd = cppFuncDeclarator(ts_node_child_by_field_name(n, "declarator", 10));
+			if (!ts_node_is_null(fd))
+			{
+				TSNode inner = ts_node_child_by_field_name(fd, "declarator", 10);
+				if (!ts_node_is_null(inner) && tyOf(inner) == "qualified_identifier")
+				{
+					// Out-of-line def A::B::method — enclosing type is the
+					// second-to-last "::" segment (handles arbitrary nesting).
+					std::string full = nodeText(inner, src);
+					std::vector<std::string> segs;
+					size_t pos = 0;
+					while (true)
+					{
+						size_t c = full.find("::", pos);
+						if (c == std::string::npos) { segs.push_back(full.substr(pos)); break; }
+						segs.push_back(full.substr(pos, c - pos));
+						pos = c + 2;
+					}
+					if (segs.size() >= 2) return segs[segs.size() - 2];
+				}
+			}
+			// in-class method: fall through, keep walking to class_specifier
+		}
+	}
+	return {};
+}
+
+// C# variable_declaration -> match recv -> type (or var-inferred from new T()).
+std::string csVarDeclMatch(TSNode varDecl, const std::string& src, const std::string& recv)
+{
+	TSNode typeNode = ts_node_child_by_field_name(varDecl, "type", 4);
+	bool isVar = !ts_node_is_null(typeNode) && tyOf(typeNode) == "implicit_type";
+	uint32_t n = ts_node_named_child_count(varDecl);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode d = ts_node_named_child(varDecl, i);
+		if (tyOf(d) != "variable_declarator") continue;
+		TSNode name = ts_node_child_by_field_name(d, "name", 4);
+		if (ts_node_is_null(name) || nodeText(name, src) != recv) continue;
+		if (!isVar) return reduceCsType(typeNode, src);
+		uint32_t m = ts_node_named_child_count(d);   // var: infer from new T()
+		for (uint32_t j = 0; j < m; ++j)
+		{
+			TSNode c = ts_node_named_child(d, j);
+			if (tyOf(c) == "object_creation_expression")
+				return reduceCsType(ts_node_child_by_field_name(c, "type", 4), src);
+		}
+		return {};
+	}
+	return {};
+}
+
+std::string searchCsBlock(TSNode block, const std::string& src, const std::string& recv, TSPoint cur)
+{
+	uint32_t n = ts_node_named_child_count(block);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode child = ts_node_named_child(block, i);
+		TSPoint sp = ts_node_start_point(child);
+		if (sp.row > cur.row || (sp.row == cur.row && sp.column >= cur.column))
+			break;
+		if (tyOf(child) != "local_declaration_statement") continue;
+		uint32_t m = ts_node_named_child_count(child);
+		for (uint32_t j = 0; j < m; ++j)
+		{
+			TSNode vd = ts_node_named_child(child, j);
+			if (tyOf(vd) == "variable_declaration")
+			{
+				std::string r = csVarDeclMatch(vd, src, recv);
+				if (!r.empty()) return r;
+			}
+		}
+	}
+	return {};
+}
+
+std::string searchCsParams(TSNode method, const std::string& src, const std::string& recv)
+{
+	TSNode params = ts_node_child_by_field_name(method, "parameters", 10);
+	if (ts_node_is_null(params)) return {};
+	uint32_t n = ts_node_named_child_count(params);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode p = ts_node_named_child(params, i);
+		if (tyOf(p) != "parameter") continue;
+		TSNode name = ts_node_child_by_field_name(p, "name", 4);
+		if (ts_node_is_null(name) || nodeText(name, src) != recv) continue;
+		return reduceCsType(ts_node_child_by_field_name(p, "type", 4), src);
+	}
+	return {};
+}
+
+std::string searchCsClassMembers(TSNode cls, const std::string& src, const std::string& recv)
+{
+	TSNode body = ts_node_child_by_field_name(cls, "body", 4);
+	if (ts_node_is_null(body)) return {};
+	uint32_t n = ts_node_named_child_count(body);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode child = ts_node_named_child(body, i);
+		std::string cty = tyOf(child);
+		if (cty == "field_declaration")
+		{
+			uint32_t m = ts_node_named_child_count(child);
+			for (uint32_t j = 0; j < m; ++j)
+			{
+				TSNode vd = ts_node_named_child(child, j);
+				if (tyOf(vd) == "variable_declaration")
+				{
+					std::string r = csVarDeclMatch(vd, src, recv);
+					if (!r.empty()) return r;
+				}
+			}
+		}
+		else if (cty == "property_declaration")
+		{
+			TSNode name = ts_node_child_by_field_name(child, "name", 4);
+			if (!ts_node_is_null(name) && nodeText(name, src) == recv)
+				return reduceCsType(ts_node_child_by_field_name(child, "type", 4), src);
+		}
+	}
+	return {};
+}
+
+std::string searchCsForeach(TSNode f, const std::string& src, const std::string& recv)
+{
+	TSNode left = ts_node_child_by_field_name(f, "left", 4);
+	if (ts_node_is_null(left) || nodeText(left, src) != recv) return {};
+	TSNode typeNode = ts_node_child_by_field_name(f, "type", 4);
+	if (ts_node_is_null(typeNode) || tyOf(typeNode) == "implicit_type") return {};
+	return reduceCsType(typeNode, src);
+}
+
+std::string resolveThisCs(TSNode start, const std::string& src)
+{
+	for (TSNode n = start; !ts_node_is_null(n); n = ts_node_parent(n))
+	{
+		std::string ty = tyOf(n);
+		if (ty == "class_declaration" || ty == "struct_declaration" ||
+			ty == "record_declaration" || ty == "interface_declaration")
+		{
+			TSNode name = ts_node_child_by_field_name(n, "name", 4);
+			return ts_node_is_null(name) ? std::string() : nodeText(name, src);
+		}
+	}
+	return {};
+}
+
+std::string walkScopes(Lang lang, TSNode start, const std::string& src,
+					   const std::string& recv, TSPoint cur)
+{
+	for (TSNode n = start; !ts_node_is_null(n); n = ts_node_parent(n))
+	{
+		std::string ty = tyOf(n);
+		std::string r;
+		if (lang == Lang::Cpp)
+		{
+			if (ty == "compound_statement")       r = searchCppBlock(n, src, recv, cur);
+			else if (ty == "function_definition") r = searchCppParams(n, src, recv);
+			else if (ty == "for_range_loop")      r = searchCppForRange(n, src, recv);
+			else if (ty == "for_statement")       r = searchCppForInit(n, src, recv);
+			else if (ty == "class_specifier" || ty == "struct_specifier" || ty == "union_specifier")
+				r = searchCppClassMembers(n, src, recv);
+		}
+		else if (lang == Lang::CSharp)
+		{
+			if (ty == "block")                    r = searchCsBlock(n, src, recv, cur);
+			else if (ty == "method_declaration" || ty == "constructor_declaration" ||
+					 ty == "local_function_statement" || ty == "lambda_expression" ||
+					 ty == "accessor_declaration") r = searchCsParams(n, src, recv);
+			else if (ty == "foreach_statement")   r = searchCsForeach(n, src, recv);
+			else if (ty == "class_declaration" || ty == "struct_declaration" ||
+					 ty == "record_declaration" || ty == "interface_declaration")
+				r = searchCsClassMembers(n, src, recv);
+		}
+		if (!r.empty()) return r;
+	}
+	return {};
+}
+
+// Single-entry parse cache. Keyed by a VALUE COPY of the source (never the
+// pointer of the GetText() temporary — that would be a use-after-free). The size
+// short-circuit avoids a full string compare on a miss.
+struct ResolveCache
+{
+	Lang        lang = Lang::None;
+	std::string src;
+	TSTree*     tree = nullptr;
+	~ResolveCache() { if (tree) ts_tree_delete(tree); }
+	TSTree* get(Lang l, const std::string& s)
+	{
+		if (tree && lang == l && src.size() == s.size() && src == s)
+			return tree;
+		if (tree) { ts_tree_delete(tree); tree = nullptr; }
+		const TSLanguage* language = languageFor(l);
+		if (!language) return nullptr;
+		TSParser* parser = ts_parser_new();
+		ts_parser_set_language(parser, language);
+		tree = ts_parser_parse_string(parser, nullptr, s.c_str(), (uint32_t) s.size());
+		ts_parser_delete(parser);
+		lang = l;
+		src = s;   // own copy so next call's value-compare is safe
+		return tree;
+	}
+};
+ResolveCache sResolveCache;
+
+} // namespace
+
+std::string resolveLocalType(Lang lang, const std::string& source,
+							 int line, int col, const std::string& receiver)
+{
+	if (lang == Lang::None || source.empty() || receiver.empty()) return {};
+	if (source.size() > 512 * 1024) return {};                 // keystroke-path size cap
+	if (receiver[0] >= '0' && receiver[0] <= '9') return {};   // numeric receiver
+
+	TSTree* tree = sResolveCache.get(lang, source);
+	if (!tree) return {};
+	TSNode root = ts_tree_root_node(tree);
+
+	TSPoint pt;
+	pt.row    = (uint32_t) (line < 0 ? 0 : line);
+	pt.column = (uint32_t) (col  < 0 ? 0 : col);
+	TSNode cursor = ts_node_descendant_for_point_range(root, pt, pt);
+	if (ts_node_is_null(cursor)) cursor = root;
+
+	if (receiver == "this")
+		return lang == Lang::Cpp ? resolveThisCpp(cursor, source) : resolveThisCs(cursor, source);
+
+	return walkScopes(lang, cursor, source, receiver, pt);
+}
+
 } // namespace ts

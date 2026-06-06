@@ -10303,12 +10303,42 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                 std::string receiver = ln.substr(r, rEnd - r);
                 // Skip numeric receivers (3.14 -> "3"): a digit-led token is never
                 // a type name, so resolving it only risks a false member list.
-                if (!receiver.empty() && !(receiver[0] >= '0' && receiver[0] <= '9'))
+                // Chained access (a.b.): the receiver token captured above is only
+                // the LAST segment ("b"); scope-resolving "b" would confidently show
+                // some unrelated b's members. Detect a member operator right before
+                // the receiver and skip member completion for '.'/'->' (fall through
+                // to identifier completion). '::' is left as-is (nested type/ns).
+                bool chained = false;
+                if ((oper == "." || oper == "->") && r > 0)
                 {
-                    // '::' receiver IS the type (static / namespace / nested);
-                    // '.'/'->' need the receiver's declared type resolved.
-                    std::string type = (oper == "::") ? receiver
-                                                       : resolveReceiverType(tptr->editor.GetText(), receiver);
+                    char pc = ln[r - 1];
+                    if (pc == '.') chained = true;
+                    else if (pc == '>' && r >= 2 && ln[r - 2] == '-') chained = true;
+                    else if (pc == ':' && r >= 2 && ln[r - 2] == ':') chained = true;
+                }
+                // Skip numeric receivers (3.14 -> "3"): a digit-led token is never a
+                // type name, so resolving it only risks a false member list.
+                if (!chained && !receiver.empty() && !(receiver[0] >= '0' && receiver[0] <= '9'))
+                {
+                    // '::' receiver IS the type (static / namespace / nested).
+                    // '.'/'->' resolve the receiver's declared type — scope-aware
+                    // tree-sitter on the live document first (handles auto/var,
+                    // params, fields, this), then the scope-blind string scan.
+                    std::string type;
+                    if (oper == "::")
+                    {
+                        type = receiver;
+                    }
+                    else
+                    {
+                        ts::Lang lang = ts::langForExtension(
+                            std::filesystem::path(tptr->filename).extension().string());
+                        if (lang != ts::Lang::None)
+                            type = ts::resolveLocalType(lang, tptr->editor.GetText(),
+                                                        (int) state.line, (int) k, receiver);
+                        if (type.empty())
+                            type = resolveReceiverType(tptr->editor.GetText(), receiver);
+                    }
                     if (!type.empty())
                     {
                         // Union project-defined members (from the index) with the
@@ -10329,9 +10359,15 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                             TextEditor::Trie mtrie;
                             for (auto &m : members)
                                 mtrie.insert(m);
-                            state.suggestions.clear();
-                            mtrie.findSuggestions(state.suggestions, state.searchTerm);
-                            return;   // members only
+                            std::vector<std::string> hits;
+                            mtrie.findSuggestions(hits, state.searchTerm);
+                            if (!hits.empty())
+                            {
+                                state.suggestions = std::move(hits);
+                                return;   // members only
+                            }
+                            // Members exist but none match the search term — fall
+                            // through to identifier completion (never an empty popup).
                         }
                     }
                 }

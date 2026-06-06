@@ -298,6 +298,83 @@ int main()
 		CHECK(ts::stlMembers("NotAStlType") == nullptr, "unknown type -> no STL members");
 	}
 
+	// ── Scope-aware type resolver (the proof that member completion works) ──
+	{
+		// Byte (row,col) of a marker's first occurrence — avoids hardcoded columns.
+		auto pos = [](const std::string& s, const std::string& marker) -> std::pair<int,int> {
+			size_t off = s.find(marker);
+			if (off == std::string::npos) return {-1, -1};
+			int row = 0; size_t lineStart = 0;
+			for (size_t i = 0; i < off; ++i) if (s[i] == '\n') { ++row; lineStart = i + 1; }
+			return { row, (int)(off - lineStart) };
+		};
+
+		// Markers (/*U1*/ etc.) mark cursor sites that are AFTER the relevant
+		// declarations, so declaration-before-use is satisfied.
+		std::string cpp =
+			"struct Widget {\n"
+			"    int x;\n"
+			"    float speed;\n"
+			"    void update(Widget* other) {\n"
+			"        int counter = 0;\n"
+			"        Widget w;\n"
+			"        auto p = new Widget();\n"
+			"        auto q = Widget();\n"
+			"        std::vector<int> items;\n"
+			"        /*U1*/;\n"
+			"        {\n"
+			"            float counter;\n"
+			"            /*U2*/;\n"
+			"        }\n"
+			"    }\n"
+			"};\n"
+			"void Widget::update2(Widget* w2) {\n"
+			"    /*U3*/;\n"
+			"}\n";
+
+		auto rc = [&](const char* marker, const std::string& recv) -> std::string {
+			auto [row, col] = pos(cpp, marker);
+			return ts::resolveLocalType(ts::Lang::Cpp, cpp, row, col, recv);
+		};
+
+		CHECK(rc("/*U1*/", "w")     == "Widget", "C++ local Widget w -> Widget");
+		CHECK(rc("/*U1*/", "p")     == "Widget", "C++ auto p = new Widget() -> Widget");
+		CHECK(rc("/*U1*/", "q")     == "Widget", "C++ auto q = Widget() -> Widget");
+		CHECK(rc("/*U1*/", "items") == "vector", "C++ std::vector<int> items -> vector");
+		CHECK(rc("/*U1*/", "other") == "Widget", "C++ parameter other -> Widget");
+		CHECK(rc("/*U1*/", "speed") == "float",  "C++ class field speed -> float");
+		CHECK(rc("/*U1*/", "counter") == "int",  "C++ outer counter -> int");
+		CHECK(rc("/*U1*/", "this")  == "Widget", "C++ this (in-class) -> Widget");
+		// The scope-shadowing proof: inner float counter beats outer int counter.
+		CHECK(rc("/*U2*/", "counter") == "float", "C++ scope shadow: inner counter -> float");
+		// Out-of-line definition: this resolves to the enclosing class.
+		CHECK(rc("/*U3*/", "this")  == "Widget", "C++ this (out-of-line) -> Widget");
+		CHECK(rc("/*U3*/", "w2")    == "Widget", "C++ out-of-line parameter w2 -> Widget");
+		// Negatives.
+		CHECK(rc("/*U1*/", "3")          == "", "C++ numeric receiver -> empty");
+		CHECK(rc("/*U1*/", "undeclared") == "", "C++ undeclared receiver -> empty");
+		// Resolver -> STL table linkage (end to end for the std::vector case).
+		CHECK(ts::stlMembers(rc("/*U1*/", "items")) != nullptr,
+			"resolved 'items' type keys into the STL member table");
+
+		std::string cs =
+			"class Widget {\n"
+			"    public int X;\n"
+			"    void Run(Widget other) {\n"
+			"        var w = new Widget();\n"
+			"        /*C1*/;\n"
+			"    }\n"
+			"}\n";
+		auto rcs = [&](const char* marker, const std::string& recv) -> std::string {
+			auto [row, col] = pos(cs, marker);
+			return ts::resolveLocalType(ts::Lang::CSharp, cs, row, col, recv);
+		};
+		CHECK(rcs("/*C1*/", "w")     == "Widget", "C# var w = new Widget() -> Widget");
+		CHECK(rcs("/*C1*/", "other") == "Widget", "C# parameter other -> Widget");
+		CHECK(rcs("/*C1*/", "this")  == "Widget", "C# this -> Widget");
+		CHECK(rcs("/*C1*/", "X")     == "int",    "C# field X -> int");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

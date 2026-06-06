@@ -46,6 +46,17 @@ Lang langForExtension(const std::string& ext);
 // Empty result if the language is unsupported or the buffer fails to parse.
 std::vector<Symbol> extractSymbols(Lang lang, const std::string& source);
 
+// Scope-aware receiver-type resolver for member autocomplete. Parses `source`
+// and finds the declaration of `receiver` visible at the cursor, respecting
+// scope + declaration-before-use (so an inner shadow beats an outer decl).
+//   line : 0-based row (matches TSPoint / Symbol.line)
+//   col  : 0-based BYTE column (not codepoint — caller converts first)
+// Handles locals, parameters, fields, `this`, range/foreach vars, and best-
+// effort auto/var (from `new T()` / `T()`); returns the simple type name
+// ("Foo", "vector") or "" when it can't resolve (caller then falls back).
+std::string resolveLocalType(Lang lang, const std::string& source,
+                             int line, int col, const std::string& receiver);
+
 // Curated member lists for common standard-library types (string, vector, map,
 // optional, smart pointers, …). The project index can only see members of types
 // it actually parses, so std::vector / std::string receivers would otherwise
