@@ -7042,7 +7042,6 @@ void Editor::render()
     // Sticky single-doc layout: PassthruCentralNode lets the doc fill the
     // work area cleanly. (We don't auto-hide the tab bar — the user wants
     // it always visible to track open docs.)
-    handleTabContextInput();   // eat tab right-clicks BEFORE the dock tab bar selects on them
     ImGui::DockSpace(dockId, dockArea, ImGuiDockNodeFlags_PassthruCentralNode);
 
     checkExternalChanges(); // reload clean docs / flag conflicts when disk changes under us
@@ -7381,52 +7380,32 @@ void Editor::renderDockedDocuments()
         }
     }
 
-    // The tab context menu itself. Detection + right-click suppression happen in
-    // handleTabContextInput() (before the dock tab bar processes the click).
-    if (tabCtxIdx >= 0 && tabCtxIdx < (int)tabs.size() && ImGui::BeginPopup("##tabCtxMenu"))
-    {
-        renderTabContextMenu(tabCtxIdx);
-        ImGui::EndPopup();
-    }
-}
-
-//	Detect a right-click directly on a document tab and OPEN the context menu,
-//	while eating the right button so ImGui's tab bar never selects the tab (it
-//	reacts on both mouse-down and mouse-release — line 10754 in imgui_widgets).
-//	IsMouseClicked reads MouseDown+MouseDownDuration; IsMouseReleased reads
-//	MouseReleased — so those are the fields to clobber. Runs before DockSpace().
-void Editor::handleTabContextInput()
-{
-    ImGuiIO &io = ImGui::GetIO();
-
-    if (suppressTabRClick)
-    {
-        bool stillDown = io.MouseDown[ImGuiMouseButton_Right];
-        io.MouseDownDuration[ImGuiMouseButton_Right] = -1.0f;   // IsMouseClicked(1) → false
-        io.MouseReleased[ImGuiMouseButton_Right] = false;       // IsMouseReleased(1) → false
-        if (!stillDown)
-            suppressTabRClick = false;
-    }
-
-    if (!suppressTabRClick && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+    // Right-click a document tab → context menu. Open on RELEASE (the standard
+    // ImGui idiom) so the same click doesn't immediately dismiss the popup.
+    // NOTE: ImGui also selects the tab on right-click by design; blocking that
+    // cleanly fought the dock tab bar too hard, so we accept it for now.
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right))
     {
         for (size_t i = 0; i < tabs.size(); ++i)
         {
             ImGuiWindow *w = ImGui::FindWindowByName(windowLabelFor(*tabs[i]).c_str());
             if (!w)
                 continue;
-            const ImRect &r = w->DC.DockTabItemRect;   // last frame's tab rect (persists)
+            const ImRect &r = w->DC.DockTabItemRect;
             if (r.GetWidth() <= 0.0f)
                 continue;
             if (ImGui::IsMouseHoveringRect(r.Min, r.Max, false))
             {
                 tabCtxIdx = (int)i;
                 ImGui::OpenPopup("##tabCtxMenu");
-                suppressTabRClick = true;
-                io.MouseDownDuration[ImGuiMouseButton_Right] = -1.0f;   // eat this frame too
                 break;
             }
         }
+    }
+    if (tabCtxIdx >= 0 && tabCtxIdx < (int)tabs.size() && ImGui::BeginPopup("##tabCtxMenu"))
+    {
+        renderTabContextMenu(tabCtxIdx);
+        ImGui::EndPopup();
     }
 }
 

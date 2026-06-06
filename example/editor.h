@@ -337,9 +337,7 @@ private:
 	// Per-tab context menu (right-click a document tab). tabCtxIdx is the tab
 	// the menu targets; detection uses the docked tab's screen rect.
 	void renderTabContextMenu(int idx);
-	void handleTabContextInput();   // detect a tab right-click + suppress ImGui's tab-select
 	int  tabCtxIdx = -1;
-	bool suppressTabRClick = false;
 	int  countDocNodes() const;     // distinct dock nodes hosting document tabs (split limit)
 
 	// Open a file into a split pane on the left (dir<0) or right (dir>0) of the
