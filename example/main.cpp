@@ -61,7 +61,9 @@ static void writeCrashLine(const char* tag, const char* msg) {
 #ifdef _WIN32
 // Intercepts the Debug CRT assert/error MESSAGE (file, line, expression) before
 // the dialog. Returning FALSE keeps the normal report behavior intact.
-static int __cdecl crtReportHook(int reportType, char* message, int* returnValue) {
+// [[maybe_unused]]: in Release builds _CrtSetReportHook macro-expands to a no-op
+// (it's debug-CRT only), leaving this unreferenced — which /WX would make fatal.
+[[maybe_unused]] static int __cdecl crtReportHook(int reportType, char* message, int* returnValue) {
 	const char* kind = (reportType == _CRT_ASSERT) ? "CRT_ASSERT"
 		: (reportType == _CRT_ERROR) ? "CRT_ERROR" : "CRT_WARN";
 	if (reportType != _CRT_WARN) writeCrashLine(kind, message);
