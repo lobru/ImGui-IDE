@@ -2329,7 +2329,8 @@ void Editor::rebuildProjectIndex()
             return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
                    n == "bin" || n == "obj" || n == "out" || n == "build" ||
                    n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
-                   n == "__pycache__" || n == "packages" || n == "deps" || n == "vendor";
+                   n == "__pycache__" || n == "packages" || n == "deps" || n == "vendor" ||
+                   n == "Backup" || n == "backup" || n == "Backups" || n == "backups";
         };
         static const std::unordered_set<std::string> defKw = {
             "class",
@@ -3655,7 +3656,7 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     auto skipDir = [&includeDeps](const std::string &name) {
         if (!includeDeps && (name == "deps" || name == "vendor"))
             return true;
-        return name == ".git" || name == ".svn" || name == ".hg" || name == "node_modules" || name == "bin" || name == "obj" || name == "out" || name == "build" || name == "target" || name == ".vs" || name == ".vscode" || name == ".idea" || name == "__pycache__";
+        return name == ".git" || name == ".svn" || name == ".hg" || name == "node_modules" || name == "bin" || name == "obj" || name == "out" || name == "build" || name == "target" || name == ".vs" || name == ".vscode" || name == ".idea" || name == "__pycache__" || name == "Backup" || name == "backup" || name == "Backups" || name == "backups";
     };
 
     auto isWordBoundary = [](char c) {
@@ -4276,7 +4277,8 @@ void Editor::runFindInFiles()
             auto n = it->path().filename().string();
             if (n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" || n == "bin" ||
                 n == "obj" || n == "out" || n == "build" || n == "target" || n == ".vs" ||
-                n == ".vscode" || n == ".idea" || n == "__pycache__" || n == "deps" || n == "vendor")
+                n == ".vscode" || n == ".idea" || n == "__pycache__" || n == "deps" || n == "vendor" ||
+                n == "Backup" || n == "backup" || n == "Backups" || n == "backups")
                 it.disable_recursion_pending();
             continue;
         }
