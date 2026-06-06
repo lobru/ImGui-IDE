@@ -3114,7 +3114,22 @@ void TextEditor::handleCharacter(ImWchar character)
 
 	endTransaction(transaction);
 
-	if (CodePoint::isWord(character))
+	// Trigger autocomplete on word chars (identifier completion) AND on member-
+	// access operators '.', '->', '::' (member completion — the app callback
+	// resolves the receiver's type and lists its members). For '>' / ':' check
+	// the preceding char so a stray comparison / label / ternary doesn't pop it.
+	bool memberOp = (character == '.');
+	if (!memberOp && (character == '>' || character == ':'))
+	{
+		auto pe = cursors.getMain().getSelectionEnd();
+		if (pe.column >= 2)
+		{
+			std::string before = document.getSectionText(
+				Coordinate(pe.line, pe.column - 2), Coordinate(pe.line, pe.column - 1));
+			memberOp = (character == '>' && before == "-") || (character == ':' && before == ":");
+		}
+	}
+	if (CodePoint::isWord(character) || memberOp)
 	{
 		if (autocomplete.startTyping(cursors))
 		{

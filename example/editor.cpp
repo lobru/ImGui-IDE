@@ -9841,6 +9841,82 @@ void Editor::renderGotoLine()
 //	Editor::setAutocompleteMode
 //
 
+// ── Member-aware autocomplete helpers ────────────────────────────────────
+
+static bool tsIsIdentChar(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+static std::string tsLastSeg(std::string t)
+{
+    if (auto p = t.rfind("::"); p != std::string::npos) t = t.substr(p + 2);
+    if (auto p = t.rfind('.'); p != std::string::npos) t = t.substr(p + 1);
+    return t;
+}
+
+// Best-effort syntactic resolution of receiver IDENT's declared type from the
+// buffer. Matches "Type recv" (decl/param) and "recv = new Type(" (C#). Skips
+// auto/var and keywords. Returns "" when not confidently resolved (caller then
+// falls back to normal identifier completion — precise-only, never wrong).
+static std::string resolveReceiverType(const std::string &buf, const std::string &recv)
+{
+    static const std::unordered_set<std::string> notType = {
+        "return", "new", "delete", "sizeof", "throw", "case", "if", "while", "for", "switch",
+        "do", "else", "auto", "var", "const", "static", "public", "private", "protected",
+        "internal", "virtual", "override", "readonly", "volatile", "mutable", "using",
+        "namespace", "class", "struct", "enum", "void", "and", "or", "not", "co_return",
+        "co_await", "ref", "out", "in", "unsafe", "async", "await", "this", "base",
+        "typename", "template", "return", "goto", "default",
+    };
+    if (recv.empty())
+        return {};
+    size_t n = buf.size();
+    auto isSp = [](char c) { return c == ' ' || c == '\t'; };
+    for (size_t i = 0; i + recv.size() <= n;)
+    {
+        if (buf.compare(i, recv.size(), recv) != 0) { ++i; continue; }
+        size_t e = i + recv.size();
+        bool wbL = (i == 0) || !tsIsIdentChar(buf[i - 1]);
+        bool wbR = (e >= n) || !tsIsIdentChar(buf[e]);
+        if (!wbL || !wbR) { ++i; continue; }
+
+        // Pattern A: recv = new Type(
+        size_t p = e;
+        while (p < n && isSp(buf[p])) ++p;
+        if (p < n && buf[p] == '=' && (p + 1 >= n || buf[p + 1] != '='))
+        {
+            ++p;
+            while (p < n && isSp(buf[p])) ++p;
+            if (p + 4 <= n && buf.compare(p, 3, "new") == 0 && (isSp(buf[p + 3]) || buf[p + 3] == '\n'))
+            {
+                p += 3;
+                while (p < n && (isSp(buf[p]) || buf[p] == '\n' || buf[p] == '\r')) ++p;
+                size_t ts = p;
+                while (p < n && (tsIsIdentChar(buf[p]) || buf[p] == '.' || buf[p] == ':')) ++p;
+                if (p > ts) return tsLastSeg(buf.substr(ts, p - ts));
+            }
+        }
+
+        // Pattern B: Type recv  (the token immediately before recv is a type)
+        size_t q = i;
+        while (q > 0 && isSp(buf[q - 1])) --q;
+        size_t te = q;
+        while (q > 0 && (tsIsIdentChar(buf[q - 1]) || buf[q - 1] == '.' || buf[q - 1] == ':' ||
+                         buf[q - 1] == '*' || buf[q - 1] == '&' || buf[q - 1] == '>'))
+            --q;
+        std::string tok = buf.substr(q, te - q);
+        while (!tok.empty() && (tok.back() == '*' || tok.back() == '&' || tok.back() == '>' || tok.back() == '<'))
+            tok.pop_back();
+        std::string simple = tsLastSeg(tok);
+        if (!simple.empty() && tsIsIdentChar(simple[0]) && !(simple[0] >= '0' && simple[0] <= '9') && !notType.count(simple))
+            return simple;
+
+        i = e;
+    }
+    return {};
+}
+
 void Editor::configureTabAutocomplete(TabDocument &t)
 {
     // Wire the autocomplete callback + debounced rebuild for a SINGLE tab and
@@ -9851,6 +9927,54 @@ void Editor::configureTabAutocomplete(TabDocument &t)
     TabDocument *tptr = &t;
     TextEditor::AutoCompleteConfig config;
     config.callback = [this, tptr](TextEditor::AutoCompleteState &state) {
+        // Member-aware completion: if the text right before the search term is a
+        // member-access operator (. / -> / ::) on a receiver whose type we can
+        // resolve, list ONLY that type's members. Precise-only: if anything is
+        // unresolved we fall through to normal identifier completion.
+        {
+            std::string ln = tptr->editor.GetLineText((int) state.line);
+            size_t k = (std::min)(state.searchTermStartIndex, ln.size());
+            auto isSp = [](char c) { return c == ' ' || c == '\t'; };
+            size_t op = k;
+            while (op > 0 && isSp(ln[op - 1])) --op;
+            std::string oper;
+            if (op >= 2 && ln[op - 1] == '>' && ln[op - 2] == '-') { oper = "->"; op -= 2; }
+            else if (op >= 2 && ln[op - 1] == ':' && ln[op - 2] == ':') { oper = "::"; op -= 2; }
+            else if (op >= 1 && ln[op - 1] == '.') { oper = "."; op -= 1; }
+
+            if (!oper.empty())
+            {
+                size_t r = op;
+                while (r > 0 && isSp(ln[r - 1])) --r;
+                size_t rEnd = r;
+                while (r > 0 && tsIsIdentChar(ln[r - 1])) --r;
+                std::string receiver = ln.substr(r, rEnd - r);
+                if (!receiver.empty())
+                {
+                    // '::' receiver IS the type (static / namespace / nested);
+                    // '.'/'->' need the receiver's declared type resolved.
+                    std::string type = (oper == "::") ? receiver
+                                                       : resolveReceiverType(tptr->editor.GetText(), receiver);
+                    if (!type.empty())
+                    {
+                        if (auto idx = indexSnapshot())
+                        {
+                            auto mit = idx->members.find(type);
+                            if (mit != idx->members.end() && !mit->second.empty())
+                            {
+                                TextEditor::Trie mtrie;
+                                for (auto &m : mit->second)
+                                    mtrie.insert(m);
+                                state.suggestions.clear();
+                                mtrie.findSuggestions(state.suggestions, state.searchTerm);
+                                return;   // members only
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Merge this file's identifiers with the shared project-wide trie.
         // Queried separately because findSuggestions() clears its output
         // vector. File-local matches rank first; project matches fill the
