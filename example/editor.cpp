@@ -1543,10 +1543,10 @@ void Editor::navOpenPathInExplorer(const std::string &path)
         cmd = "explorer \"" + path + "\"";
     else
         cmd = "explorer /select,\"" + path + "\"";
-    std::system(cmd.c_str());
+    [[maybe_unused]] int rc = std::system(cmd.c_str());
 #else
     std::string cmd = "xdg-open \"" + path + "\" >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    [[maybe_unused]] int rc = std::system(cmd.c_str());
 #endif
 }
 
@@ -1556,7 +1556,7 @@ void Editor::navOpenExternally(const std::string &path)
     ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 #else
     std::string cmd = "xdg-open \"" + path + "\" >/dev/null 2>&1 &";
-    std::system(cmd.c_str());
+    [[maybe_unused]] int rc = std::system(cmd.c_str());
 #endif
 }
 
@@ -2853,9 +2853,9 @@ void Editor::openCSharpLearn(const std::string &rawSymbol)
 #ifdef _WIN32
     ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 #elif defined(__APPLE__)
-    (void)std::system(("open \"" + url + "\"").c_str());
+    [[maybe_unused]] int rc = std::system(("open \"" + url + "\"").c_str());
 #else
-    (void)std::system(("xdg-open \"" + url + "\"").c_str());
+    [[maybe_unused]] int rc = std::system(("xdg-open \"" + url + "\"").c_str());
 #endif
 }
 
@@ -6180,7 +6180,7 @@ void Editor::openContainingFolder()
 #else
     std::string cmd = "xdg-open \"" +
                       std::filesystem::path(doc().filename).parent_path().string() + "\"";
-    (void)std::system(cmd.c_str());
+    [[maybe_unused]] int rc = std::system(cmd.c_str());
 #endif
 }
 
