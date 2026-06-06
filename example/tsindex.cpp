@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -17,6 +18,9 @@ extern "C" const TSLanguage* tree_sitter_cpp(void);
 extern "C" const TSLanguage* tree_sitter_c_sharp(void);
 extern "C" const TSLanguage* tree_sitter_python(void);
 extern "C" const TSLanguage* tree_sitter_javascript(void);
+extern "C" const TSLanguage* tree_sitter_lua(void);
+extern "C" const TSLanguage* tree_sitter_go(void);
+extern "C" const TSLanguage* tree_sitter_rust(void);
 
 #ifndef TS_CPP_TAGS_SCM
 #define TS_CPP_TAGS_SCM ""
@@ -30,6 +34,15 @@ extern "C" const TSLanguage* tree_sitter_javascript(void);
 #ifndef TS_JS_TAGS_SCM
 #define TS_JS_TAGS_SCM ""
 #endif
+#ifndef TS_LUA_TAGS_SCM
+#define TS_LUA_TAGS_SCM ""
+#endif
+#ifndef TS_GO_TAGS_SCM
+#define TS_GO_TAGS_SCM ""
+#endif
+#ifndef TS_RUST_TAGS_SCM
+#define TS_RUST_TAGS_SCM ""
+#endif
 
 namespace ts {
 
@@ -42,6 +55,9 @@ const TSLanguage* languageFor(Lang lang)
 		case Lang::CSharp:     return tree_sitter_c_sharp();
 		case Lang::Python:     return tree_sitter_python();
 		case Lang::JavaScript: return tree_sitter_javascript();
+		case Lang::Lua:        return tree_sitter_lua();
+		case Lang::Go:         return tree_sitter_go();
+		case Lang::Rust:       return tree_sitter_rust();
 		default:               return nullptr;
 	}
 }
@@ -87,6 +103,9 @@ const std::string& tagsQueryFor(Lang lang)
 	// captures); no augmentation needed.
 	static const std::string python     = readFile(TS_PYTHON_TAGS_SCM);
 	static const std::string javascript = readFile(TS_JS_TAGS_SCM);
+	static const std::string lua        = readFile(TS_LUA_TAGS_SCM);
+	static const std::string go         = readFile(TS_GO_TAGS_SCM);
+	static const std::string rust       = readFile(TS_RUST_TAGS_SCM);
 	static const std::string none;
 
 	switch (lang) {
@@ -94,6 +113,9 @@ const std::string& tagsQueryFor(Lang lang)
 		case Lang::CSharp:     return csharp;
 		case Lang::Python:     return python;
 		case Lang::JavaScript: return javascript;
+		case Lang::Lua:        return lua;
+		case Lang::Go:         return go;
+		case Lang::Rust:       return rust;
 		default:               return none;
 	}
 }
@@ -171,6 +193,12 @@ Lang langForExtension(const std::string& extIn)
 		return Lang::Python;
 	if (ext == ".js" || ext == ".jsx" || ext == ".mjs" || ext == ".cjs")
 		return Lang::JavaScript;
+	if (ext == ".lua")
+		return Lang::Lua;
+	if (ext == ".go")
+		return Lang::Go;
+	if (ext == ".rs")
+		return Lang::Rust;
 	return Lang::None;
 }
 
@@ -278,6 +306,9 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 		TSQueryError errType = TSQueryErrorNone;
 		query = ts_query_new(language, queryStr.c_str(), (uint32_t) queryStr.size(), &errOffset, &errType);
 		queryCache[(int) lang] = query;   // cache even nullptr so a broken query isn't retried
+		if (!query)
+			std::fprintf(stderr, "[ts] tags query compile failed: lang=%d errType=%d at byte %u\n",
+			             (int) lang, (int) errType, errOffset);
 	}
 	if (!query)
 	{

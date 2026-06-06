@@ -411,6 +411,40 @@ int main()
 		}
 		CHECK(foo, "JS: class Foo found");
 		CHECK(baz, "JS: function baz found");
+
+		CHECK(ts::langForExtension(".lua") == ts::Lang::Lua, ".lua -> Lua grammar");
+		CHECK(ts::langForExtension(".go")  == ts::Lang::Go,  ".go -> Go grammar");
+		CHECK(ts::langForExtension(".rs")  == ts::Lang::Rust, ".rs -> Rust grammar");
+
+		auto hasDef = [](const std::vector<ts::Symbol>& v, const char* nm) {
+			for (auto& s : v) if (s.isDefinition && s.name == nm) return true;
+			return false;
+		};
+
+		std::string lua =
+			"local function helper()\n"
+			"    return 1\n"
+			"end\n";
+		auto luas = ts::extractSymbols(ts::Lang::Lua, lua);
+		std::fprintf(stderr, "[ts:lua] symbols=%zu\n", luas.size());
+		CHECK(hasDef(luas, "helper"), "Lua: function helper found");
+
+		std::string go =
+			"package main\n"
+			"type Widget struct { X int }\n"
+			"func Run() int { return 1 }\n";
+		auto gos = ts::extractSymbols(ts::Lang::Go, go);
+		std::fprintf(stderr, "[ts:go] symbols=%zu\n", gos.size());
+		CHECK(hasDef(gos, "Run"),    "Go: func Run found");
+		CHECK(hasDef(gos, "Widget"), "Go: type Widget found");
+
+		std::string rust =
+			"struct Widget { x: i32 }\n"
+			"fn run() -> i32 { 1 }\n";
+		auto rusts = ts::extractSymbols(ts::Lang::Rust, rust);
+		std::fprintf(stderr, "[ts:rust] symbols=%zu\n", rusts.size());
+		CHECK(hasDef(rusts, "run"),    "Rust: fn run found");
+		CHECK(hasDef(rusts, "Widget"), "Rust: struct Widget found");
 	}
 
 	if (gFailures == 0) {
