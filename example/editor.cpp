@@ -9912,15 +9912,20 @@ static std::string resolveReceiverType(const std::string &buf, const std::string
             }
         }
 
-        // Pattern B: Type recv  (the token immediately before recv is a type)
+        // Pattern B: Type recv  (the token immediately before recv is a type).
+        // Allow '<' too so a templated type (std::vector<int> recv) is captured
+        // whole rather than stopping inside the angle brackets.
         size_t q = i;
         while (q > 0 && isSp(buf[q - 1])) --q;
         size_t te = q;
         while (q > 0 && (tsIsIdentChar(buf[q - 1]) || buf[q - 1] == '.' || buf[q - 1] == ':' ||
-                         buf[q - 1] == '*' || buf[q - 1] == '&' || buf[q - 1] == '>'))
+                         buf[q - 1] == '*' || buf[q - 1] == '&' || buf[q - 1] == '>' || buf[q - 1] == '<'))
             --q;
         std::string tok = buf.substr(q, te - q);
-        while (!tok.empty() && (tok.back() == '*' || tok.back() == '&' || tok.back() == '>' || tok.back() == '<'))
+        // Drop template arguments: std::vector<int> -> std::vector.
+        if (auto lt = tok.find('<'); lt != std::string::npos)
+            tok = tok.substr(0, lt);
+        while (!tok.empty() && (tok.back() == '*' || tok.back() == '&'))
             tok.pop_back();
         std::string simple = tsLastSeg(tok);
         if (!simple.empty() && tsIsIdentChar(simple[0]) && !(simple[0] >= '0' && simple[0] <= '9') && !notType.count(simple))
@@ -9947,7 +9952,15 @@ void Editor::configureTabAutocomplete(TabDocument &t)
         // unresolved we fall through to normal identifier completion.
         {
             std::string ln = tptr->editor.GetLineText((int) state.line);
-            size_t k = (std::min)(state.searchTermStartIndex, ln.size());
+            // searchTermStartIndex is a CODEPOINT index; ln is UTF-8 BYTES. Walk
+            // that many codepoints to get the byte offset, else any multibyte
+            // char earlier on the line shifts every following byte test.
+            size_t k = 0;
+            for (size_t cp = 0; cp < (size_t) state.searchTermStartIndex && k < ln.size(); ++cp)
+            {
+                ++k;
+                while (k < ln.size() && (((unsigned char) ln[k]) & 0xC0) == 0x80) ++k;
+            }
             auto isSp = [](char c) { return c == ' ' || c == '\t'; };
             size_t op = k;
             while (op > 0 && isSp(ln[op - 1])) --op;
@@ -9963,7 +9976,9 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                 size_t rEnd = r;
                 while (r > 0 && tsIsIdentChar(ln[r - 1])) --r;
                 std::string receiver = ln.substr(r, rEnd - r);
-                if (!receiver.empty())
+                // Skip numeric receivers (3.14 -> "3"): a digit-led token is never
+                // a type name, so resolving it only risks a false member list.
+                if (!receiver.empty() && !(receiver[0] >= '0' && receiver[0] <= '9'))
                 {
                     // '::' receiver IS the type (static / namespace / nested);
                     // '.'/'->' need the receiver's declared type resolved.
