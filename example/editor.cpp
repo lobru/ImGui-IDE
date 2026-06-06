@@ -2385,14 +2385,47 @@ void Editor::rebuildProjectIndex()
             if (!extOk(ext))
                 continue;
 
-            std::ifstream f(it->path());
+            std::ifstream f(it->path(), std::ios::binary);
             if (!f.is_open())
                 continue;
             std::string fileStr = it->path().string();
+            std::string whole((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            f.close();
+
+            // Tree-sitter pass (C/C++/C#): accurate, kind-ranked definition sites +
+            // per-type member names. Skip very large files so a generated mega-header
+            // can't stall the background build.
+            bool tsFile = ts::langForExtension(ext) != ts::Lang::None;
+            if (tsFile && whole.size() > 1500000)
+                tsFile = false;
+            if (tsFile)
+            {
+                for (auto &sym : ts::extractSymbols(ts::langForExtension(ext), whole))
+                {
+                    idset.insert(sym.name);
+                    if (!sym.isDefinition)
+                        continue;
+                    auto &dv = idx->tsDefs[sym.name];
+                    if (dv.size() < 32)
+                        dv.push_back({fileStr, sym.line, sym.kind});
+                    if (!sym.enclosingType.empty())
+                    {
+                        auto &mv = idx->members[sym.enclosingType];
+                        if (mv.size() < 256)
+                            mv.push_back(sym.name);
+                    }
+                }
+            }
+
+            // Identifier + heuristic-definition tokenization. Heuristic def sites are
+            // suppressed for ts files — tsDefs is authoritative there.
+            std::istringstream ss(whole);
             std::string line;
             int lineNo = 0;
-            while (std::getline(f, line))
+            while (std::getline(ss, line))
             {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
                 int curLine = lineNo++;
                 size_t n = line.size();
                 size_t lead = 0;
@@ -2473,7 +2506,7 @@ void Editor::rebuildProjectIndex()
                                 score = 30;
                         }
                     }
-                    if (score > 0)
+                    if (score > 0 && !tsFile)
                     {
                         auto &v = idx->defs[tok];
                         if (v.size() < 32)
@@ -3382,125 +3415,43 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
     return sysIncludeDirs_;
 }
 
-// Tree-sitter-accurate go-to-definition. Parses project files of the active
-// document's language and finds a real definition named `symbol` — far more
-// reliable than the grep heuristics for C# (and good for C++ too). On-demand
-// scan, bounded by a file cap so a click can't hang on a huge tree.
+static int rankKind(ts::Kind k)
+{
+    switch (k) {
+        case ts::Kind::Class:
+        case ts::Kind::Struct:
+        case ts::Kind::Enum:
+        case ts::Kind::Type:     return 5;   // types win (the usual go-to-def target)
+        case ts::Kind::Method:
+        case ts::Kind::Function: return 4;
+        case ts::Kind::Field:
+        case ts::Kind::Constant: return 3;
+        case ts::Kind::Variable: return 2;
+        case ts::Kind::Module:   return 1;
+        default:                 return 0;
+    }
+}
+
+// Go-to-definition via the prebuilt tree-sitter index (accurate for C++/C#).
+// Reads the table — no per-jump scan; returns true if it resolved + navigated.
 bool Editor::tsGoToDefinition(const std::string &symbol)
 {
-    if (tabs.empty() || symbol.empty())
+    if (symbol.empty())
         return false;
-
-    std::string ext = std::filesystem::path(doc().filename).extension().string();
-    ts::Lang lang = ts::langForExtension(ext);
-    // C# only for now: it's where the grep index lands on the wrong site. C++
-    // keeps its fast prebuilt-index path (a full tree-sitter scan of this repo's
-    // huge files on every jump would hitch). A background index lifts this later.
-    if (lang != ts::Lang::CSharp)
+    auto pidx = indexSnapshot();
+    if (!pidx)
         return false;
-
-    std::filesystem::path root = projectRoot;
-    if (root.empty() && doc().filename != "untitled")
-        root = std::filesystem::path(doc().filename).parent_path();
-    if (root.empty())
+    auto it = pidx->tsDefs.find(symbol);
+    if (it == pidx->tsDefs.end() || it->second.empty())
         return false;
-
-    auto rankKind = [](ts::Kind k) -> int {
-        switch (k) {
-            case ts::Kind::Class:
-            case ts::Kind::Struct:
-            case ts::Kind::Enum:
-            case ts::Kind::Type:     return 5;   // types win (the usual go-to-def target)
-            case ts::Kind::Method:
-            case ts::Kind::Function: return 4;
-            case ts::Kind::Field:
-            case ts::Kind::Constant: return 3;
-            case ts::Kind::Variable: return 2;
-            case ts::Kind::Module:   return 1;
-            default:                 return 0;
-        }
-    };
 
     std::string bestFile;
     int bestLine = -1;
-    int bestScore = -1;
-    std::error_code ec;
-    int scanned = 0;
-    const int kFileCap = 4000;
-
-    auto walk = std::filesystem::recursive_directory_iterator(
-        root, std::filesystem::directory_options::skip_permission_denied, ec);
-    auto end = std::filesystem::recursive_directory_iterator();
-    for (; !ec && walk != end; walk.increment(ec))
+    int bestRank = -1;
+    for (auto &d : it->second)
     {
-        if (walk->is_directory(ec))
-        {
-            std::string nm = walk->path().filename().string();
-            std::string nml = nm;
-            std::transform(nml.begin(), nml.end(), nml.begin(), [](unsigned char c) { return (char) std::tolower(c); });
-            if (nm == "deps" || nm == "bin" || nm == "obj" || nm == ".git" ||
-                nm == "node_modules" || nm == "out" || nm == ".vs" || nm == "packages" ||
-                nml == "backup" || nml == "backups" || nml == ".backup")
-                walk.disable_recursion_pending();
-            continue;
-        }
-        std::string fext = walk->path().extension().string();
-        if (ts::langForExtension(fext) != lang)
-            continue;
-        if (++scanned > kFileCap)
-            break;
-
-        // Per-file parse cache: re-parse only files whose mtime changed since the
-        // last jump, so repeated go-to-defs don't re-read + re-parse the whole
-        // tree. Function-static (keyed by absolute path) so it spans calls.
-        static std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::vector<ts::Symbol>>> cache;
-        std::string path = walk->path().string();
-        std::error_code mec;
-        auto mtime = std::filesystem::last_write_time(walk->path(), mec);
-
-        const std::vector<ts::Symbol>* symsPtr = nullptr;
-        auto cit = cache.find(path);
-        if (!mec && cit != cache.end() && cit->second.first == mtime)
-        {
-            symsPtr = &cit->second.second;
-        }
-        else
-        {
-            std::ifstream f(walk->path(), std::ios::binary);
-            if (!f.is_open())
-                continue;
-            std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            f.close();
-            std::vector<ts::Symbol> parsed = ts::extractSymbols(lang, src);
-            if (!mec)
-            {
-                if (cache.size() > 8000)
-                    cache.clear();   // bound memory
-                auto& slot = cache[path];
-                slot.first = mtime;
-                slot.second = std::move(parsed);
-                symsPtr = &slot.second;
-            }
-            else
-            {
-                static std::vector<ts::Symbol> scratch;   // uncacheable (no mtime)
-                scratch = std::move(parsed);
-                symsPtr = &scratch;
-            }
-        }
-
-        for (auto &s : *symsPtr)
-        {
-            if (!s.isDefinition || s.name != symbol)
-                continue;
-            int score = rankKind(s.kind);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestFile = walk->path().string();
-                bestLine = s.line;
-            }
-        }
+        int r = rankKind(d.kind);
+        if (r > bestRank) { bestRank = r; bestFile = d.file; bestLine = d.line; }
     }
 
     if (bestLine < 0)

@@ -33,6 +33,7 @@ struct Symbol {
 	int         line = 0;            // 0-based
 	int         column = 0;         // 0-based
 	bool        isDefinition = true; // definition (vs reference)
+	std::string enclosingType;       // simple name of the containing type ("" if top-level)
 };
 
 // Languages we currently have a grammar + tags query for.

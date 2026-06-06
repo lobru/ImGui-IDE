@@ -24,6 +24,7 @@
 #include <imgui.h>
 #include "../TextEditor.h"
 #include "../TextDiff.h"
+#include "tsindex.h"
 
 
 //
@@ -247,9 +248,12 @@ private:
 	// mutex after each build. `gen` discards a stale build when the project
 	// changes mid-index.
 	struct DefSite { std::string file; int line; int score; };
+	struct TsDef   { std::string file; int line; ts::Kind kind; };   // accurate, kind-ranked
 	struct ProjectIndex {
 		std::vector<std::string>                              identifiers; // sorted unique
-		std::unordered_map<std::string, std::vector<DefSite>> defs;        // symbol -> sites
+		std::unordered_map<std::string, std::vector<DefSite>> defs;        // symbol -> sites (heuristic)
+		std::unordered_map<std::string, std::vector<TsDef>>   tsDefs;      // symbol -> tree-sitter sites
+		std::unordered_map<std::string, std::vector<std::string>> members; // type name -> member names
 	};
 	struct IndexState {
 		std::mutex                          mutex;

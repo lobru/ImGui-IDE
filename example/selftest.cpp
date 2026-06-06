@@ -195,35 +195,50 @@ int main()
 	// ── Tree-sitter symbol extraction (go-to-def/decl foundation) ──
 	{
 		std::string cpp =
-			"namespace ns {\n"
-			"class Foo {\n"
-			"public:\n"
-			"    int bar(int x);\n"
-			"};\n"
-			"}\n"
-			"int ns::Foo::bar(int x) { return baz(x); }\n"
-			"void baz() {}\n";
+			"namespace ns {\n"                              // 0
+			"class Foo {\n"                                 // 1
+			"public:\n"                                     // 2
+			"    int width;\n"                              // 3  field
+			"    int bar(int x);\n"                         // 4  method decl
+			"    class Inner {\n"                           // 5  nested type
+			"        void m();\n"                           // 6  method in nested
+			"    };\n"                                       // 7
+			"};\n"                                           // 8
+			"}\n"                                            // 9
+			"int ns::Foo::bar(int x) { return baz(x); }\n"  // 10 out-of-line def
+			"void baz() {}\n";                              // 11 top-level
 		auto syms = ts::extractSymbols(ts::Lang::Cpp, cpp);
 
-		// Dump what we got so the capture→kind mapping is visible while iterating.
 		std::fprintf(stderr, "[ts] available=%d  symbols=%zu\n", (int) ts::available(), syms.size());
 		for (auto& s : syms)
-			std::fprintf(stderr, "[ts]   %-16s kind=%d def=%d  @%d:%d\n",
-				s.name.c_str(), (int) s.kind, (int) s.isDefinition, s.line, s.column);
+			std::fprintf(stderr, "[ts]   %-10s kind=%d def=%d encl=%-6s @%d:%d\n",
+				s.name.c_str(), (int) s.kind, (int) s.isDefinition,
+				s.enclosingType.empty() ? "-" : s.enclosingType.c_str(), s.line, s.column);
 
-		bool foo = false, baz = false, barDecl = false, barDef = false;
+		// enclosingType of the symbol matching name(+line); "?" if not found.
+		auto encl = [&](const char* name, int line) -> std::string {
+			for (auto& s : syms) if (s.name == name && (line < 0 || s.line == line)) return s.enclosingType;
+			return "?";
+		};
+		bool foo = false, baz = false, inner = false, barDecl = false, barDef = false;
 		for (auto& s : syms) {
-			if (s.name == "Foo") foo = true;
-			if (s.name == "baz") baz = true;
-			if (s.name == "bar" && s.line == 3) barDecl = true;   // in-class declaration
-			if (s.name == "bar" && s.line == 6) barDef = true;    // out-of-line definition
+			if (s.name == "Foo")   foo = true;
+			if (s.name == "baz")   baz = true;
+			if (s.name == "Inner") inner = true;
+			if (s.name == "bar" && s.line == 4)  barDecl = true;
+			if (s.name == "bar" && s.line == 10) barDef = true;
 		}
 		CHECK(ts::available(), "tree-sitter C++ grammar available");
-		CHECK(!syms.empty(), "tree-sitter extracts symbols from C++");
-		CHECK(foo, "tree-sitter finds class Foo");
-		CHECK(baz, "tree-sitter finds function baz");
+		CHECK(foo && baz && inner, "tree-sitter finds Foo, baz, Inner");
 		CHECK(barDecl, "tree-sitter finds the in-class bar declaration");
-		CHECK(barDef, "tree-sitter finds the out-of-line bar definition (nested scope)");
+		CHECK(barDef, "tree-sitter finds the out-of-line bar definition");
+		CHECK(encl("width", 3) == "Foo", "field width enclosed by Foo");
+		CHECK(encl("bar", 4) == "Foo", "in-class bar enclosed by Foo");
+		CHECK(encl("bar", 10) == "Foo", "out-of-line bar enclosed by Foo (qualified)");
+		CHECK(encl("m", 6) == "Inner", "nested m enclosed by tightest type Inner");
+		CHECK(encl("baz", 11).empty(), "top-level baz has no enclosing type");
+		CHECK(encl("Inner", 5) == "Foo", "nested type Inner's enclosing is outer Foo (self-skip)");
+		CHECK(encl("Foo", 1).empty(), "top-level type Foo has no enclosing (self-skip)");
 	}
 
 	// ── Tree-sitter C# symbol extraction ──
@@ -239,20 +254,26 @@ int main()
 		auto syms = ts::extractSymbols(ts::Lang::CSharp, cs);
 		std::fprintf(stderr, "[ts:cs] symbols=%zu\n", syms.size());
 		for (auto& s : syms)
-			std::fprintf(stderr, "[ts:cs]   %-12s kind=%d def=%d  @%d:%d\n",
-				s.name.c_str(), (int) s.kind, (int) s.isDefinition, s.line, s.column);
+			std::fprintf(stderr, "[ts:cs]   %-10s kind=%d def=%d encl=%-6s @%d:%d\n",
+				s.name.c_str(), (int) s.kind, (int) s.isDefinition,
+				s.enclosingType.empty() ? "-" : s.enclosingType.c_str(), s.line, s.column);
 
-		bool widget = false, area = false, ithing = false;
+		auto encl = [&](const char* name) -> std::string {
+			for (auto& s : syms) if (s.name == name) return s.enclosingType;
+			return "?";
+		};
+		bool widget = false, area = false, ithing = false, width = false;
 		for (auto& s : syms) {
 			if (s.name == "Widget") widget = true;
 			if (s.name == "Area")   area = true;
 			if (s.name == "IThing") ithing = true;
+			if (s.name == "Width")  width = true;
 		}
 		CHECK(ts::langForExtension(".cs") == ts::Lang::CSharp, "C# extension maps to the C# grammar");
-		CHECK(!syms.empty(), "tree-sitter extracts symbols from C#");
-		CHECK(widget, "tree-sitter finds class Widget");
-		CHECK(area, "tree-sitter finds method Area");
-		CHECK(ithing, "tree-sitter finds interface IThing");
+		CHECK(widget && area && ithing, "tree-sitter finds Widget, Area, IThing");
+		CHECK(width, "C# query (augmented) finds the Width field");   // fails without the field augmentation
+		CHECK(encl("Area") == "Widget", "C# method Area enclosed by Widget");
+		CHECK(encl("Width") == "Widget", "C# field Width enclosed by Widget");
 	}
 
 	if (gFailures == 0) {
