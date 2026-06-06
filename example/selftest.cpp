@@ -226,6 +226,35 @@ int main()
 		CHECK(barDef, "tree-sitter finds the out-of-line bar definition (nested scope)");
 	}
 
+	// ── Tree-sitter C# symbol extraction ──
+	{
+		std::string cs =
+			"namespace App {\n"
+			"  class Widget {\n"
+			"    public int Width;\n"
+			"    public int Area() { return Width * Width; }\n"
+			"  }\n"
+			"  interface IThing { void Do(); }\n"
+			"}\n";
+		auto syms = ts::extractSymbols(ts::Lang::CSharp, cs);
+		std::fprintf(stderr, "[ts:cs] symbols=%zu\n", syms.size());
+		for (auto& s : syms)
+			std::fprintf(stderr, "[ts:cs]   %-12s kind=%d def=%d  @%d:%d\n",
+				s.name.c_str(), (int) s.kind, (int) s.isDefinition, s.line, s.column);
+
+		bool widget = false, area = false, ithing = false;
+		for (auto& s : syms) {
+			if (s.name == "Widget") widget = true;
+			if (s.name == "Area")   area = true;
+			if (s.name == "IThing") ithing = true;
+		}
+		CHECK(ts::langForExtension(".cs") == ts::Lang::CSharp, "C# extension maps to the C# grammar");
+		CHECK(!syms.empty(), "tree-sitter extracts symbols from C#");
+		CHECK(widget, "tree-sitter finds class Widget");
+		CHECK(area, "tree-sitter finds method Area");
+		CHECK(ithing, "tree-sitter finds interface IThing");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

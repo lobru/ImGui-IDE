@@ -13,17 +13,29 @@ FetchContent_Populate(treesitter_cpp QUIET
 	GIT_REPOSITORY "https://github.com/tree-sitter/tree-sitter-cpp"
 	GIT_TAG "v0.23.4")
 
+FetchContent_Populate(treesitter_csharp QUIET
+	GIT_REPOSITORY "https://github.com/tree-sitter/tree-sitter-c-sharp"
+	GIT_TAG "v0.23.1")
+
+# Grammar sources: parser.c always, scanner.c only when the grammar has one.
+file(GLOB TS_CPP_SRC    "${treesitter_cpp_SOURCE_DIR}/src/*.c")
+file(GLOB TS_CSHARP_SRC "${treesitter_csharp_SOURCE_DIR}/src/*.c")
+
 add_library(treesitter STATIC
 	${treesitter_core_SOURCE_DIR}/lib/src/lib.c
-	${treesitter_cpp_SOURCE_DIR}/src/parser.c
-	${treesitter_cpp_SOURCE_DIR}/src/scanner.c)
+	${TS_CPP_SRC}
+	${TS_CSHARP_SRC})
 
 # api.h is public (our wrapper includes it); core/grammar internal headers private.
+# Each grammar bundles its own src/tree_sitter/parser.h, so its src/ must be on
+# the include path while ITS parser.c compiles — but they'd collide if listed
+# globally. Set the include per-file instead.
 target_include_directories(treesitter PUBLIC
 	${treesitter_core_SOURCE_DIR}/lib/include)
 target_include_directories(treesitter PRIVATE
-	${treesitter_core_SOURCE_DIR}/lib/src
-	${treesitter_cpp_SOURCE_DIR}/src)
+	${treesitter_core_SOURCE_DIR}/lib/src)
+set_source_files_properties(${TS_CPP_SRC}    PROPERTIES INCLUDE_DIRECTORIES "${treesitter_cpp_SOURCE_DIR}/src")
+set_source_files_properties(${TS_CSHARP_SRC} PROPERTIES INCLUDE_DIRECTORIES "${treesitter_csharp_SOURCE_DIR}/src")
 
 if(MSVC)
 	target_compile_options(treesitter PRIVATE /W0 /wd4996 /wd4244 /wd4018)
@@ -31,6 +43,7 @@ else()
 	target_compile_options(treesitter PRIVATE -w)
 endif()
 
-# Hand the runtime the path to the C++ tags query so we don't hand-maintain it.
+# Hand the runtime the paths to each grammar's tags query (don't hand-maintain).
 target_compile_definitions(treesitter PUBLIC
-	TS_CPP_TAGS_SCM="${treesitter_cpp_SOURCE_DIR}/queries/tags.scm")
+	TS_CPP_TAGS_SCM="${treesitter_cpp_SOURCE_DIR}/queries/tags.scm"
+	TS_CSHARP_TAGS_SCM="${treesitter_csharp_SOURCE_DIR}/queries/tags.scm")

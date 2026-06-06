@@ -12,31 +12,46 @@
 
 // Grammar entry points (defined in the generated parser.c files).
 extern "C" const TSLanguage* tree_sitter_cpp(void);
+extern "C" const TSLanguage* tree_sitter_c_sharp(void);
 
 #ifndef TS_CPP_TAGS_SCM
 #define TS_CPP_TAGS_SCM ""
+#endif
+#ifndef TS_CSHARP_TAGS_SCM
+#define TS_CSHARP_TAGS_SCM ""
 #endif
 
 namespace ts {
 
 namespace {
 
-// Read the grammar's tags.scm once and augment it. The stock query only tags
-// out-of-line definitions with a SINGLE namespace scope (ns::bar), missing
-// nested ones (ns::Foo::bar) — i.e. the actual method body go-to-def wants. The
-// extra patterns capture any qualified definition's final name, plus struct/
-// class data members (for member-aware autocomplete later). Same-node double
-// captures are removed by position dedup in extractSymbols.
-const std::string& cppTagsQuery()
+const TSLanguage* languageFor(Lang lang)
 {
-	static std::string query = [] {
-		std::ifstream f(TS_CPP_TAGS_SCM);
-		std::string base;
-		if (f.is_open()) {
-			std::stringstream ss;
-			ss << f.rdbuf();
-			base = ss.str();
-		}
+	switch (lang) {
+		case Lang::Cpp:    return tree_sitter_cpp();
+		case Lang::CSharp: return tree_sitter_c_sharp();
+		default:           return nullptr;
+	}
+}
+
+std::string readFile(const char* path)
+{
+	std::ifstream f(path);
+	if (!f.is_open()) return {};
+	std::stringstream ss;
+	ss << f.rdbuf();
+	return ss.str();
+}
+
+// The grammar's tags.scm, loaded once per language and (for C++) augmented. The
+// stock C++ query only tags single-namespace out-of-line defs (ns::bar), missing
+// nested ones (ns::Foo::bar) — the actual method body go-to-def wants — so we add
+// patterns for qualified definitions + data members + enum constants. Same-node
+// double captures are removed by position dedup in extractSymbols.
+const std::string& tagsQueryFor(Lang lang)
+{
+	static const std::string cpp = [] {
+		std::string base = readFile(TS_CPP_TAGS_SCM);
 		if (base.empty()) return base;
 		base +=
 			"\n"
@@ -45,7 +60,14 @@ const std::string& cppTagsQuery()
 			"(enumerator name: (identifier) @name) @definition.constant\n";
 		return base;
 	}();
-	return query;
+	static const std::string csharp = readFile(TS_CSHARP_TAGS_SCM);
+	static const std::string none;
+
+	switch (lang) {
+		case Lang::Cpp:    return cpp;
+		case Lang::CSharp: return csharp;
+		default:           return none;
+	}
 }
 
 Kind kindFromCapture(const std::string& tail)
@@ -73,25 +95,27 @@ Lang langForExtension(const std::string& extIn)
 	if (ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c" ||
 		ext == ".h" || ext == ".hpp" || ext == ".hxx" || ext == ".hh" || ext == ".inl")
 		return Lang::Cpp;
+	if (ext == ".cs")
+		return Lang::CSharp;
 	return Lang::None;
 }
 
 bool available()
 {
-	return tree_sitter_cpp() != nullptr;
+	return languageFor(Lang::Cpp) != nullptr;
 }
 
 std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 {
 	std::vector<Symbol> out;
-	if (lang != Lang::Cpp || source.empty())
+	if (lang == Lang::None || source.empty())
 		return out;
 
-	const std::string& queryStr = cppTagsQuery();
+	const std::string& queryStr = tagsQueryFor(lang);
 	if (queryStr.empty())
 		return out;
 
-	const TSLanguage* language = tree_sitter_cpp();
+	const TSLanguage* language = languageFor(lang);
 	if (!language)
 		return out;
 
