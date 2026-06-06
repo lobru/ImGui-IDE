@@ -21,15 +21,29 @@ namespace ts {
 
 namespace {
 
-// Read a file once and cache it (the tags.scm queries are build-dir paths).
+// Read the grammar's tags.scm once and augment it. The stock query only tags
+// out-of-line definitions with a SINGLE namespace scope (ns::bar), missing
+// nested ones (ns::Foo::bar) — i.e. the actual method body go-to-def wants. The
+// extra patterns capture any qualified definition's final name, plus struct/
+// class data members (for member-aware autocomplete later). Same-node double
+// captures are removed by position dedup in extractSymbols.
 const std::string& cppTagsQuery()
 {
 	static std::string query = [] {
 		std::ifstream f(TS_CPP_TAGS_SCM);
-		if (!f.is_open()) return std::string();
-		std::stringstream ss;
-		ss << f.rdbuf();
-		return ss.str();
+		std::string base;
+		if (f.is_open()) {
+			std::stringstream ss;
+			ss << f.rdbuf();
+			base = ss.str();
+		}
+		if (base.empty()) return base;
+		base +=
+			"\n"
+			"(function_definition declarator: (function_declarator declarator: (qualified_identifier) @name)) @definition.method\n"
+			"(field_declaration declarator: (field_identifier) @name) @definition.field\n"
+			"(enumerator name: (identifier) @name) @definition.constant\n";
+		return base;
 	}();
 	return query;
 }
@@ -104,6 +118,8 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 	TSQueryCursor* cursor = ts_query_cursor_new();
 	ts_query_cursor_exec(cursor, query, root);
 
+	std::vector<uint64_t> seen;   // (row<<20 | col) keys, to drop same-node double captures
+
 	TSQueryMatch match;
 	while (ts_query_cursor_next_match(cursor, &match))
 	{
@@ -125,6 +141,9 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 				if (e > s && e <= source.size())
 				{
 					sym.name = source.substr(s, e - s);
+					// Qualified out-of-line names (ns::Foo::bar) → last segment.
+					if (auto pos = sym.name.rfind("::"); pos != std::string::npos)
+						sym.name = sym.name.substr(pos + 2);
 					sym.line = (int) p.row;
 					sym.column = (int) p.column;
 					haveName = true;
@@ -144,7 +163,14 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 			}
 		}
 		if (haveName && haveKind)
-			out.push_back(std::move(sym));
+		{
+			uint64_t key = ((uint64_t) sym.line << 20) | (uint32_t) sym.column;
+			if (std::find(seen.begin(), seen.end(), key) == seen.end())
+			{
+				seen.push_back(key);
+				out.push_back(std::move(sym));
+			}
+		}
 	}
 
 	ts_query_cursor_delete(cursor);

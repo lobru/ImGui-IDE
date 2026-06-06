@@ -211,17 +211,19 @@ int main()
 			std::fprintf(stderr, "[ts]   %-16s kind=%d def=%d  @%d:%d\n",
 				s.name.c_str(), (int) s.kind, (int) s.isDefinition, s.line, s.column);
 
-		bool foo = false, bar = false, baz = false;
+		bool foo = false, baz = false, barDecl = false, barDef = false;
 		for (auto& s : syms) {
 			if (s.name == "Foo") foo = true;
-			if (s.name == "bar") bar = true;
 			if (s.name == "baz") baz = true;
+			if (s.name == "bar" && s.line == 3) barDecl = true;   // in-class declaration
+			if (s.name == "bar" && s.line == 6) barDef = true;    // out-of-line definition
 		}
 		CHECK(ts::available(), "tree-sitter C++ grammar available");
 		CHECK(!syms.empty(), "tree-sitter extracts symbols from C++");
 		CHECK(foo, "tree-sitter finds class Foo");
-		CHECK(bar, "tree-sitter finds method bar");
 		CHECK(baz, "tree-sitter finds function baz");
+		CHECK(barDecl, "tree-sitter finds the in-class bar declaration");
+		CHECK(barDef, "tree-sitter finds the out-of-line bar definition (nested scope)");
 	}
 
 	if (gFailures == 0) {
