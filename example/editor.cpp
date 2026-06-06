@@ -44,6 +44,7 @@
 #pragma warning(pop)
 
 #include "editor.h"
+#include "tsindex.h"
 
 #include <chrono>
 
@@ -3378,6 +3379,105 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
     return sysIncludeDirs_;
 }
 
+// Tree-sitter-accurate go-to-definition. Parses project files of the active
+// document's language and finds a real definition named `symbol` — far more
+// reliable than the grep heuristics for C# (and good for C++ too). On-demand
+// scan, bounded by a file cap so a click can't hang on a huge tree.
+bool Editor::tsGoToDefinition(const std::string &symbol)
+{
+    if (tabs.empty() || symbol.empty())
+        return false;
+
+    std::string ext = std::filesystem::path(doc().filename).extension().string();
+    ts::Lang lang = ts::langForExtension(ext);
+    // C# only for now: it's where the grep index lands on the wrong site. C++
+    // keeps its fast prebuilt-index path (a full tree-sitter scan of this repo's
+    // huge files on every jump would hitch). A background index lifts this later.
+    if (lang != ts::Lang::CSharp)
+        return false;
+
+    std::filesystem::path root = projectRoot;
+    if (root.empty() && doc().filename != "untitled")
+        root = std::filesystem::path(doc().filename).parent_path();
+    if (root.empty())
+        return false;
+
+    auto rankKind = [](ts::Kind k) -> int {
+        switch (k) {
+            case ts::Kind::Class:
+            case ts::Kind::Struct:
+            case ts::Kind::Enum:
+            case ts::Kind::Type:     return 5;   // types win (the usual go-to-def target)
+            case ts::Kind::Method:
+            case ts::Kind::Function: return 4;
+            case ts::Kind::Field:
+            case ts::Kind::Constant: return 3;
+            case ts::Kind::Variable: return 2;
+            case ts::Kind::Module:   return 1;
+            default:                 return 0;
+        }
+    };
+
+    std::string bestFile;
+    int bestLine = -1;
+    int bestScore = -1;
+    std::error_code ec;
+    int scanned = 0;
+    const int kFileCap = 4000;
+
+    auto walk = std::filesystem::recursive_directory_iterator(
+        root, std::filesystem::directory_options::skip_permission_denied, ec);
+    auto end = std::filesystem::recursive_directory_iterator();
+    for (; !ec && walk != end; walk.increment(ec))
+    {
+        if (walk->is_directory(ec))
+        {
+            std::string nm = walk->path().filename().string();
+            if (nm == "deps" || nm == "bin" || nm == "obj" || nm == ".git" ||
+                nm == "node_modules" || nm == "out" || nm == ".vs" || nm == "packages")
+                walk.disable_recursion_pending();
+            continue;
+        }
+        std::string fext = walk->path().extension().string();
+        if (ts::langForExtension(fext) != lang)
+            continue;
+        if (++scanned > kFileCap)
+            break;
+
+        std::ifstream f(walk->path(), std::ios::binary);
+        if (!f.is_open())
+            continue;
+        std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        f.close();
+
+        for (auto &s : ts::extractSymbols(lang, src))
+        {
+            if (!s.isDefinition || s.name != symbol)
+                continue;
+            int score = rankKind(s.kind);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestFile = walk->path().string();
+                bestLine = s.line;
+            }
+        }
+    }
+
+    if (bestLine < 0)
+        return false;
+
+    openFile(bestFile);
+    if (!tabs.empty())
+    {
+        auto &e = doc().editor;
+        e.SetCursor(bestLine, 0);
+        e.SelectLine(bestLine);
+        e.ScrollToLine(bestLine, TextEditor::Scroll::alignMiddle);
+    }
+    return true;
+}
+
 void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration)
 {
     ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
@@ -3421,6 +3521,11 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     // is now fast for declarations too because deps/ is excluded from the walk.
     if (!declaration)
     {
+        // Tree-sitter first: a real parse beats the grep index for accuracy
+        // (this is the fix for C# go-to-def landing on the wrong site).
+        if (tsGoToDefinition(symbol))
+            return;
+
         if (auto idx = indexSnapshot())
         {
             auto it = idx->defs.find(symbol);

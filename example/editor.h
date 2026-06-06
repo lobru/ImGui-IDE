@@ -617,6 +617,9 @@ private:
 	// the matching line. Works for languages the in-file trie doesn't cover
 	// (notably C# cross-file lookups).
 	void goToDefinitionProjectWide(const std::string& word, bool declaration = false);
+	// Tree-sitter-accurate definition jump for the active doc's language (C++/C#).
+	// Returns true if it resolved + navigated; false → fall through to grep.
+	bool tsGoToDefinition(const std::string& symbol);
 	void openCSharpLearn(const std::string& rawSymbol);   // C# SDK types -> Microsoft Learn docs (no on-disk source)
 
 	// MSVC toolchain + Windows SDK include directories, discovered ourselves

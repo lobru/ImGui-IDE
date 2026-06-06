@@ -488,7 +488,9 @@ void TextDiff::renderSideBySideTextScrollbars() {
 			ImDrawFlags_RoundCornersAll)) { textScroll = static_cast<float>(scroll); }
 
 		if (ImGui::IsWindowHovered()) {
-			textScroll = std::clamp(textScroll - ImGui::GetIO().MouseWheelH * ImGui::GetFontSize(), 0.0f, maxColumnsWidth - visibleColumnsWidth);
+			// Horizontal wheel / shift-wheel: + so tilting right scrolls the text
+			// right (the previous '-' ran it backwards in the diff view).
+			textScroll = std::clamp(textScroll + ImGui::GetIO().MouseWheelH * ImGui::GetFontSize(), 0.0f, maxColumnsWidth - visibleColumnsWidth);
 
 			if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
 				textScroll = std::max(textScroll - glyphSize.x, 0.0f);
