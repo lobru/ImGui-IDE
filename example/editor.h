@@ -260,6 +260,7 @@ private:
 		std::shared_ptr<const ProjectIndex> index;
 		std::atomic<bool>                   building{false};
 		std::atomic<int>                    gen{0};
+		std::atomic<bool>                   rebuildRequested{false}; // a save arrived mid-build
 	};
 	std::shared_ptr<IndexState> indexState = std::make_shared<IndexState>();
 	void rebuildProjectIndex();                              // spawn background build

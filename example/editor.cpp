@@ -2331,7 +2331,14 @@ void Editor::rebuildProjectIndex()
         return;
     auto st = indexState; // by value → outlives Editor
     if (st->building.exchange(true))
-        return; // one build at a time
+    {
+        // A build is in flight; record that the project changed so the running
+        // build re-runs a pass when it finishes (otherwise this save's edits stay
+        // unindexed until the next save — the dropped-mid-build-save bug).
+        st->rebuildRequested = true;
+        return;
+    }
+    st->rebuildRequested = false;
     int gen = ++st->gen;
     std::filesystem::path root = projectRoot;
 
@@ -2411,6 +2418,15 @@ void Editor::rebuildProjectIndex()
         auto isIdentStart = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; };
         auto isIdent = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'; };
 
+        // Build (re)runs in a loop: if a save lands mid-build it sets
+        // rebuildRequested, and we run one more pass with a fresh gen so the edit
+        // is indexed. try/catch guarantees `building` is reset even on a throw —
+        // otherwise a single failed pass would wedge the index for the session.
+        int curGen = gen;
+        for (;;)
+        {
+        try
+        {
         auto idx = std::make_shared<ProjectIndex>();
         std::unordered_set<std::string> idset;
         std::error_code ec;
@@ -2420,7 +2436,7 @@ void Editor::rebuildProjectIndex()
                  root, std::filesystem::directory_options::skip_permission_denied, ec);
              it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
         {
-            if (gen != st->gen.load())
+            if (curGen != st->gen.load())
             {
                 st->building = false;
                 return;
@@ -2580,11 +2596,17 @@ void Editor::rebuildProjectIndex()
         idx->identifiers.assign(idset.begin(), idset.end());
         std::sort(idx->identifiers.begin(), idx->identifiers.end());
 
-        if (gen == st->gen.load())
+        if (curGen == st->gen.load())
         {
             std::lock_guard<std::mutex> lock(st->mutex);
             st->index = idx;
         }
+        }                              // end try
+        catch (...) {}                 // never leave `building` stuck true on a throw
+        if (!st->rebuildRequested.exchange(false))
+            break;                     // no save landed during this pass → done
+        curGen = ++st->gen;            // a save did → one more pass, fresh gen
+        }                              // end for
         st->building = false;
     }).detach();
 }
