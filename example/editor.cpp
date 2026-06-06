@@ -7257,16 +7257,18 @@ void Editor::renderDockedDocuments()
         {
             pushToast("Split limit: only two side-by-side editor panes", IM_COL32(240, 200, 90, 255));
         }
-        else
+        else if (central && central->IsLeafNode())   // only split a real leaf node
         {
             ImGuiID newId = 0, otherId = 0;
             ImGui::DockBuilderSplitNode(centralId, wantSplitLeft ? ImGuiDir_Left : ImGuiDir_Right,
                                         0.5f, &newId, &otherId);
-            auto label = windowLabelFor(*tabs[activeTab]);
-            ImGui::DockBuilderDockWindow(label.c_str(), newId);
-            ImGui::DockBuilderFinish(rootId);
-            tabs[activeTab]->wantFocus = true;
-            tabs[activeTab]->dockedOnce = true;
+            if (newId != 0)
+            {
+                ImGui::DockBuilderDockWindow(windowLabelFor(*tabs[activeTab]).c_str(), newId);
+                ImGui::DockBuilderFinish(rootId);
+                tabs[activeTab]->wantFocus = true;
+                tabs[activeTab]->dockedOnce = true;
+            }
         }
         wantSplitRight = false;
         wantSplitLeft = false;
@@ -7281,7 +7283,7 @@ void Editor::renderDockedDocuments()
             // Already two panes — the file stays opened as a central tab.
             pushToast("Split limit: only two side-by-side editor panes", IM_COL32(240, 200, 90, 255));
         }
-        else
+        else if (central && central->IsLeafNode())
         {
             for (auto &up : tabs)
             {
@@ -7291,10 +7293,13 @@ void Editor::renderDockedDocuments()
                 ImGui::DockBuilderSplitNode(centralId,
                                             pendingSideDir < 0 ? ImGuiDir_Left : ImGuiDir_Right,
                                             0.5f, &sideId, &restId);
-                ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), sideId);
-                ImGui::DockBuilderFinish(rootId);
-                up->dockedOnce = true; // don't let the loop re-dock it to centre
-                up->wantFocus = true;
+                if (sideId != 0)
+                {
+                    ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), sideId);
+                    ImGui::DockBuilderFinish(rootId);
+                    up->dockedOnce = true; // don't let the loop re-dock it to centre
+                    up->wantFocus = true;
+                }
                 break;
             }
         }
@@ -7307,13 +7312,22 @@ void Editor::renderDockedDocuments()
     if (mdPreviewVisible && !mdPreviewWasVisible)
         mdPreviewWantDock = true;
     mdPreviewWasVisible = mdPreviewVisible;
-    if (mdPreviewWantDock && central)
+    // Only split a real LEAF central node — splitting a non-leaf (already-split)
+    // node is undefined in DockBuilder and can deref a null node.
+    if (mdPreviewWantDock && central && central->IsLeafNode())
     {
         ImGuiID sideId = 0, restId = 0;
         ImGui::DockBuilderSplitNode(centralId, ImGuiDir_Right, 0.4f, &sideId, &restId);
-        ImGui::DockBuilderDockWindow("Markdown Preview###mdPreview", sideId);
-        ImGui::DockBuilderFinish(rootId);
+        if (sideId != 0)
+        {
+            ImGui::DockBuilderDockWindow("Markdown Preview###mdPreview", sideId);
+            ImGui::DockBuilderFinish(rootId);
+        }
         mdPreviewWantDock = false;
+    }
+    else if (mdPreviewWantDock && central)
+    {
+        mdPreviewWantDock = false;   // central not splittable right now — leave preview floating
     }
 
     for (size_t i = 0; i < tabs.size(); ++i)

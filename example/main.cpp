@@ -28,6 +28,8 @@
 #ifdef _WIN32
 #include <Windows.h>
 #include <crtdbg.h>
+#include <DbgHelp.h>
+#pragma comment(lib, "Dbghelp.lib")
 #endif
 
 #include "editor.h"
@@ -68,11 +70,34 @@ static int __cdecl crtReportHook(int reportType, char* message, int* returnValue
 }
 
 static LONG WINAPI crashFilter(EXCEPTION_POINTERS* ep) {
-	char buf[160];
-	std::snprintf(buf, sizeof(buf), "code=0x%08lX addr=%p",
-		ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0UL,
-		ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionAddress : nullptr);
+	// Log the faulting address AS A MODULE-RELATIVE RVA so it can be symbolized
+	// against the build's PDB (`ln example.exe+<rva>` in cdb) regardless of ASLR.
+	void* addr = (ep && ep->ExceptionRecord) ? ep->ExceptionRecord->ExceptionAddress : nullptr;
+	HMODULE base = GetModuleHandleW(nullptr);
+	unsigned long long rva = (addr && base) ? (unsigned long long)((char*)addr - (char*)base) : 0ULL;
+	char buf[200];
+	std::snprintf(buf, sizeof(buf), "code=0x%08lX addr=%p  example.exe+0x%llX",
+		ep && ep->ExceptionRecord ? ep->ExceptionRecord->ExceptionCode : 0UL, addr, rva);
 	writeCrashLine("SEH", buf);
+
+	// Write a minidump next to the settings so the next crash is fully diagnosable
+	// with matching symbols (cdb -z crash.dmp).
+	if (!gCrashLogPath.empty()) {
+		std::string dumpPath = gCrashLogPath.substr(0, gCrashLogPath.find_last_of("/\\") + 1) + "crash.dmp";
+		HANDLE f = CreateFileA(dumpPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (f != INVALID_HANDLE_VALUE) {
+			MINIDUMP_EXCEPTION_INFORMATION mei{};
+			mei.ThreadId = GetCurrentThreadId();
+			mei.ExceptionPointers = ep;
+			mei.ClientPointers = FALSE;
+			MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), f,
+				(MINIDUMP_TYPE)(MiniDumpWithDataSegs | MiniDumpWithIndirectlyReferencedMemory),
+				ep ? &mei : nullptr, nullptr, nullptr);
+			CloseHandle(f);
+			writeCrashLine("SEH", ("minidump -> " + dumpPath).c_str());
+		}
+	}
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 #endif
