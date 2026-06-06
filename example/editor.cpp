@@ -2901,9 +2901,13 @@ void Editor::openCSharpDecompiled(const std::string &rawSymbol)
         if (auto bt = plain.find('`'); bt != std::string::npos)
             plain = plain.substr(0, bt);
 
-        // Run ilspycmd <dll> -t <full>, capture stdout+stderr.
+        // Run ilspycmd <dll> -r <runtimeDir> -t <full>, capture stdout+stderr.
+        // -r puts the whole runtime directory on the resolver path so dependent
+        // assemblies (System.Diagnostics, etc.) load into the type system —
+        // without it ilspycmd throws "Could not find type definition ...".
         auto runIlspy = [&](const std::filesystem::path &dll, std::string &out) -> int {
-            std::string cmd = "\"" + ilspy.string() + "\" \"" + dll.string() + "\" -t \"" + full + "\" 2>&1";
+            std::string cmd = "\"" + ilspy.string() + "\" \"" + dll.string() +
+                              "\" -r \"" + rtDir.string() + "\" -t \"" + full + "\" 2>&1";
             FILE *p = _popen(("\"" + cmd + "\"").c_str(), "r");
             if (!p)
                 return -1;
@@ -2943,8 +2947,14 @@ void Editor::openCSharpDecompiled(const std::string &rawSymbol)
             }
         }
 
-        // Validate: output must actually contain the type, not an error/empty.
-        if (out.find("was not found") != std::string::npos || out.find(plain.substr(plain.find_last_of('.') + 1)) == std::string::npos || out.size() < 40)
+        // Validate: output must be real C#, not an error or an ilspycmd stack
+        // trace (it can exit 0 while printing an exception for the type).
+        if (out.find("was not found") != std::string::npos ||
+            out.find("Could not find type definition") != std::string::npos ||
+            out.find("Exception:") != std::string::npos ||
+            out.find("   at ICSharpCode.") != std::string::npos ||
+            out.find(plain.substr(plain.find_last_of('.') + 1)) == std::string::npos ||
+            out.size() < 40)
         {
             fail("could not decompile " + full);
             return;
