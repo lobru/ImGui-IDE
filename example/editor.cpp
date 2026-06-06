@@ -10311,18 +10311,27 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                                                        : resolveReceiverType(tptr->editor.GetText(), receiver);
                     if (!type.empty())
                     {
+                        // Union project-defined members (from the index) with the
+                        // curated STL table, so everyday receivers (std::vector v;
+                        // v.) complete even though the index never parses system
+                        // headers. Project members win ties (inserted first).
+                        std::vector<std::string> members;
                         if (auto idx = indexSnapshot())
                         {
                             auto mit = idx->members.find(type);
-                            if (mit != idx->members.end() && !mit->second.empty())
-                            {
-                                TextEditor::Trie mtrie;
-                                for (auto &m : mit->second)
-                                    mtrie.insert(m);
-                                state.suggestions.clear();
-                                mtrie.findSuggestions(state.suggestions, state.searchTerm);
-                                return;   // members only
-                            }
+                            if (mit != idx->members.end())
+                                members.insert(members.end(), mit->second.begin(), mit->second.end());
+                        }
+                        if (const auto *stl = ts::stlMembers(type))
+                            members.insert(members.end(), stl->begin(), stl->end());
+                        if (!members.empty())
+                        {
+                            TextEditor::Trie mtrie;
+                            for (auto &m : members)
+                                mtrie.insert(m);
+                            state.suggestions.clear();
+                            mtrie.findSuggestions(state.suggestions, state.searchTerm);
+                            return;   // members only
                         }
                     }
                 }

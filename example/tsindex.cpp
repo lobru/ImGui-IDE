@@ -157,6 +157,66 @@ bool available()
 	return languageFor(Lang::Cpp) != nullptr;
 }
 
+const std::vector<std::string>* stlMembers(const std::string& simpleType)
+{
+	// Member NAMES only (no signatures) — completion inserts the name and the
+	// user types the call. Curated for the everyday containers/wrappers; common
+	// members listed, not the exhaustive interface.
+	static const std::unordered_map<std::string, std::vector<std::string>> table = {
+		{"string", {"size", "length", "empty", "clear", "append", "push_back", "pop_back",
+			"substr", "find", "rfind", "find_first_of", "find_last_of", "replace", "insert",
+			"erase", "c_str", "data", "at", "front", "back", "begin", "end", "rbegin", "rend",
+			"compare", "resize", "reserve", "capacity", "shrink_to_fit", "swap", "assign",
+			"starts_with", "ends_with", "contains"}},
+		{"wstring", {"size", "length", "empty", "clear", "append", "push_back", "substr",
+			"find", "replace", "insert", "erase", "c_str", "data", "at", "front", "back",
+			"begin", "end", "compare", "resize", "reserve", "capacity"}},
+		{"string_view", {"size", "length", "empty", "substr", "find", "rfind", "data", "at",
+			"front", "back", "begin", "end", "remove_prefix", "remove_suffix", "compare",
+			"starts_with", "ends_with", "contains"}},
+		{"vector", {"push_back", "pop_back", "emplace_back", "size", "empty", "clear",
+			"resize", "reserve", "capacity", "shrink_to_fit", "at", "front", "back", "data",
+			"begin", "end", "rbegin", "rend", "insert", "emplace", "erase", "assign", "swap"}},
+		{"deque", {"push_back", "push_front", "pop_back", "pop_front", "emplace_back",
+			"emplace_front", "size", "empty", "clear", "resize", "at", "front", "back",
+			"begin", "end", "insert", "erase", "swap"}},
+		{"list", {"push_back", "push_front", "pop_back", "pop_front", "emplace_back",
+			"emplace_front", "size", "empty", "clear", "front", "back", "begin", "end",
+			"insert", "erase", "remove", "remove_if", "sort", "reverse", "unique", "splice",
+			"merge", "swap"}},
+		{"forward_list", {"push_front", "pop_front", "emplace_front", "empty", "clear",
+			"front", "begin", "end", "insert_after", "erase_after", "remove", "sort",
+			"reverse", "splice_after"}},
+		{"array", {"size", "at", "front", "back", "data", "begin", "end", "rbegin", "rend",
+			"fill", "empty", "swap"}},
+		{"map", {"insert", "insert_or_assign", "emplace", "try_emplace", "find", "count",
+			"contains", "at", "erase", "clear", "size", "empty", "begin", "end", "lower_bound",
+			"upper_bound", "equal_range", "swap"}},
+		{"multimap", {"insert", "emplace", "find", "count", "contains", "erase", "clear",
+			"size", "empty", "begin", "end", "lower_bound", "upper_bound", "equal_range"}},
+		{"unordered_map", {"insert", "insert_or_assign", "emplace", "try_emplace", "find",
+			"count", "contains", "at", "erase", "clear", "size", "empty", "begin", "end",
+			"reserve", "rehash", "bucket_count", "load_factor", "swap"}},
+		{"set", {"insert", "emplace", "find", "count", "contains", "erase", "clear", "size",
+			"empty", "begin", "end", "lower_bound", "upper_bound", "equal_range", "swap"}},
+		{"multiset", {"insert", "emplace", "find", "count", "contains", "erase", "clear",
+			"size", "empty", "begin", "end", "lower_bound", "upper_bound", "equal_range"}},
+		{"unordered_set", {"insert", "emplace", "find", "count", "contains", "erase", "clear",
+			"size", "empty", "begin", "end", "reserve", "rehash", "bucket_count", "swap"}},
+		{"pair", {"first", "second", "swap"}},
+		{"tuple", {"swap"}},
+		{"optional", {"value", "has_value", "value_or", "reset", "emplace", "swap"}},
+		{"unique_ptr", {"get", "reset", "release", "swap", "operator bool"}},
+		{"shared_ptr", {"get", "reset", "swap", "use_count", "unique", "operator bool"}},
+		{"weak_ptr", {"lock", "reset", "expired", "use_count", "swap"}},
+		{"stack", {"push", "pop", "top", "emplace", "size", "empty", "swap"}},
+		{"queue", {"push", "pop", "front", "back", "emplace", "size", "empty", "swap"}},
+		{"priority_queue", {"push", "pop", "top", "emplace", "size", "empty", "swap"}},
+	};
+	auto it = table.find(simpleType);
+	return it == table.end() ? nullptr : &it->second;
+}
+
 std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 {
 	std::vector<Symbol> out;

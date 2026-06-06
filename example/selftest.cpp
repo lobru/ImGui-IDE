@@ -276,6 +276,28 @@ int main()
 		CHECK(encl("Width") == "Widget", "C# field Width enclosed by Widget");
 	}
 
+	// ── Curated STL member table ──
+	{
+		auto has = [](const std::vector<std::string>* v, const char* m) {
+			if (!v) return false;
+			for (auto& s : *v) if (s == m) return true;
+			return false;
+		};
+		const auto* vec = ts::stlMembers("vector");
+		CHECK(vec != nullptr, "stlMembers knows vector");
+		CHECK(has(vec, "push_back") && has(vec, "size") && has(vec, "emplace_back"),
+			"vector members include push_back/size/emplace_back");
+		const auto* str = ts::stlMembers("string");
+		CHECK(has(str, "substr") && has(str, "c_str") && has(str, "length"),
+			"string members include substr/c_str/length");
+		const auto* mp = ts::stlMembers("unordered_map");
+		CHECK(has(mp, "find") && has(mp, "emplace") && has(mp, "contains"),
+			"unordered_map members include find/emplace/contains");
+		const auto* opt = ts::stlMembers("optional");
+		CHECK(has(opt, "value") && has(opt, "has_value"), "optional members include value/has_value");
+		CHECK(ts::stlMembers("NotAStlType") == nullptr, "unknown type -> no STL members");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

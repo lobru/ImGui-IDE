@@ -46,6 +46,13 @@ Lang langForExtension(const std::string& ext);
 // Empty result if the language is unsupported or the buffer fails to parse.
 std::vector<Symbol> extractSymbols(Lang lang, const std::string& source);
 
+// Curated member lists for common standard-library types (string, vector, map,
+// optional, smart pointers, …). The project index can only see members of types
+// it actually parses, so std::vector / std::string receivers would otherwise
+// never complete. `simpleType` is the unqualified name ("vector", "string").
+// Returns nullptr when the type isn't in the table.
+const std::vector<std::string>* stlMembers(const std::string& simpleType);
+
 // True if tree-sitter built in and a grammar is available.
 bool available();
 
