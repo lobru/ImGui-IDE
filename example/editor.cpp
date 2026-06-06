@@ -3435,8 +3435,11 @@ bool Editor::tsGoToDefinition(const std::string &symbol)
         if (walk->is_directory(ec))
         {
             std::string nm = walk->path().filename().string();
+            std::string nml = nm;
+            std::transform(nml.begin(), nml.end(), nml.begin(), [](unsigned char c) { return (char) std::tolower(c); });
             if (nm == "deps" || nm == "bin" || nm == "obj" || nm == ".git" ||
-                nm == "node_modules" || nm == "out" || nm == ".vs" || nm == "packages")
+                nm == "node_modules" || nm == "out" || nm == ".vs" || nm == "packages" ||
+                nml == "backup" || nml == "backups" || nml == ".backup")
                 walk.disable_recursion_pending();
             continue;
         }
@@ -3560,6 +3563,21 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
         // (this is the fix for C# go-to-def landing on the wrong site).
         if (tsGoToDefinition(symbol))
             return;
+
+        // For a C# document, tree-sitter is authoritative over the project's own
+        // source. A miss means the symbol isn't defined here (a NuGet/BCL type
+        // like Newtonsoft.Json) — DON'T fall through to the grep, which matches
+        // unrelated files (e.g. a C++ json-forwards.h in a Backup folder).
+        if (!tabs.empty())
+        {
+            std::string aext = std::filesystem::path(doc().filename).extension().string();
+            std::transform(aext.begin(), aext.end(), aext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            if (aext == ".cs")
+            {
+                pushToast("No project definition for '" + word + "' (external/NuGet type?)", IM_COL32(240, 200, 90, 255));
+                return;
+            }
+        }
 
         if (auto idx = indexSnapshot())
         {
