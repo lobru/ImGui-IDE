@@ -7,6 +7,8 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <tree_sitter/api.h>
 
@@ -178,9 +180,23 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 		return out;
 	}
 
-	uint32_t errOffset = 0;
-	TSQueryError errType = TSQueryErrorNone;
-	TSQuery* query = ts_query_new(language, queryStr.c_str(), (uint32_t) queryStr.size(), &errOffset, &errType);
+	// Compile the tags query ONCE per language and reuse it — it's immutable and
+	// built from invariant inputs, so recompiling per file was pure waste on the
+	// background reindex. extractSymbols is only called from the serialized index
+	// build thread + the startup selftest, so the static cache needs no extra lock.
+	static std::unordered_map<int, TSQuery*> queryCache;
+	TSQuery* query = nullptr;
+	if (auto cit = queryCache.find((int) lang); cit != queryCache.end())
+	{
+		query = cit->second;
+	}
+	else
+	{
+		uint32_t errOffset = 0;
+		TSQueryError errType = TSQueryErrorNone;
+		query = ts_query_new(language, queryStr.c_str(), (uint32_t) queryStr.size(), &errOffset, &errType);
+		queryCache[(int) lang] = query;   // cache even nullptr so a broken query isn't retried
+	}
 	if (!query)
 	{
 		ts_tree_delete(tree);
@@ -192,7 +208,7 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 	TSQueryCursor* cursor = ts_query_cursor_new();
 	ts_query_cursor_exec(cursor, query, root);
 
-	std::vector<uint64_t> seen;   // (row<<20 | col) keys, to drop same-node double captures
+	std::unordered_set<uint64_t> seen;   // (row<<20 | col) keys, drops same-node double captures (O(1))
 
 	TSQueryMatch match;
 	while (ts_query_cursor_next_match(cursor, &match))
@@ -251,16 +267,13 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 		if (haveName && haveKind)
 		{
 			uint64_t key = ((uint64_t) sym.line << 20) | (uint32_t) sym.column;
-			if (std::find(seen.begin(), seen.end(), key) == seen.end())
-			{
-				seen.push_back(key);
+			if (seen.insert(key).second)
 				out.push_back(std::move(sym));
-			}
 		}
 	}
 
 	ts_query_cursor_delete(cursor);
-	ts_query_delete(query);
+	// query is cached per-language (queryCache) — do NOT delete it.
 	ts_tree_delete(tree);
 	ts_parser_delete(parser);
 	return out;

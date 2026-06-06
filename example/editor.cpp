@@ -2418,8 +2418,9 @@ void Editor::rebuildProjectIndex()
             }
 
             // Identifier + heuristic-definition tokenization. Heuristic def sites are
-            // suppressed for ts files — tsDefs is authoritative there.
-            std::istringstream ss(whole);
+            // suppressed for ts files — tsDefs is authoritative there. Move the buffer
+            // in (the ts pass above was its last reader) to avoid a duplicate copy.
+            std::istringstream ss(std::move(whole));
             std::string line;
             int lineNo = 0;
             while (std::getline(ss, line))
