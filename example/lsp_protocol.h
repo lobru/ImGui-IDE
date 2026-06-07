@@ -57,11 +57,23 @@ struct Location {
 	int         character = 0;   // in negotiated encoding
 };
 
+struct Diagnostic {
+	int         line = 0;        // 0-based start line
+	int         character = 0;   // start character (negotiated encoding)
+	int         endLine = 0;
+	int         endChar = 0;
+	int         severity = 1;    // 1=Error 2=Warning 3=Info 4=Hint
+	std::string message;
+};
+
 // Parse a response body (the full JSON-RPC message). Empty vector on error/empty.
 std::vector<CompletionItem> parseCompletion(const std::string& body);
 std::vector<Location>       parseDefinition(const std::string& body);
 // Hover contents flattened to plain text (string / MarkupContent / MarkedString[]).
 std::string                 parseHover(const std::string& body);
+// Parse a textDocument/publishDiagnostics NOTIFICATION. Sets `uri` and fills
+// `out`. Returns true if the body was a well-formed publishDiagnostics message.
+bool parsePublishDiagnostics(const std::string& body, std::string& uri, std::vector<Diagnostic>& out);
 // Extract the negotiated offsetEncoding from an initialize result; defaults to
 // "utf-16" (the LSP spec default) when the server omits it.
 bool parseInitializeResult(const std::string& body, std::string& offsetEncoding);

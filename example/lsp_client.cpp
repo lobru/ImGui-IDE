@@ -182,7 +182,17 @@ void LspClient::dispatch(const std::string& body)
 		enqueueOut(buildNullResponse(in.id));
 		return;
 	}
-	// Notification (diagnostics, progress, log) — ignored in this slice.
+	// Notification. We surface publishDiagnostics; progress/log are ignored.
+	if (in.method == "textDocument/publishDiagnostics")
+	{
+		LspResult res;
+		res.kind = ResultKind::Diagnostics;
+		if (parsePublishDiagnostics(body, res.uri, res.diagnostics) && !res.uri.empty())
+		{
+			std::lock_guard<std::mutex> lk(mInMutex);
+			mInQueue.push_back(std::move(res));
+		}
+	}
 }
 
 void LspClient::didOpen(const std::string& uri, const std::string& langId, const std::string& text)

@@ -326,6 +326,35 @@ std::string parseHover(const std::string& body)
 	return out;
 }
 
+bool parsePublishDiagnostics(const std::string& body, std::string& uri, std::vector<Diagnostic>& out)
+{
+	json j = parseBody(body);
+	if (j.is_discarded() || j.value("method", std::string()) != "textDocument/publishDiagnostics") return false;
+	if (!j.contains("params") || !j["params"].is_object()) return false;
+	const json& p = j["params"];
+	uri = p.value("uri", std::string());
+	if (p.contains("diagnostics") && p["diagnostics"].is_array())
+	{
+		for (const auto& d : p["diagnostics"])
+		{
+			if (!d.is_object()) continue;
+			Diagnostic dg;
+			if (d.contains("range") && d["range"].is_object())
+			{
+				const json& rg = d["range"];
+				if (rg.contains("start") && rg["start"].is_object())
+				{ dg.line = rg["start"].value("line", 0); dg.character = rg["start"].value("character", 0); }
+				if (rg.contains("end") && rg["end"].is_object())
+				{ dg.endLine = rg["end"].value("line", 0); dg.endChar = rg["end"].value("character", 0); }
+			}
+			dg.severity = d.value("severity", 1);
+			dg.message = d.value("message", std::string());
+			out.push_back(std::move(dg));
+		}
+	}
+	return true;
+}
+
 bool parseInitializeResult(const std::string& body, std::string& offsetEncoding)
 {
 	offsetEncoding = "utf-16";   // LSP spec default when the server omits it

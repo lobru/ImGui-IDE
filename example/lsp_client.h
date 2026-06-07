@@ -20,7 +20,7 @@ struct SDL_Process;
 
 namespace lsp {
 
-enum class ResultKind { Completion, Definition, Hover };
+enum class ResultKind { Completion, Definition, Hover, Diagnostics };
 
 struct LspResult {
 	int                         id = 0;
@@ -28,6 +28,8 @@ struct LspResult {
 	std::vector<CompletionItem> completionItems;
 	std::vector<Location>       locations;
 	std::string                 hoverText;
+	std::string                 uri;            // Diagnostics: the file the diagnostics apply to
+	std::vector<Diagnostic>     diagnostics;    // Diagnostics: pushed by the server (no request id)
 	bool                        serverGone = false;   // EOF/crash sentinel (delivered once)
 };
 

@@ -559,6 +559,36 @@ int main()
 		CHECK(lsp::parseHover("{\"result\":null}").empty(), "parseHover: null result -> empty");
 	}
 
+	// parsePublishDiagnostics — server-pushed notification.
+	{
+		std::string uri; std::vector<lsp::Diagnostic> diags;
+		const char* notif =
+			"{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{"
+			"\"uri\":\"file:///C%3A/x.cpp\",\"diagnostics\":["
+			"{\"range\":{\"start\":{\"line\":4,\"character\":2},\"end\":{\"line\":4,\"character\":9}},"
+			"\"severity\":1,\"message\":\"expected ';'\"},"
+			"{\"range\":{\"start\":{\"line\":7,\"character\":0},\"end\":{\"line\":7,\"character\":5}},"
+			"\"severity\":2,\"message\":\"unused variable\"}]}}";
+		bool ok = lsp::parsePublishDiagnostics(notif, uri, diags);
+		CHECK(ok, "parsePublishDiagnostics: recognized notification");
+		CHECK(lsp::uriToPath(uri) == "C:/x.cpp", "parsePublishDiagnostics: uri decoded");
+		CHECK(diags.size() == 2, "parsePublishDiagnostics: two diagnostics");
+		CHECK(diags.size() == 2 && diags[0].line == 4 && diags[0].character == 2 &&
+			diags[0].endChar == 9 && diags[0].severity == 1 && diags[0].message == "expected ';'",
+			"parsePublishDiagnostics: first diagnostic fields");
+		CHECK(diags.size() == 2 && diags[1].line == 7 && diags[1].severity == 2,
+			"parsePublishDiagnostics: second diagnostic severity/line");
+		// A non-diagnostics notification is rejected.
+		std::string u2; std::vector<lsp::Diagnostic> d2;
+		CHECK(!lsp::parsePublishDiagnostics("{\"method\":\"window/logMessage\",\"params\":{}}", u2, d2),
+			"parsePublishDiagnostics: ignores other notifications");
+		// Empty diagnostics array (server says "file is now clean").
+		std::string u3; std::vector<lsp::Diagnostic> d3;
+		CHECK(lsp::parsePublishDiagnostics(
+			"{\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///c%3A/y.cpp\",\"diagnostics\":[]}}",
+			u3, d3) && d3.empty(), "parsePublishDiagnostics: empty array clears");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

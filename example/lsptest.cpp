@@ -160,6 +160,29 @@ int main(int argc, char** argv)
 	}
 	CHECK(gotHover, "hover over Foo returns type info mentioning 'Foo'");
 
+	// Diagnostics: edit the doc to introduce a syntax error; clangd PUSHES a
+	// publishDiagnostics notification (no request id). Assert we receive a
+	// non-empty diagnostic for our file.
+	std::string broken =
+		"struct Foo { int alpha; };\n"
+		"int main() {\n"
+		"    int x = ;\n"   // error: expected expression
+		"    return 0;\n"
+		"}\n";
+	client.didChange(fileUri, broken);
+	bool gotDiag = false;
+	std::vector<lsp::LspResult> dsink;
+	pump(client, dsink, 15000, [&] {
+		for (auto& r : dsink)
+			if (r.kind == lsp::ResultKind::Diagnostics && r.uri == fileUri && !r.diagnostics.empty())
+				return true;
+		return false;
+	});
+	for (auto& r : dsink)
+		if (r.kind == lsp::ResultKind::Diagnostics && r.uri == fileUri && !r.diagnostics.empty())
+			gotDiag = true;
+	CHECK(gotDiag, "publishDiagnostics delivers an error for the broken edit");
+
 	client.stop();
 	SDL_Quit();
 

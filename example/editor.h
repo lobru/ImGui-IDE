@@ -295,6 +295,7 @@ private:
 	int            lspDefLine = -1, lspDefCol = -1;     // cursor snapshot at def request (staleness)
 	int            lspHoverId = 0;          // latest outstanding hover request id
 	std::string    lspHoverText;            // clangd hover text for the current hover word
+	std::unordered_map<std::string, std::vector<lsp::Diagnostic>> lspDiagnostics;  // file uri -> diagnostics
 	void        detectClangd();             // locate clangd (VS -> PATH -> LLVM)
 	void        startLspForProject();       // (re)start the client for projectRoot
 	void        pollLsp();                  // per-frame: drain results, refine popup / navigate

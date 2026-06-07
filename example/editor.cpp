@@ -2558,6 +2558,7 @@ void Editor::pollLsp()
         if (r.serverGone)
         {
             pushToast("clangd stopped", IM_COL32(240, 200, 90, 255));
+            lspDiagnostics.clear();
             continue;
         }
         // Completion: refine the popup only with a NON-empty reply for the LATEST
@@ -2606,6 +2607,15 @@ void Editor::pollLsp()
         else if (r.kind == lsp::ResultKind::Hover && r.id == lspHoverId)
         {
             lspHoverText = r.hoverText;
+        }
+        // Diagnostics: server-pushed errors/warnings keyed by file. Replace the
+        // file's set wholesale (an empty array means "now clean").
+        else if (r.kind == lsp::ResultKind::Diagnostics)
+        {
+            if (r.diagnostics.empty())
+                lspDiagnostics.erase(r.uri);
+            else
+                lspDiagnostics[r.uri] = std::move(r.diagnostics);
         }
     }
 }
@@ -10080,6 +10090,44 @@ void Editor::renderStatusBar()
         bool lspReady = lspClient.ready();
         ImGui::TextColored(lspReady ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f),
                            lspReady ? "clangd \xE2\x97\x8F" : "clangd \xE2\x97\x8B");
+
+        // Diagnostics count for the active file (errors/warnings from clangd).
+        if (lspReady && !tabs.empty() && !lspDiagnostics.empty())
+        {
+            std::string uri = lspUriForTab(doc());
+            auto it = uri.empty() ? lspDiagnostics.end() : lspDiagnostics.find(uri);
+            if (it != lspDiagnostics.end())
+            {
+                int errs = 0, warns = 0;
+                for (const auto& d : it->second)
+                    (d.severity <= 1 ? errs : warns)++;
+                if (errs || warns)
+                {
+                    ImGui::SameLine(0.0f, glyphWidth * 1.5f);
+                    ImGui::AlignTextToFramePadding();
+                    if (errs)
+                        ImGui::TextColored(ImVec4(0.92f, 0.45f, 0.45f, 1.0f), "\xE2\x9C\x96 %d", errs);
+                    if (warns)
+                    {
+                        if (errs) ImGui::SameLine(0.0f, glyphWidth);
+                        ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.40f, 1.0f), "\xE2\x9A\xA0 %d", warns);
+                    }
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImGui::BeginTooltip();
+                        int shown = 0;
+                        for (const auto& d : it->second)
+                        {
+                            if (shown++ >= 12) { ImGui::TextDisabled("…"); break; }
+                            ImVec4 c = d.severity <= 1 ? ImVec4(0.92f, 0.45f, 0.45f, 1.0f)
+                                                       : ImVec4(0.92f, 0.80f, 0.40f, 1.0f);
+                            ImGui::TextColored(c, "%d: %s", d.line + 1, d.message.c_str());
+                        }
+                        ImGui::EndTooltip();
+                    }
+                }
+            }
+        }
     }
 
     ImGui::EndChild();
