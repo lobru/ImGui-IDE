@@ -58,6 +58,16 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source);
 std::string resolveLocalType(Lang lang, const std::string& source,
                              int line, int col, const std::string& receiver);
 
+// Resolve a dotted member chain to its final type, for member-of-member
+// completion (`a.b.c` -> type of c). `chain` is the receiver segments in order
+// ({"a","b","c"}); (line,col) locates the base receiver for scope resolution.
+// The base is resolved like resolveLocalType; each subsequent hop descends into
+// the prior type's definition IN THIS DOCUMENT. Returns "" if any hop can't be
+// resolved same-document (STL receiver, type defined in another file, …). A
+// single-element chain is exactly resolveLocalType. C++ / C# only.
+std::string resolveMemberChain(Lang lang, const std::string& source,
+                               int line, int col, const std::vector<std::string>& chain);
+
 // Curated member lists for common standard-library types (string, vector, map,
 // optional, smart pointers, …). The project index can only see members of types
 // it actually parses, so std::vector / std::string receivers would otherwise

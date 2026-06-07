@@ -911,6 +911,39 @@ std::string walkScopes(Lang lang, TSNode start, const std::string& src,
 	return {};
 }
 
+// DFS the tree for a type DEFINITION named `typeName` (simple name). Returns a
+// null node if not found in this document (e.g. the type lives in another file).
+// Used by member-chain resolution to descend into a field's declared type.
+TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std::string& typeName)
+{
+	std::string ty = tyOf(node);
+	bool isTypeDef =
+		(lang == Lang::Cpp && (ty == "class_specifier" || ty == "struct_specifier" || ty == "union_specifier")) ||
+		(lang == Lang::CSharp && (ty == "class_declaration" || ty == "struct_declaration" ||
+								  ty == "record_declaration" || ty == "interface_declaration"));
+	if (isTypeDef)
+	{
+		TSNode name = ts_node_child_by_field_name(node, "name", 4);
+		if (!ts_node_is_null(name) && lastSegment(nodeText(name, src)) == typeName)
+			return node;
+	}
+	uint32_t n = ts_node_named_child_count(node);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode r = findTypeDefNode(ts_node_named_child(node, i), src, lang, typeName);
+		if (!ts_node_is_null(r)) return r;
+	}
+	return TSNode{};   // zero-init -> id == nullptr -> ts_node_is_null() true
+}
+
+// Look up member `member`'s declared type inside the type-definition node `tdef`.
+std::string memberTypeIn(Lang lang, TSNode tdef, const std::string& src, const std::string& member)
+{
+	if (lang == Lang::Cpp)    return searchCppClassMembers(tdef, src, member);
+	if (lang == Lang::CSharp) return searchCsClassMembers(tdef, src, member);
+	return {};
+}
+
 // Single-entry parse cache. Keyed by a VALUE COPY of the source (never the
 // pointer of the GetText() temporary — that would be a use-after-free). The size
 // short-circuit avoids a full string compare on a miss.
@@ -961,6 +994,44 @@ std::string resolveLocalType(Lang lang, const std::string& source,
 		return lang == Lang::Cpp ? resolveThisCpp(cursor, source) : resolveThisCs(cursor, source);
 
 	return walkScopes(lang, cursor, source, receiver, pt);
+}
+
+std::string resolveMemberChain(Lang lang, const std::string& source,
+							   int line, int col, const std::vector<std::string>& chain)
+{
+	if (chain.empty()) return {};
+	if (chain.size() == 1)                                  // plain receiver — reuse the base resolver
+		return resolveLocalType(lang, source, line, col, chain[0]);
+	if (lang == Lang::None || source.empty()) return {};
+	if (source.size() > 512 * 1024) return {};
+	if (!chain[0].empty() && chain[0][0] >= '0' && chain[0][0] <= '9') return {};
+
+	TSTree* tree = sResolveCache.get(lang, source);
+	if (!tree) return {};
+	TSNode root = ts_tree_root_node(tree);
+	TSPoint pt;
+	pt.row    = (uint32_t) (line < 0 ? 0 : line);
+	pt.column = (uint32_t) (col  < 0 ? 0 : col);
+	TSNode cursor = ts_node_descendant_for_point_range(root, pt, pt);
+	if (ts_node_is_null(cursor)) cursor = root;
+
+	// Resolve the base receiver to a type (scope-aware), then walk each member
+	// hop by finding that type's definition in this document and looking up the
+	// next field's declared type. Bails (returns "") the moment a hop can't be
+	// resolved same-document — e.g. an STL receiver or a type from another file.
+	std::string type = (chain[0] == "this")
+		? (lang == Lang::Cpp ? resolveThisCpp(cursor, source) : resolveThisCs(cursor, source))
+		: walkScopes(lang, cursor, source, chain[0], pt);
+	if (type.empty()) return {};
+
+	for (size_t i = 1; i < chain.size(); ++i)
+	{
+		TSNode tdef = findTypeDefNode(root, source, lang, type);
+		if (ts_node_is_null(tdef)) return {};
+		type = memberTypeIn(lang, tdef, source, chain[i]);
+		if (type.empty()) return {};
+	}
+	return type;
 }
 
 } // namespace ts

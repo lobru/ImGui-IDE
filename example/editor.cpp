@@ -11009,29 +11009,41 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                 size_t rEnd = r;
                 while (r > 0 && tsIsIdentChar(ln[r - 1])) --r;
                 std::string receiver = ln.substr(r, rEnd - r);
-                // Skip numeric receivers (3.14 -> "3"): a digit-led token is never
-                // a type name, so resolving it only risks a false member list.
-                // Chained access (a.b.): the receiver token captured above is only
-                // the LAST segment ("b"); scope-resolving "b" would confidently show
-                // some unrelated b's members. Detect a member operator right before
-                // the receiver and skip member completion for '.'/'->' (fall through
-                // to identifier completion). '::' is left as-is (nested type/ns).
-                bool chained = false;
-                if ((oper == "." || oper == "->") && r > 0)
+                // Build the receiver CHAIN for member-of-member completion:
+                // a.b.c -> {a,b,c}, walking back over '.'/'->' segments. '::' stays
+                // a single segment (the receiver IS the type — static/namespace/
+                // nested). A digit-led base, or a member op whose receiver is a
+                // call/index result (foo().x, arr[i].x), can't be resolved here, so
+                // we skip member completion (precise-only) and fall through.
+                std::vector<std::string> chain;
+                chain.push_back(receiver);
+                bool badBase = false;
+                if (oper != "::")
                 {
-                    char pc = ln[r - 1];
-                    if (pc == '.') chained = true;
-                    else if (pc == '>' && r >= 2 && ln[r - 2] == '-') chained = true;
-                    else if (pc == ':' && r >= 2 && ln[r - 2] == ':') chained = true;
+                    size_t seg = r;
+                    for (;;)
+                    {
+                        size_t q = seg;
+                        while (q > 0 && isSp(ln[q - 1])) --q;
+                        if (q >= 2 && ln[q - 1] == '>' && ln[q - 2] == '-') q -= 2;
+                        else if (q >= 1 && ln[q - 1] == '.') q -= 1;
+                        else break;                                   // no further member op
+                        while (q > 0 && isSp(ln[q - 1])) --q;
+                        size_t e = q;
+                        while (q > 0 && tsIsIdentChar(ln[q - 1])) --q;
+                        if (q == e) { badBase = true; break; }        // op w/ no ident (call/index result)
+                        if (q >= 2 && ln[q - 1] == ':' && ln[q - 2] == ':') { badBase = true; break; } // qualified base
+                        chain.insert(chain.begin(), ln.substr(q, e - q));
+                        seg = q;
+                    }
                 }
-                // Skip numeric receivers (3.14 -> "3"): a digit-led token is never a
-                // type name, so resolving it only risks a false member list.
-                if (!chained && !receiver.empty() && !(receiver[0] >= '0' && receiver[0] <= '9'))
+                if (!badBase && !chain.front().empty() &&
+                    !(chain.front()[0] >= '0' && chain.front()[0] <= '9'))
                 {
-                    // '::' receiver IS the type (static / namespace / nested).
-                    // '.'/'->' resolve the receiver's declared type — scope-aware
-                    // tree-sitter on the live document first (handles auto/var,
-                    // params, fields, this), then the scope-blind string scan.
+                    // '::' receiver IS the type. '.'/'->' resolve the chain's final
+                    // type — scope-aware tree-sitter on the live document (handles
+                    // auto/var, params, fields, this, and member-of-member). The
+                    // scope-blind string scan is a fallback for the single-hop case.
                     std::string type;
                     if (oper == "::")
                     {
@@ -11042,9 +11054,9 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                         ts::Lang lang = ts::langForExtension(
                             std::filesystem::path(tptr->filename).extension().string());
                         if (lang != ts::Lang::None)
-                            type = ts::resolveLocalType(lang, tptr->editor.GetText(),
-                                                        (int) state.line, (int) k, receiver);
-                        if (type.empty())
+                            type = ts::resolveMemberChain(lang, tptr->editor.GetText(),
+                                                          (int) state.line, (int) k, chain);
+                        if (type.empty() && chain.size() == 1)
                             type = resolveReceiverType(tptr->editor.GetText(), receiver);
                     }
                     if (!type.empty())

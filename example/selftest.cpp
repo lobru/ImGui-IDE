@@ -391,6 +391,75 @@ int main()
 		CHECK(rcs("/*C1*/", "X")     == "int",    "C# field X -> int");
 	}
 
+	// ── Chained member resolution (a.b.c -> type of c) ──
+	{
+		auto pos = [](const std::string& s, const std::string& marker) -> std::pair<int,int> {
+			size_t off = s.find(marker);
+			if (off == std::string::npos) return {-1, -1};
+			int row = 0; size_t lineStart = 0;
+			for (size_t i = 0; i < off; ++i) if (s[i] == '\n') { ++row; lineStart = i + 1; }
+			return { row, (int)(off - lineStart) };
+		};
+		// Outer has an Inner field + an Inner pointer; Inner holds a std::vector and
+		// a scalar. The chain must hop Outer -> Inner -> {vector, int}.
+		std::string cpp =
+			"struct Inner {\n"
+			"    std::vector<int> items;\n"
+			"    int count;\n"
+			"};\n"
+			"struct Outer {\n"
+			"    Inner inner;\n"
+			"    Inner* ptr;\n"
+			"};\n"
+			"void use() {\n"
+			"    Outer o;\n"
+			"    /*M*/;\n"
+			"}\n";
+		auto [row, col] = pos(cpp, "/*M*/");
+		auto chain = [&](std::vector<std::string> segs) {
+			return ts::resolveMemberChain(ts::Lang::Cpp, cpp, row, col, segs);
+		};
+		auto memHas = [](const std::vector<std::string>* v, const char* m) {
+			if (!v) return false;
+			for (auto& s : *v) if (s == m) return true;
+			return false;
+		};
+		// Single-segment behaves exactly like resolveLocalType.
+		CHECK(chain({"o"}) == "Outer", "chain: base receiver o -> Outer");
+		// Two-hop field access.
+		CHECK(chain({"o", "inner"}) == "Inner", "chain: o.inner -> Inner");
+		// Pointer field reduces to the pointee type (so o.ptr-> completes Inner).
+		CHECK(chain({"o", "ptr"}) == "Inner", "chain: o.ptr -> Inner (pointer reduced)");
+		// Three-hop into a std::vector field — end to end into the STL table.
+		CHECK(chain({"o", "inner", "items"}) == "vector", "chain: o.inner.items -> vector");
+		CHECK(memHas(ts::stlMembers(chain({"o", "inner", "items"})), "push_back"),
+			"chain end-to-end: o.inner.items. completes push_back");
+		// Scalar member terminates resolution (int has no further members).
+		CHECK(chain({"o", "inner", "count"}) == "int", "chain: o.inner.count -> int");
+		// A bad hop anywhere returns empty (no false member list).
+		CHECK(chain({"o", "nope"}).empty(), "chain: unknown member -> empty");
+		CHECK(chain({"o", "inner", "nope"}).empty(), "chain: unknown deep member -> empty");
+		// An STL receiver can't be descended same-document (vector isn't defined here).
+		CHECK(chain({"o", "inner", "items", "front"}).empty(),
+			"chain: STL receiver hop unresolved (no false members)");
+
+		// C# property/field chain: Outer.Inner.Value.
+		std::string cs =
+			"class Leaf { public int Value; }\n"
+			"class Branch { public Leaf Leaf; }\n"
+			"class Tree {\n"
+			"    Branch branch;\n"
+			"    void Walk() {\n"
+			"        /*CM*/;\n"
+			"    }\n"
+			"}\n";
+		auto [crow, ccol] = pos(cs, "/*CM*/");
+		CHECK(ts::resolveMemberChain(ts::Lang::CSharp, cs, crow, ccol, {"this", "branch"}) == "Branch",
+			"C# chain: this.branch -> Branch");
+		CHECK(ts::resolveMemberChain(ts::Lang::CSharp, cs, crow, ccol, {"this", "branch", "Leaf"}) == "Leaf",
+			"C# chain: this.branch.Leaf -> Leaf");
+	}
+
 	// ── Additional language grammars (Python, JavaScript) ──
 	{
 		CHECK(ts::langForExtension(".py") == ts::Lang::Python,      ".py -> Python grammar");
