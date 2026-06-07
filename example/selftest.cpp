@@ -530,8 +530,10 @@ int main()
 		// Full chain: ws.front().sub -> Inner (element type's member).
 		CHECK(el({"ws", "front", "sub"}) == "Inner", "element chain: ws.front().sub -> Inner");
 		CHECK(el({"ws", "front", "health"}) == "int", "element chain: ws.front().health -> int");
-		// map's element is the SECOND arg, which we don't track -> no false element.
-		CHECK(el({"mw", "at"}).empty(), "element: map<int,Widget>.at() not mis-resolved to the key type");
+		// map's value is the SECOND arg: m.at()/m[k] -> Widget (the value), not the key.
+		CHECK(el({"mw", "at"}) == "Widget", "element: map<int,Widget>.at() -> Widget (value, not key)");
+		CHECK(el({"mw", "[]"}) == "Widget", "element: map<int,Widget>[k] -> Widget (value)");
+		CHECK(el({"mw", "[]", "sub"}) == "Inner", "element chain: mw[k].sub -> Inner");
 		// A non-accessor member on the container is a normal (failing) hop, not element.
 		CHECK(el({"ws", "size"}).empty(), "element: vector.size() is not an element accessor");
 	}

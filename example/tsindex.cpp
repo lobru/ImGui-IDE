@@ -543,8 +543,15 @@ std::string reduceCppType(TSNode t, const std::string& src, std::string* elem = 
 		return reduceCppType(ts_node_child_by_field_name(t, "name", 4), src, elem);
 	if (ty == "template_type")
 	{
+		std::string name = reduceCppType(ts_node_child_by_field_name(t, "name", 4), src);
 		if (elem)
 		{
+			// Element type = the value argument: arg[1] for map-like containers
+			// (map<K,V> -> V), else arg[0] (vector<T> -> T). Count only type args
+			// (skips a non-type arg like N in array<T,N>).
+			bool mapLike = (name == "map" || name == "unordered_map" ||
+							name == "multimap" || name == "unordered_multimap" || name == "flat_map");
+			int want = mapLike ? 1 : 0, seen = 0;
 			TSNode args = ts_node_child_by_field_name(t, "arguments", 9);   // type_argument_list
 			if (!ts_node_is_null(args))
 			{
@@ -552,11 +559,13 @@ std::string reduceCppType(TSNode t, const std::string& src, std::string* elem = 
 				for (uint32_t i = 0; i < n; ++i)
 				{
 					std::string a = reduceCppType(ts_node_named_child(args, i), src);   // simple name only
-					if (!a.empty()) { *elem = a; break; }
+					if (a.empty()) continue;
+					if (seen == want) { *elem = a; break; }
+					++seen;
 				}
 			}
 		}
-		return reduceCppType(ts_node_child_by_field_name(t, "name", 4), src);
+		return name;
 	}
 	if (ty == "class_specifier" || ty == "struct_specifier" ||
 		ty == "union_specifier" || ty == "enum_specifier")
@@ -993,14 +1002,15 @@ TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std
 void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
 void collectCsTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
 
-// Containers whose FIRST template argument is the element type (so front()/at()/[]
-// yield it). Excludes map/pair/tuple — their value type is a later argument.
-bool isFirstArgElementContainer(const std::string& t)
+// Containers with a tracked element/value type (reduceCppType put it in `elem`:
+// arg[0] for sequences, arg[1] for map-like). pair/tuple excluded (no single elem).
+bool containerHasElement(const std::string& t)
 {
 	static const std::unordered_set<std::string> s = {
 		"vector", "deque", "list", "forward_list", "array", "set", "multiset",
 		"unordered_set", "unordered_multiset", "optional", "unique_ptr", "shared_ptr",
-		"weak_ptr", "span", "valarray", "initializer_list", "stack", "queue", "priority_queue"};
+		"weak_ptr", "span", "valarray", "initializer_list", "stack", "queue", "priority_queue",
+		"map", "unordered_map", "multimap", "unordered_multimap", "flat_map"};
 	return s.count(t) != 0;
 }
 // Members/accessors that return the container's element type.
@@ -1225,7 +1235,7 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 		// resolves to its element type. Consumes elem (the element's own args aren't
 		// tracked). C++ only (elem comes from the C++ parse).
 		if (lang == Lang::Cpp && !elem.empty() &&
-			isFirstArgElementContainer(type) && isElementAccessor(chain[i]))
+			containerHasElement(type) && isElementAccessor(chain[i]))
 		{
 			type = elem;
 			elem.clear();
