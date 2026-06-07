@@ -285,7 +285,7 @@ bool readIndexCache(const std::string& path, std::unordered_map<std::string, Fil
 	if (!i.read(magic, 8) || std::memcmp(magic, kCacheMagic, 8) != 0) return false;
 	uint32_t fc = 0;
 	if (!cacheRead(i, fc) || fc > (1u << 24)) return false;
-	out.reserve(fc);
+	out.reserve(std::min(fc, 64u * 1024u));   // cap: don't preallocate huge on a corrupt count
 	for (uint32_t f = 0; f < fc; ++f)
 	{
 		std::string filePath;
@@ -294,7 +294,7 @@ bool readIndexCache(const std::string& path, std::unordered_map<std::string, Fil
 		if (!cacheRead(i, fs.mtime) || !cacheRead(i, fs.size)) return false;
 		uint32_t sc = 0;
 		if (!cacheRead(i, sc) || sc > (1u << 22)) return false;
-		fs.symbols.reserve(sc);
+		fs.symbols.reserve(std::min(sc, 64u * 1024u));   // cap preallocation on a corrupt count
 		for (uint32_t s = 0; s < sc; ++s)
 		{
 			int32_t kind = 0, line = 0, col = 0;
@@ -945,8 +945,11 @@ std::string walkScopes(Lang lang, TSNode start, const std::string& src,
 // DFS the tree for a type DEFINITION named `typeName` (simple name). Returns a
 // null node if not found in this document (e.g. the type lives in another file).
 // Used by member-chain resolution to descend into a field's declared type.
-TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std::string& typeName)
+constexpr int kMaxAstDepth = 512;   // guard recursive AST walks against stack overflow
+
+TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std::string& typeName, int depth = 0)
 {
+	if (depth >= kMaxAstDepth) return TSNode{};   // pathologically nested code -> bail (caller falls back to index)
 	std::string ty = tyOf(node);
 	bool isTypeDef =
 		(lang == Lang::Cpp && (ty == "class_specifier" || ty == "struct_specifier" || ty == "union_specifier")) ||
@@ -961,7 +964,7 @@ TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std
 	uint32_t n = ts_node_named_child_count(node);
 	for (uint32_t i = 0; i < n; ++i)
 	{
-		TSNode r = findTypeDefNode(ts_node_named_child(node, i), src, lang, typeName);
+		TSNode r = findTypeDefNode(ts_node_named_child(node, i), src, lang, typeName, depth + 1);
 		if (!ts_node_is_null(r)) return r;
 	}
 	return TSNode{};   // zero-init -> id == nullptr -> ts_node_is_null() true
@@ -1045,8 +1048,9 @@ void collectCsTypeMembers(TSNode cls, const std::string& src, std::unordered_map
 }
 
 // DFS every type definition in the tree, collecting its members into `out`.
-void walkTypeDefs(TSNode node, const std::string& src, Lang lang, MemberTypeMap& out)
+void walkTypeDefs(TSNode node, const std::string& src, Lang lang, MemberTypeMap& out, int depth = 0)
 {
+	if (depth >= kMaxAstDepth) return;   // pathologically nested code -> stop descending
 	std::string ty = tyOf(node);
 	bool isTypeDef =
 		(lang == Lang::Cpp && (ty == "class_specifier" || ty == "struct_specifier" || ty == "union_specifier")) ||
@@ -1067,7 +1071,7 @@ void walkTypeDefs(TSNode node, const std::string& src, Lang lang, MemberTypeMap&
 	}
 	uint32_t n = ts_node_named_child_count(node);
 	for (uint32_t i = 0; i < n; ++i)
-		walkTypeDefs(ts_node_named_child(node, i), src, lang, out);
+		walkTypeDefs(ts_node_named_child(node, i), src, lang, out, depth + 1);
 }
 
 // Single-entry parse cache. Keyed by a VALUE COPY of the source (never the

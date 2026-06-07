@@ -395,7 +395,10 @@ void Editor::closeTab(size_t idx)
     {
         std::string uri = lspUriForTab(*tabs[idx]);
         if (!uri.empty())
+        {
             lspClient.didClose(uri);
+            lspDiagnostics.erase(lsp::uriToPath(uri));   // don't leak this file's diagnostics
+        }
         lspDocHash.erase(tabs[idx]->id);
     }
 
@@ -2594,7 +2597,15 @@ void Editor::pollLsp()
             std::string p = lsp::uriToPath(loc.uri);
             if (!p.empty())
             {
-                commitPendingNavJump();   // record the pre-go-to-def origin (if the sync path didn't)
+                // Record the FROM position as of NOW (this reply may land frames
+                // after the request, by which time the cursor moved). Only if the
+                // sync path didn't already record this go-to-def. Using the live
+                // location — not the stale captured origin — keeps Back correct.
+                if (navJumpOriginValid)
+                {
+                    navHistory.record(currentNavLocation());
+                    navJumpOriginValid = false;
+                }
                 openFile(p);
                 if (!tabs.empty())
                 {
@@ -2612,14 +2623,17 @@ void Editor::pollLsp()
         {
             lspHoverText = r.hoverText;
         }
-        // Diagnostics: server-pushed errors/warnings keyed by file. Replace the
-        // file's set wholesale (an empty array means "now clean").
+        // Diagnostics: server-pushed errors/warnings keyed by file. Key on the
+        // canonical PATH (not the raw URI) so the status-bar lookup matches even if
+        // clangd echoes a differently-encoded URI than we sent. Empty = "now clean".
         else if (r.kind == lsp::ResultKind::Diagnostics)
         {
+            std::string key = lsp::uriToPath(r.uri);
+            if (key.empty()) continue;
             if (r.diagnostics.empty())
-                lspDiagnostics.erase(r.uri);
+                lspDiagnostics.erase(key);
             else
-                lspDiagnostics[r.uri] = std::move(r.diagnostics);
+                lspDiagnostics[key] = std::move(r.diagnostics);
         }
     }
 }
@@ -4024,7 +4038,9 @@ void Editor::applyNavLocation(const NavLocation &l)
     if (l.file.empty())
         return;
     openFile(l.file);
-    if (tabs.empty())
+    // If the file is gone (deleted/renamed since it was recorded) openFile leaves
+    // the previously-active tab in front — don't move ITS cursor to l's position.
+    if (tabs.empty() || doc().filename != l.file)
         return;
     auto &e = doc().editor;
     e.SetCursor(l.line, l.column);
@@ -10216,10 +10232,11 @@ void Editor::renderStatusBar()
                            lspReady ? "clangd \xE2\x97\x8F" : "clangd \xE2\x97\x8B");
 
         // Diagnostics count for the active file (errors/warnings from clangd).
+        // Keyed on the canonical path so it matches the store regardless of URI form.
         if (lspReady && !tabs.empty() && !lspDiagnostics.empty())
         {
-            std::string uri = lspUriForTab(doc());
-            auto it = uri.empty() ? lspDiagnostics.end() : lspDiagnostics.find(uri);
+            std::string key = lsp::uriToPath(lspUriForTab(doc()));
+            auto it = key.empty() ? lspDiagnostics.end() : lspDiagnostics.find(key);
             if (it != lspDiagnostics.end())
             {
                 int errs = 0, warns = 0;
@@ -10229,6 +10246,7 @@ void Editor::renderStatusBar()
                 {
                     ImGui::SameLine(0.0f, glyphWidth * 1.5f);
                     ImGui::AlignTextToFramePadding();
+                    ImGui::BeginGroup();   // group so the tooltip triggers over BOTH counts, not just the last
                     if (errs)
                         ImGui::TextColored(ImVec4(0.92f, 0.45f, 0.45f, 1.0f), "\xE2\x9C\x96 %d", errs);
                     if (warns)
@@ -10236,6 +10254,7 @@ void Editor::renderStatusBar()
                         if (errs) ImGui::SameLine(0.0f, glyphWidth);
                         ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.40f, 1.0f), "\xE2\x9A\xA0 %d", warns);
                     }
+                    ImGui::EndGroup();
                     if (ImGui::IsItemHovered())
                     {
                         ImGui::BeginTooltip();
@@ -11017,10 +11036,13 @@ void Editor::configureTabAutocomplete(TabDocument &t)
 
             if (!oper.empty())
             {
+                // Identifier byte: ASCII ident char OR any UTF-8 byte (>=0x80), so a
+                // non-ASCII identifier (café.member) isn't truncated mid-codepoint.
+                auto isIdentByte = [](char c) { return tsIsIdentChar(c) || ((unsigned char) c >= 0x80); };
                 size_t r = op;
                 while (r > 0 && isSp(ln[r - 1])) --r;
                 size_t rEnd = r;
-                while (r > 0 && tsIsIdentChar(ln[r - 1])) --r;
+                while (r > 0 && isIdentByte(ln[r - 1])) --r;
                 std::string receiver = ln.substr(r, rEnd - r);
                 // Build the receiver CHAIN for member-of-member completion:
                 // a.b.c -> {a,b,c}, walking back over '.'/'->' segments. '::' stays
@@ -11043,7 +11065,7 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                         else break;                                   // no further member op
                         while (q > 0 && isSp(ln[q - 1])) --q;
                         size_t e = q;
-                        while (q > 0 && tsIsIdentChar(ln[q - 1])) --q;
+                        while (q > 0 && isIdentByte(ln[q - 1])) --q;
                         if (q == e) { badBase = true; break; }        // op w/ no ident (call/index result)
                         if (q >= 2 && ln[q - 1] == ':' && ln[q - 2] == ':') { badBase = true; break; } // qualified base
                         chain.insert(chain.begin(), ln.substr(q, e - q));
