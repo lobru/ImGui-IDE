@@ -460,6 +460,47 @@ int main()
 			"C# chain: this.branch.Leaf -> Leaf");
 	}
 
+	// ── Cross-file member types (extractMemberTypes + index-backed chains) ──
+	{
+		// extractMemberTypes pulls every type's members + their declared types.
+		std::string cpp =
+			"struct Inner {\n"
+			"    std::vector<int> items;\n"
+			"    int count;\n"
+			"    Inner* self;\n"
+			"};\n"
+			"struct Outer { Inner inner; };\n";
+		auto mt = ts::extractMemberTypes(ts::Lang::Cpp, cpp);
+		CHECK(mt.count("Inner") && mt["Inner"]["items"] == "vector", "extractMemberTypes: Inner.items -> vector");
+		CHECK(mt["Inner"]["count"] == "int", "extractMemberTypes: Inner.count -> int");
+		CHECK(mt["Inner"]["self"] == "Inner", "extractMemberTypes: pointer member reduced");
+		CHECK(mt.count("Outer") && mt["Outer"]["inner"] == "Inner", "extractMemberTypes: Outer.inner -> Inner");
+
+		// Index-backed chain: the CURRENT doc only declares `Outer o;` — Outer and
+		// Inner are defined elsewhere (here, supplied via the index map). The chain
+		// o.inner.items must still resolve to vector by hopping through the index.
+		ts::MemberTypeMap index = {
+			{"Outer", {{"inner", "Inner"}}},
+			{"Inner", {{"items", "vector"}, {"count", "int"}}},
+		};
+		std::string doc =
+			"void f() {\n"
+			"    Outer o;\n"
+			"    /*X*/;\n"
+			"}\n";
+		auto xp = doc.find("/*X*/");
+		int xrow = 0; size_t ls = 0;
+		for (size_t i = 0; i < xp; ++i) if (doc[i] == '\n') { ++xrow; ls = i + 1; }
+		int xcol = (int)(xp - ls);
+		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner"}, &index) == "Inner",
+			"cross-file chain: o.inner -> Inner via index");
+		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner", "items"}, &index) == "vector",
+			"cross-file chain: o.inner.items -> vector via index");
+		// Without the index, the same chain can't be resolved (types not in doc).
+		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner"}).empty(),
+			"cross-file chain: unresolved without index (no false members)");
+	}
+
 	// ── Additional language grammars (Python, JavaScript) ──
 	{
 		CHECK(ts::langForExtension(".py") == ts::Lang::Python,      ".py -> Python grammar");

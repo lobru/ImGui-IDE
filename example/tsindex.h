@@ -58,15 +58,28 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source);
 std::string resolveLocalType(Lang lang, const std::string& source,
                              int line, int col, const std::string& receiver);
 
+// type name -> (member name -> member's declared type). Lets member-chain
+// resolution hop into types defined in OTHER files (the per-doc parse only sees
+// the current file). Built project-wide by extractMemberTypes per file.
+using MemberTypeMap = std::unordered_map<std::string, std::unordered_map<std::string, std::string>>;
+
+// Extract every type's data members and their declared types from one source
+// buffer (pointer members reduced to the pointee). C++ / C# only; empty for
+// other languages. The complement to extractSymbols, used to build the project's
+// MemberTypeMap so chained completion works across files.
+MemberTypeMap extractMemberTypes(Lang lang, const std::string& source);
+
 // Resolve a dotted member chain to its final type, for member-of-member
 // completion (`a.b.c` -> type of c). `chain` is the receiver segments in order
 // ({"a","b","c"}); (line,col) locates the base receiver for scope resolution.
 // The base is resolved like resolveLocalType; each subsequent hop descends into
-// the prior type's definition IN THIS DOCUMENT. Returns "" if any hop can't be
-// resolved same-document (STL receiver, type defined in another file, …). A
-// single-element chain is exactly resolveLocalType. C++ / C# only.
+// the prior type's definition — first IN THIS DOCUMENT, then (if `index` is
+// given) via the project-wide MemberTypeMap so types in other files resolve too.
+// Returns "" if any hop can't be resolved. A single-element chain is exactly
+// resolveLocalType. C++ / C# only.
 std::string resolveMemberChain(Lang lang, const std::string& source,
-                               int line, int col, const std::vector<std::string>& chain);
+                               int line, int col, const std::vector<std::string>& chain,
+                               const MemberTypeMap* index = nullptr);
 
 // Curated member lists for common standard-library types (string, vector, map,
 // optional, smart pointers, …). The project index can only see members of types

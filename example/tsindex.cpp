@@ -944,6 +944,101 @@ std::string memberTypeIn(Lang lang, TSNode tdef, const std::string& src, const s
 	return {};
 }
 
+// Collect ALL data members of a C++ class/struct body -> {member: type}.
+void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out)
+{
+	TSNode body = ts_node_child_by_field_name(cls, "body", 4);
+	if (ts_node_is_null(body)) return;
+	uint32_t n = ts_node_named_child_count(body);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode child = ts_node_named_child(body, i);
+		if (tyOf(child) != "field_declaration") continue;
+		TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
+		if (ts_node_is_null(typeNode)) continue;
+		std::string mty = reduceCppType(typeNode, src);
+		if (mty.empty()) continue;
+		uint32_t m = ts_node_named_child_count(child);
+		for (uint32_t j = 0; j < m; ++j)
+		{
+			TSNode fd = ts_node_named_child(child, j);
+			if (ts_node_eq(fd, typeNode)) continue;
+			std::string nm = cppDeclName(fd, src);
+			if (!nm.empty()) out[nm] = mty;
+		}
+	}
+}
+
+// Collect ALL fields + properties of a C# type body -> {member: type}.
+void collectCsTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out)
+{
+	TSNode body = ts_node_child_by_field_name(cls, "body", 4);
+	if (ts_node_is_null(body)) return;
+	uint32_t n = ts_node_named_child_count(body);
+	for (uint32_t i = 0; i < n; ++i)
+	{
+		TSNode child = ts_node_named_child(body, i);
+		std::string cty = tyOf(child);
+		if (cty == "field_declaration")
+		{
+			uint32_t m = ts_node_named_child_count(child);
+			for (uint32_t j = 0; j < m; ++j)
+			{
+				TSNode vd = ts_node_named_child(child, j);
+				if (tyOf(vd) != "variable_declaration") continue;
+				TSNode typeNode = ts_node_child_by_field_name(vd, "type", 4);
+				if (ts_node_is_null(typeNode)) continue;
+				std::string mty = reduceCsType(typeNode, src);
+				if (mty.empty()) continue;
+				uint32_t k = ts_node_named_child_count(vd);
+				for (uint32_t t = 0; t < k; ++t)
+				{
+					TSNode d = ts_node_named_child(vd, t);
+					if (tyOf(d) != "variable_declarator") continue;
+					TSNode nm = ts_node_child_by_field_name(d, "name", 4);
+					if (!ts_node_is_null(nm)) out[nodeText(nm, src)] = mty;
+				}
+			}
+		}
+		else if (cty == "property_declaration")
+		{
+			TSNode nm = ts_node_child_by_field_name(child, "name", 4);
+			TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
+			if (!ts_node_is_null(nm) && !ts_node_is_null(typeNode))
+			{
+				std::string mty = reduceCsType(typeNode, src);
+				if (!mty.empty()) out[nodeText(nm, src)] = mty;
+			}
+		}
+	}
+}
+
+// DFS every type definition in the tree, collecting its members into `out`.
+void walkTypeDefs(TSNode node, const std::string& src, Lang lang, MemberTypeMap& out)
+{
+	std::string ty = tyOf(node);
+	bool isTypeDef =
+		(lang == Lang::Cpp && (ty == "class_specifier" || ty == "struct_specifier" || ty == "union_specifier")) ||
+		(lang == Lang::CSharp && (ty == "class_declaration" || ty == "struct_declaration" ||
+								  ty == "record_declaration" || ty == "interface_declaration"));
+	if (isTypeDef)
+	{
+		TSNode name = ts_node_child_by_field_name(node, "name", 4);
+		if (!ts_node_is_null(name))
+		{
+			std::string tn = lastSegment(nodeText(name, src));
+			if (!tn.empty())
+			{
+				if (lang == Lang::Cpp)    collectCppTypeMembers(node, src, out[tn]);
+				else                      collectCsTypeMembers(node, src, out[tn]);
+			}
+		}
+	}
+	uint32_t n = ts_node_named_child_count(node);
+	for (uint32_t i = 0; i < n; ++i)
+		walkTypeDefs(ts_node_named_child(node, i), src, lang, out);
+}
+
 // Single-entry parse cache. Keyed by a VALUE COPY of the source (never the
 // pointer of the GetText() temporary — that would be a use-after-free). The size
 // short-circuit avoids a full string compare on a miss.
@@ -997,7 +1092,8 @@ std::string resolveLocalType(Lang lang, const std::string& source,
 }
 
 std::string resolveMemberChain(Lang lang, const std::string& source,
-							   int line, int col, const std::vector<std::string>& chain)
+							   int line, int col, const std::vector<std::string>& chain,
+							   const MemberTypeMap* index)
 {
 	if (chain.empty()) return {};
 	if (chain.size() == 1)                                  // plain receiver — reuse the base resolver
@@ -1016,9 +1112,9 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 	if (ts_node_is_null(cursor)) cursor = root;
 
 	// Resolve the base receiver to a type (scope-aware), then walk each member
-	// hop by finding that type's definition in this document and looking up the
-	// next field's declared type. Bails (returns "") the moment a hop can't be
-	// resolved same-document — e.g. an STL receiver or a type from another file.
+	// hop: look up the next field's type in that type's definition — first in THIS
+	// document, then (if given) in the project-wide index so types from other
+	// files resolve too. Bails (returns "") the moment a hop can't be resolved.
 	std::string type = (chain[0] == "this")
 		? (lang == Lang::Cpp ? resolveThisCpp(cursor, source) : resolveThisCs(cursor, source))
 		: walkScopes(lang, cursor, source, chain[0], pt);
@@ -1026,12 +1122,40 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 
 	for (size_t i = 1; i < chain.size(); ++i)
 	{
+		std::string next;
 		TSNode tdef = findTypeDefNode(root, source, lang, type);
-		if (ts_node_is_null(tdef)) return {};
-		type = memberTypeIn(lang, tdef, source, chain[i]);
-		if (type.empty()) return {};
+		if (!ts_node_is_null(tdef))
+			next = memberTypeIn(lang, tdef, source, chain[i]);
+		if (next.empty() && index)                          // cross-file fallback
+		{
+			auto t = index->find(type);
+			if (t != index->end())
+			{
+				auto m = t->second.find(chain[i]);
+				if (m != t->second.end()) next = m->second;
+			}
+		}
+		if (next.empty()) return {};
+		type = next;
 	}
 	return type;
+}
+
+MemberTypeMap extractMemberTypes(Lang lang, const std::string& source)
+{
+	MemberTypeMap out;
+	if ((lang != Lang::Cpp && lang != Lang::CSharp) || source.empty()) return out;
+	if (source.size() > 2 * 1024 * 1024) return out;        // index-path size cap
+	const TSLanguage* language = languageFor(lang);
+	if (!language) return out;
+	TSParser* parser = ts_parser_new();
+	ts_parser_set_language(parser, language);
+	TSTree* tree = ts_parser_parse_string(parser, nullptr, source.c_str(), (uint32_t) source.size());
+	ts_parser_delete(parser);
+	if (!tree) return out;
+	walkTypeDefs(ts_tree_root_node(tree), source, lang, out);
+	ts_tree_delete(tree);
+	return out;
 }
 
 } // namespace ts
