@@ -11039,21 +11039,36 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                 // Identifier byte: ASCII ident char OR any UTF-8 byte (>=0x80), so a
                 // non-ASCII identifier (café.member) isn't truncated mid-codepoint.
                 auto isIdentByte = [](char c) { return tsIsIdentChar(c) || ((unsigned char) c >= 0x80); };
+                bool badBase = false;
+                // If a balanced (...) ends just before `p`, skip it so a method call
+                // `get()` reads as the segment `get` (-> its return type). Returns
+                // false on an unbalanced/odd paren (caller bails). No-op if no ')'.
+                auto skipCall = [&](size_t &p) -> bool {
+                    if (p == 0 || ln[p - 1] != ')') return true;
+                    int depth = 0; size_t i = p;
+                    while (i > 0)
+                    {
+                        char c = ln[i - 1]; --i;
+                        if (c == ')') ++depth;
+                        else if (c == '(') { if (--depth == 0) { p = i; return true; } }
+                    }
+                    return false;
+                };
                 size_t r = op;
+                while (r > 0 && isSp(ln[r - 1])) --r;
+                if (!skipCall(r)) badBase = true;                 // completing the result of a call: foo().|
                 while (r > 0 && isSp(ln[r - 1])) --r;
                 size_t rEnd = r;
                 while (r > 0 && isIdentByte(ln[r - 1])) --r;
                 std::string receiver = ln.substr(r, rEnd - r);
                 // Build the receiver CHAIN for member-of-member completion:
-                // a.b.c -> {a,b,c}, walking back over '.'/'->' segments. '::' stays
-                // a single segment (the receiver IS the type — static/namespace/
-                // nested). A digit-led base, or a member op whose receiver is a
-                // call/index result (foo().x, arr[i].x), can't be resolved here, so
-                // we skip member completion (precise-only) and fall through.
+                // a.b.c -> {a,b,c}, walking back over '.'/'->' segments, skipping a
+                // call's (...) so a.get().b chains through get's return type. '::'
+                // stays a single segment (the receiver IS the type). A member op with
+                // no resolvable receiver (arr[i].x) or a qualified base bails.
                 std::vector<std::string> chain;
                 chain.push_back(receiver);
-                bool badBase = false;
-                if (oper != "::")
+                if (oper != "::" && !badBase)
                 {
                     size_t seg = r;
                     for (;;)
@@ -11064,9 +11079,11 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                         else if (q >= 1 && ln[q - 1] == '.') q -= 1;
                         else break;                                   // no further member op
                         while (q > 0 && isSp(ln[q - 1])) --q;
+                        if (!skipCall(q)) { badBase = true; break; }  // unbalanced parens
+                        while (q > 0 && isSp(ln[q - 1])) --q;
                         size_t e = q;
                         while (q > 0 && isIdentByte(ln[q - 1])) --q;
-                        if (q == e) { badBase = true; break; }        // op w/ no ident (call/index result)
+                        if (q == e) { badBase = true; break; }        // op w/ no ident (index result arr[i].x)
                         if (q >= 2 && ln[q - 1] == ':' && ln[q - 2] == ':') { badBase = true; break; } // qualified base
                         chain.insert(chain.begin(), ln.substr(q, e - q));
                         seg = q;

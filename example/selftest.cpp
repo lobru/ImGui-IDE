@@ -502,18 +502,24 @@ int main()
 			"    int count;\n"
 			"    Inner* self;\n"
 			"};\n"
-			"struct Outer { Inner inner; };\n";
+			"struct Outer {\n"
+			"    Inner inner;\n"
+			"    Inner getInner();\n"            // method prototype -> return type
+			"    Inner* makeInner() { return nullptr; }\n"  // inline method -> return type
+			"};\n";
 		auto mt = ts::extractMemberTypes(ts::Lang::Cpp, cpp);
 		CHECK(mt.count("Inner") && mt["Inner"]["items"] == "vector", "extractMemberTypes: Inner.items -> vector");
 		CHECK(mt["Inner"]["count"] == "int", "extractMemberTypes: Inner.count -> int");
 		CHECK(mt["Inner"]["self"] == "Inner", "extractMemberTypes: pointer member reduced");
 		CHECK(mt.count("Outer") && mt["Outer"]["inner"] == "Inner", "extractMemberTypes: Outer.inner -> Inner");
+		CHECK(mt["Outer"]["getInner"] == "Inner", "extractMemberTypes: method prototype -> return type");
+		CHECK(mt["Outer"]["makeInner"] == "Inner", "extractMemberTypes: inline method -> return type (ptr reduced)");
 
 		// Index-backed chain: the CURRENT doc only declares `Outer o;` — Outer and
 		// Inner are defined elsewhere (here, supplied via the index map). The chain
 		// o.inner.items must still resolve to vector by hopping through the index.
 		ts::MemberTypeMap index = {
-			{"Outer", {{"inner", "Inner"}}},
+			{"Outer", {{"inner", "Inner"}, {"getInner", "Inner"}}},   // getInner: method -> return type
 			{"Inner", {{"items", "vector"}, {"count", "int"}}},
 		};
 		std::string doc =
@@ -529,6 +535,10 @@ int main()
 			"cross-file chain: o.inner -> Inner via index");
 		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner", "items"}, &index) == "vector",
 			"cross-file chain: o.inner.items -> vector via index");
+		// Method-return hop: o.getInner().items -> Inner -> vector (getInner keyed by
+		// name -> return type, exactly like a field).
+		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "getInner", "items"}, &index) == "vector",
+			"method-return chain via index: o.getInner().items -> vector");
 		// Without the index, the same chain can't be resolved (types not in doc).
 		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner"}).empty(),
 			"cross-file chain: unresolved without index (no false members)");

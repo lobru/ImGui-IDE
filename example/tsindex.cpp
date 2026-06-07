@@ -978,7 +978,10 @@ std::string memberTypeIn(Lang lang, TSNode tdef, const std::string& src, const s
 	return {};
 }
 
-// Collect ALL data members of a C++ class/struct body -> {member: type}.
+// Collect ALL data members of a C++ class/struct body -> {member: type}. Includes
+// methods keyed by NAME -> RETURN type (so a.getThing().x can chain): prototypes
+// `T get();` come through the field_declaration path (cppDeclName descends the
+// function_declarator); inline definitions `T get(){...}` are function_definition.
 void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out)
 {
 	TSNode body = ts_node_child_by_field_name(cls, "body", 4);
@@ -987,17 +990,28 @@ void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_ma
 	for (uint32_t i = 0; i < n; ++i)
 	{
 		TSNode child = ts_node_named_child(body, i);
-		if (tyOf(child) != "field_declaration") continue;
-		TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
-		if (ts_node_is_null(typeNode)) continue;
-		std::string mty = reduceCppType(typeNode, src);
-		if (mty.empty()) continue;
-		uint32_t m = ts_node_named_child_count(child);
-		for (uint32_t j = 0; j < m; ++j)
+		std::string cty = tyOf(child);
+		if (cty == "field_declaration")
 		{
-			TSNode fd = ts_node_named_child(child, j);
-			if (ts_node_eq(fd, typeNode)) continue;
-			std::string nm = cppDeclName(fd, src);
+			TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
+			if (ts_node_is_null(typeNode)) continue;
+			std::string mty = reduceCppType(typeNode, src);
+			if (mty.empty()) continue;
+			uint32_t m = ts_node_named_child_count(child);
+			for (uint32_t j = 0; j < m; ++j)
+			{
+				TSNode fd = ts_node_named_child(child, j);
+				if (ts_node_eq(fd, typeNode)) continue;
+				std::string nm = cppDeclName(fd, src);   // descends function_declarator -> method name too
+				if (!nm.empty()) out[nm] = mty;
+			}
+		}
+		else if (cty == "function_definition")   // inline method body
+		{
+			TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
+			std::string mty = reduceCppType(typeNode, src);
+			if (mty.empty()) continue;             // ctor/dtor/operator with no return type
+			std::string nm = cppDeclName(ts_node_child_by_field_name(child, "declarator", 10), src);
 			if (!nm.empty()) out[nm] = mty;
 		}
 	}
@@ -1034,8 +1048,9 @@ void collectCsTypeMembers(TSNode cls, const std::string& src, std::unordered_map
 				}
 			}
 		}
-		else if (cty == "property_declaration")
+		else if (cty == "property_declaration" || cty == "method_declaration")
 		{
+			// Property -> its type; method -> its RETURN type (so a.Get().X chains).
 			TSNode nm = ts_node_child_by_field_name(child, "name", 4);
 			TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
 			if (!ts_node_is_null(nm) && !ts_node_is_null(typeNode))
