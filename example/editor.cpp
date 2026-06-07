@@ -11054,20 +11054,38 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                     }
                     return false;
                 };
+                // If a balanced [...] ends just before `p`, skip it and set `sub`
+                // (subscript v[i] -> element type). false only on unbalanced.
+                auto skipBracket = [&](size_t &p, bool &sub) -> bool {
+                    if (p == 0 || ln[p - 1] != ']') return true;
+                    int depth = 0; size_t i = p;
+                    while (i > 0)
+                    {
+                        char c = ln[i - 1]; --i;
+                        if (c == ']') ++depth;
+                        else if (c == '[') { if (--depth == 0) { p = i; sub = true; return true; } }
+                    }
+                    return false;
+                };
                 size_t r = op;
                 while (r > 0 && isSp(ln[r - 1])) --r;
                 if (!skipCall(r)) badBase = true;                 // completing the result of a call: foo().|
+                while (r > 0 && isSp(ln[r - 1])) --r;
+                bool recvSub = false;
+                if (!skipBracket(r, recvSub)) badBase = true;     // completing an element: v[i].|
                 while (r > 0 && isSp(ln[r - 1])) --r;
                 size_t rEnd = r;
                 while (r > 0 && isIdentByte(ln[r - 1])) --r;
                 std::string receiver = ln.substr(r, rEnd - r);
                 // Build the receiver CHAIN for member-of-member completion:
                 // a.b.c -> {a,b,c}, walking back over '.'/'->' segments, skipping a
-                // call's (...) so a.get().b chains through get's return type. '::'
-                // stays a single segment (the receiver IS the type). A member op with
-                // no resolvable receiver (arr[i].x) or a qualified base bails.
+                // call's (...) or a subscript's [...] so a.get().b and v[i].b chain
+                // through the return/element type. '::' stays a single segment (the
+                // receiver IS the type). A member op with an unresolvable receiver or
+                // a qualified base bails.
                 std::vector<std::string> chain;
                 chain.push_back(receiver);
+                if (recvSub) chain.push_back("[]");               // v[i]. -> [v, "[]"]
                 if (oper != "::" && !badBase)
                 {
                     size_t seg = r;
@@ -11081,10 +11099,14 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                         while (q > 0 && isSp(ln[q - 1])) --q;
                         if (!skipCall(q)) { badBase = true; break; }  // unbalanced parens
                         while (q > 0 && isSp(ln[q - 1])) --q;
+                        bool sub = false;
+                        if (!skipBracket(q, sub)) { badBase = true; break; }   // unbalanced bracket
+                        while (q > 0 && isSp(ln[q - 1])) --q;
                         size_t e = q;
                         while (q > 0 && isIdentByte(ln[q - 1])) --q;
-                        if (q == e) { badBase = true; break; }        // op w/ no ident (index result arr[i].x)
+                        if (q == e) { badBase = true; break; }        // op w/ no ident receiver
                         if (q >= 2 && ln[q - 1] == ':' && ln[q - 2] == ':') { badBase = true; break; } // qualified base
+                        if (sub) chain.insert(chain.begin(), "[]");   // subscript on this segment (after its ident)
                         chain.insert(chain.begin(), ln.substr(q, e - q));
                         seg = q;
                     }

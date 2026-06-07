@@ -1007,7 +1007,7 @@ bool isFirstArgElementContainer(const std::string& t)
 bool isElementAccessor(const std::string& m)
 {
 	return m == "front" || m == "back" || m == "at" || m == "value" ||
-		   m == "value_or" || m == "get" || m == "top";
+		   m == "value_or" || m == "get" || m == "top" || m == "[]";   // "[]" = subscript v[i]
 }
 
 // Look up member `member`'s declared type inside the type-definition node `tdef`.

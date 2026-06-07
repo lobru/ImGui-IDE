@@ -524,6 +524,9 @@ int main()
 		CHECK(el({"ws", "back"}) == "Widget", "element: vector<Widget>.back() -> Widget");
 		CHECK(el({"ow", "value"}) == "Widget", "element: optional<Widget>.value() -> Widget");
 		CHECK(el({"pw", "get"}) == "Widget", "element: shared_ptr<Widget>.get() -> Widget");
+		// Subscript v[i] (editor emits "[]" sentinel) -> element type.
+		CHECK(el({"ws", "[]"}) == "Widget", "element: vector<Widget>[i] -> Widget (subscript)");
+		CHECK(el({"ws", "[]", "sub"}) == "Inner", "element chain: ws[i].sub -> Inner");
 		// Full chain: ws.front().sub -> Inner (element type's member).
 		CHECK(el({"ws", "front", "sub"}) == "Inner", "element chain: ws.front().sub -> Inner");
 		CHECK(el({"ws", "front", "health"}) == "int", "element chain: ws.front().health -> int");
