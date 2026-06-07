@@ -162,6 +162,8 @@ std::string enclosingTypeOf(TSNode nameNode, const std::string& src)
 		if (ty == "class_specifier" || ty == "struct_specifier" || ty == "enum_specifier" ||
 			ty == "class_declaration" || ty == "struct_declaration" || ty == "interface_declaration" ||
 			ty == "enum_declaration" || ty == "record_declaration" ||
+			ty == "namespace_definition" ||                   // C++ namespace Foo { ... }
+			ty == "namespace_declaration" ||                  // C# namespace Foo { ... }
 			ty == "class_definition" ||                       // Python
 			ty == "class")                                    // JavaScript class expression
 		{

@@ -238,7 +238,9 @@ int main()
 		CHECK(encl("m", 6) == "Inner", "nested m enclosed by tightest type Inner");
 		CHECK(encl("baz", 11).empty(), "top-level baz has no enclosing type");
 		CHECK(encl("Inner", 5) == "Foo", "nested type Inner's enclosing is outer Foo (self-skip)");
-		CHECK(encl("Foo", 1).empty(), "top-level type Foo has no enclosing (self-skip)");
+		// A class directly in a namespace reports that namespace as its enclosing
+		// scope, so `ns::` member completion can list the namespace's types.
+		CHECK(encl("Foo", 1) == "ns", "type Foo enclosed by its namespace ns");
 	}
 
 	// ── Tree-sitter C# symbol extraction ──

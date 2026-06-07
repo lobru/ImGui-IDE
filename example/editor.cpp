@@ -2391,10 +2391,14 @@ void Editor::rebuildProjectIndex()
             return ok.count(e) != 0;
         };
         auto skipDir = [](const std::string &n) {
+            // NOTE: deps/vendor are intentionally NOT skipped — dependency SOURCE
+            // (ImGui, glm, etc.) should be indexed so its symbols resolve for
+            // go-to-def + autocomplete. Still skip build output, VCS, node_modules
+            // (huge/minified), NuGet packages (compiled), and Backup folders.
             return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
                    n == "bin" || n == "obj" || n == "out" || n == "build" ||
                    n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
-                   n == "__pycache__" || n == "packages" || n == "deps" || n == "vendor" ||
+                   n == "__pycache__" || n == "packages" ||
                    n == "Backup" || n == "backup" || n == "Backups" || n == "backups";
         };
         static const std::unordered_set<std::string> defKw = {
@@ -2430,7 +2434,7 @@ void Editor::rebuildProjectIndex()
         auto idx = std::make_shared<ProjectIndex>();
         std::unordered_set<std::string> idset;
         std::error_code ec;
-        int budget = 12000;
+        int budget = 30000;   // higher now that dependency source is indexed too
 
         for (auto it = std::filesystem::recursive_directory_iterator(
                  root, std::filesystem::directory_options::skip_permission_denied, ec);
@@ -2474,7 +2478,8 @@ void Editor::rebuildProjectIndex()
                 tsFile = false;
             if (tsFile)
             {
-                for (auto &sym : ts::extractSymbols(ts::langForExtension(ext), whole))
+                auto syms = ts::extractSymbols(ts::langForExtension(ext), whole);
+                for (auto &sym : syms)
                 {
                     idset.insert(sym.name);
                     if (!sym.isDefinition)
@@ -2489,6 +2494,8 @@ void Editor::rebuildProjectIndex()
                             mv.push_back(sym.name);
                     }
                 }
+                if (!syms.empty())
+                    idx->fileSymbols[fileStr] = std::move(syms);
             }
 
             // Identifier + heuristic-definition tokenization. Heuristic def sites are
@@ -4262,6 +4269,91 @@ static const char *symKindTag(ts::Kind k)
     }
 }
 
+// Render a type→members tree from a flat symbol list. `jump(line)` navigates to a
+// definition. Shared by the Symbols panel's Document and Project (per-file) views.
+template <class JumpFn>
+static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::string &filter,
+                             JumpFn jump, int &uid)
+{
+    auto match = [&](const std::string &n) {
+        if (filter.empty()) return true;
+        std::string l = n;
+        std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        return l.find(filter) != std::string::npos;
+    };
+    auto label = [](const ts::Symbol &s) { return std::string(symKindTag(s.kind)) + "  " + s.name; };
+    auto isTypeKind = [](ts::Kind k) {
+        return k == ts::Kind::Class || k == ts::Kind::Struct || k == ts::Kind::Enum ||
+               k == ts::Kind::Type || k == ts::Kind::Module;
+    };
+
+    if (!filter.empty())
+    {
+        for (auto &s : syms)
+        {
+            if (!s.isDefinition || !match(s.name)) continue;
+            ImGui::PushID(uid++);
+            if (ImGui::Selectable(label(s).c_str())) jump(s.line);
+            ImGui::PopID();
+        }
+        return;
+    }
+
+    std::unordered_map<std::string, std::vector<const ts::Symbol *>> membersByType;
+    std::vector<const ts::Symbol *> topLevel;
+    for (auto &s : syms)
+    {
+        if (!s.isDefinition) continue;
+        if (s.enclosingType.empty()) topLevel.push_back(&s);
+        else membersByType[s.enclosingType].push_back(&s);
+    }
+    std::unordered_set<std::string> shownTypes;
+    for (auto *s : topLevel)
+    {
+        ImGui::PushID(uid++);
+        auto mit = membersByType.find(s->name);
+        bool hasMembers = isTypeKind(s->kind) && mit != membersByType.end() && !mit->second.empty();
+        if (hasMembers)
+        {
+            shownTypes.insert(s->name);
+            bool open = ImGui::TreeNodeEx(label(*s).c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) jump(s->line);
+            if (open)
+            {
+                for (auto *m : mit->second)
+                {
+                    ImGui::PushID(uid++);
+                    if (ImGui::Selectable(label(*m).c_str())) jump(m->line);
+                    ImGui::PopID();
+                }
+                ImGui::TreePop();
+            }
+        }
+        else
+        {
+            if (ImGui::Selectable(label(*s).c_str())) jump(s->line);
+        }
+        ImGui::PopID();
+    }
+    for (auto &kv : membersByType)
+    {
+        if (shownTypes.count(kv.first)) continue;
+        ImGui::PushID(uid++);
+        std::string header = kv.first + "  (members)";
+        if (ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
+        {
+            for (auto *m : kv.second)
+            {
+                ImGui::PushID(uid++);
+                if (ImGui::Selectable(label(*m).c_str())) jump(m->line);
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+}
+
 void Editor::renderSymbolsPanel()
 {
     if (!symbolsPanelVisible)
@@ -4281,18 +4373,10 @@ void Editor::renderSymbolsPanel()
     ImGui::InputTextWithHint("##symFilter", "filter…", symbolsFilter, sizeof(symbolsFilter));
     std::string filter = symbolsFilter;
     std::transform(filter.begin(), filter.end(), filter.begin(), [](unsigned char c) { return (char) std::tolower(c); });
-    auto match = [&](const std::string &n) {
-        if (filter.empty()) return true;
-        std::string l = n;
-        std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char) std::tolower(c); });
-        return l.find(filter) != std::string::npos;
-    };
-    auto label = [](const ts::Symbol &s) { return std::string(symKindTag(s.kind)) + "  " + s.name; };
-    ImGui::Separator();
 
     if (!symbolsProjectMode)
     {
-        // ── Document outline ──
+        // ── Document outline (live parse of the active file) ──
         if (tabs.empty())
         {
             ImGui::TextDisabled("(no document)");
@@ -4318,106 +4402,25 @@ void Editor::renderSymbolsPanel()
             symbolsCacheUndo = undo;
             symbolsCacheSyms = ts::extractSymbols(lang, ed.GetText());
         }
-
-        auto jump = [&](int line) {
-            auto &e = doc().editor;
-            e.SetCursor(line, 0);
-            e.SelectLine(line);
-            e.ScrollToLine(line, TextEditor::Scroll::alignMiddle);
-        };
-
+        ImGui::Separator();
         if (symbolsCacheSyms.empty())
         {
             ImGui::TextDisabled("(no symbols)");
             ImGui::End();
             return;
         }
-
-        if (!filter.empty())
-        {
-            // Flat filtered list.
-            int uid = 0;
-            for (auto &s : symbolsCacheSyms)
-            {
-                if (!s.isDefinition || !match(s.name))
-                    continue;
-                ImGui::PushID(uid++);
-                if (ImGui::Selectable(label(s).c_str()))
-                    jump(s.line);
-                ImGui::PopID();
-            }
-            ImGui::End();
-            return;
-        }
-
-        // Grouped tree: types carry their members; out-of-line member groups last.
-        std::unordered_map<std::string, std::vector<const ts::Symbol *>> membersByType;
-        std::vector<const ts::Symbol *> topLevel;
-        for (auto &s : symbolsCacheSyms)
-        {
-            if (!s.isDefinition)
-                continue;
-            if (s.enclosingType.empty())
-                topLevel.push_back(&s);
-            else
-                membersByType[s.enclosingType].push_back(&s);
-        }
-        auto isTypeKind = [](ts::Kind k) {
-            return k == ts::Kind::Class || k == ts::Kind::Struct || k == ts::Kind::Enum || k == ts::Kind::Type;
+        auto jump = [&](int line) {
+            auto &e = doc().editor;
+            e.SetCursor(line, 0);
+            e.SelectLine(line);
+            e.ScrollToLine(line, TextEditor::Scroll::alignMiddle);
         };
-        std::unordered_set<std::string> shownTypes;
-        int uid = 0;
-        for (auto *s : topLevel)
+        if (ImGui::BeginChild("##symDoc"))
         {
-            ImGui::PushID(uid++);
-            auto mit = membersByType.find(s->name);
-            bool hasMembers = isTypeKind(s->kind) && mit != membersByType.end() && !mit->second.empty();
-            if (hasMembers)
-            {
-                shownTypes.insert(s->name);
-                bool open = ImGui::TreeNodeEx(label(*s).c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
-                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
-                    jump(s->line);
-                if (open)
-                {
-                    for (auto *m : mit->second)
-                    {
-                        ImGui::PushID(uid++);
-                        if (ImGui::Selectable(label(*m).c_str()))
-                            jump(m->line);
-                        ImGui::PopID();
-                    }
-                    ImGui::TreePop();
-                }
-            }
-            else
-            {
-                if (ImGui::Selectable(label(*s).c_str()))
-                    jump(s->line);
-            }
-            ImGui::PopID();
+            int uid = 0;
+            renderSymbolGroup(symbolsCacheSyms, filter, jump, uid);
         }
-        // Members whose enclosing type isn't declared in THIS file (e.g. out-of-line
-        // C++ method defs) — surface them under a synthetic group so they're reachable.
-        for (auto &kv : membersByType)
-        {
-            if (shownTypes.count(kv.first))
-                continue;
-            ImGui::PushID(uid++);
-            std::string header = kv.first + "  (members)";
-            if (ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
-            {
-                for (auto *m : kv.second)
-                {
-                    ImGui::PushID(uid++);
-                    if (ImGui::Selectable(label(*m).c_str()))
-                        jump(m->line);
-                    ImGui::PopID();
-                }
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
-        }
+        ImGui::EndChild();
         ImGui::End();
         return;
     }
@@ -4427,8 +4430,8 @@ void Editor::renderSymbolsPanel()
     bool building = indexState->building.load();
     int gen = indexState->gen.load();
     if (idx)
-        ImGui::Text("gen %d%s · %zu syms · %zu types", gen, building ? "  (building…)" : "",
-                    idx->tsDefs.size(), idx->members.size());
+        ImGui::Text("gen %d%s · %zu files · %zu types", gen, building ? "  (building…)" : "",
+                    idx->fileSymbols.size(), idx->members.size());
     else
         ImGui::TextDisabled("(no index — open a project)");
     ImGui::SameLine();
@@ -4441,10 +4444,14 @@ void Editor::renderSymbolsPanel()
         ImGui::End();
         return;
     }
-    // Flatten the (symbol -> sites) map once per index generation.
+    // Rebuild the per-gen caches: sorted file list (tree) + flat rows (filter view).
     if (symbolsProjectGen != gen)
     {
+        symbolsFiles.clear();
         symbolsProjectRows.clear();
+        for (auto &kv : idx->fileSymbols)
+            symbolsFiles.push_back(kv.first);
+        std::sort(symbolsFiles.begin(), symbolsFiles.end());
         for (auto &kv : idx->tsDefs)
             for (auto &d : kv.second)
                 symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind});
@@ -4453,37 +4460,61 @@ void Editor::renderSymbolsPanel()
         symbolsProjectGen = gen;
     }
 
-    std::vector<int> vis;
-    vis.reserve(symbolsProjectRows.size());
-    for (int i = 0; i < (int) symbolsProjectRows.size(); ++i)
-        if (match(symbolsProjectRows[i].name))
-            vis.push_back(i);
-
-    ImGui::TextDisabled("%d shown", (int) vis.size());
-    if (ImGui::BeginChild("##symList"))
-    {
-        ImGuiListClipper clip;
-        clip.Begin((int) vis.size());
-        while (clip.Step())
+    auto projectJump = [&](const std::string &file, int line) {
+        openFile(file);
+        if (!tabs.empty())
         {
-            for (int r = clip.DisplayStart; r < clip.DisplayEnd; ++r)
+            auto &e = doc().editor;
+            e.SetCursor(line, 0);
+            e.SelectLine(line);
+            e.ScrollToLine(line, TextEditor::Scroll::alignMiddle);
+        }
+    };
+
+    if (ImGui::BeginChild("##symProj"))
+    {
+        if (!filter.empty())
+        {
+            // Flat filtered list across the whole project (clipped, capped).
+            auto match = [&](const std::string &n) {
+                std::string l = n;
+                std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+                return l.find(filter) != std::string::npos;
+            };
+            int shown = 0;
+            for (auto &row : symbolsProjectRows)
             {
-                const SymRow &row = symbolsProjectRows[vis[r]];
-                ImGui::PushID(r);
+                if (!match(row.name)) continue;
+                if (shown >= 2000) break;
+                ImGui::PushID(shown++);
                 std::string lbl = std::string(symKindTag(row.kind)) + "  " + row.name;
                 if (ImGui::Selectable(lbl.c_str()))
-                {
-                    openFile(row.file);
-                    if (!tabs.empty())
-                    {
-                        auto &e = doc().editor;
-                        e.SetCursor(row.line, 0);
-                        e.SelectLine(row.line);
-                        e.ScrollToLine(row.line, TextEditor::Scroll::alignMiddle);
-                    }
-                }
+                    projectJump(row.file, row.line);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s:%d", row.file.c_str(), row.line + 1);
+                ImGui::PopID();
+            }
+            ImGui::TextDisabled("%d shown%s", shown, shown >= 2000 ? " (capped — refine filter)" : "");
+        }
+        else
+        {
+            // Tree: file → types → members (same grouping as the Document tab).
+            int uid = 0;
+            for (auto &file : symbolsFiles)
+            {
+                auto it = idx->fileSymbols.find(file);
+                if (it == idx->fileSymbols.end() || it->second.empty()) continue;
+                std::string leaf = std::filesystem::path(file).filename().string();
+                ImGui::PushID(uid++);
+                bool open = ImGui::TreeNodeEx(leaf.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", file.c_str());
+                if (open)
+                {
+                    auto jump = [&](int line) { projectJump(file, line); };
+                    renderSymbolGroup(it->second, filter, jump, uid);
+                    ImGui::TreePop();
+                }
                 ImGui::PopID();
             }
         }
@@ -7542,6 +7573,13 @@ void Editor::render()
     // One-shot default layout: Nav docked into a left split. Only runs if
     // no imgui.ini layout already exists for this dockspace.
     navInitDockLayout(dockId);
+    // Deferred Reset Layout: rebuild here, in the host context and BEFORE the
+    // DockSpace() submission below, so the new tree is the one DockSpace uses.
+    if (wantResetLayout)
+    {
+        wantResetLayout = false;
+        remergeAllWindows();
+    }
     // Sticky single-doc layout: PassthruCentralNode lets the doc fill the
     // work area cleanly. (We don't auto-hide the tab bar — the user wants
     // it always visible to track open docs.)
@@ -9032,11 +9070,13 @@ void Editor::renderMenuBar()
             }
             if (ImGui::MenuItem("Reset Layout"))
             {
-                // Drop the saved layout, then rebuild the default AND re-dock every
-                // open document back into the central node — remergeAllWindows pulls
-                // split / popped-out docs back in (the plain reset left them adrift).
-                ImGui::LoadIniSettingsFromMemory("");
-                remergeAllWindows();
+                // Defer the rebuild to just before the next DockSpace() in the host
+                // window's context. Doing it here (menu popup, and AFTER this frame's
+                // DockSpace) plus the old LoadIniSettingsFromMemory("") clear made the
+                // empty-settings reload discard the DockBuilder rebuild next frame —
+                // every window floated and stayed floated. The deferred path matches
+                // the working first-run navInitDockLayout timing exactly.
+                wantResetLayout = true;
             }
 
             ImGui::EndMenu();

@@ -254,6 +254,9 @@ private:
 		std::unordered_map<std::string, std::vector<DefSite>> defs;        // symbol -> sites (heuristic)
 		std::unordered_map<std::string, std::vector<TsDef>>   tsDefs;      // symbol -> tree-sitter sites
 		std::unordered_map<std::string, std::vector<std::string>> members; // type name -> member names
+		// Per-file symbol lists (tree-sitter). Backs the Symbols panel's Project
+		// tree (file -> types -> members) and the on-disk cache.
+		std::unordered_map<std::string, std::vector<ts::Symbol>> fileSymbols;
 	};
 	struct IndexState {
 		std::mutex                          mutex;
@@ -301,6 +304,7 @@ private:
 	// ID-stack-relative, so calling it from a menu popup yields a DIFFERENT id and
 	// the reset/remerge would rebuild a phantom node, leaving windows adrift.
 	unsigned int          mainDockId = 0;
+	bool                  wantResetLayout = false;     // deferred: rebuild layout before next DockSpace()
 	std::filesystem::path projectRoot;            // empty = none set; default to cwd
 
 	// Nav tree context menu state — set when a file/folder is right-clicked.
@@ -569,8 +573,9 @@ private:
 	size_t                          symbolsCacheUndo = (size_t) -1;// doc-mode cache key (edit count)
 	std::vector<ts::Symbol>         symbolsCacheSyms;              // parsed outline of the active doc
 	struct SymRow { std::string name; std::string file; int line; ts::Kind kind; };
-	std::vector<SymRow>             symbolsProjectRows;            // flattened project index
-	int                             symbolsProjectGen = -1;        // index gen symbolsProjectRows is from
+	std::vector<SymRow>             symbolsProjectRows;            // flattened project index (filtered flat view)
+	std::vector<std::string>        symbolsFiles;                  // sorted file paths (project tree view)
+	int                             symbolsProjectGen = -1;        // index gen the two caches above are from
 
 	// Find in Files — project-wide text search with a query box + options.
 	bool                            findInFilesVisible = false;
