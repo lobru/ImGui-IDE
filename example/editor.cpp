@@ -2581,6 +2581,26 @@ void Editor::pollLsp()
                     doc().editor.SetAutoCompleteSuggestions(items);
             }
         }
+        // Definition: clangd's (often cross-file, more accurate) target for the
+        // latest go-to-def request. The instant tree-sitter jump already happened;
+        // this navigates to clangd's location if it differs.
+        else if (r.kind == lsp::ResultKind::Definition && r.id == lspDefinitionId && !r.locations.empty())
+        {
+            const auto& loc = r.locations[0];
+            std::string p = lsp::uriToPath(loc.uri);
+            if (!p.empty())
+            {
+                openFile(p);
+                if (!tabs.empty())
+                {
+                    auto& e = doc().editor;
+                    e.SetCursor(loc.line, 0);
+                    e.SelectLine(loc.line);
+                    e.ScrollToLine(loc.line, TextEditor::Scroll::alignMiddle);
+                }
+            }
+            lspDefinitionId = 0;   // consume; ignore stale duplicates
+        }
     }
 }
 
@@ -3912,6 +3932,27 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
     if (word.empty())
         return;
+
+    // LSP (clangd) go-to-definition: fire async at the cursor BEFORE the tree-sitter
+    // fallbacks below. The instant ts jump still happens; pollLsp() then navigates to
+    // clangd's (often cross-file, more accurate) target when the reply lands.
+    if (!declaration && !tabs.empty())
+    {
+        std::string aext = std::filesystem::path(doc().filename).extension().string();
+        std::transform(aext.begin(), aext.end(), aext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        if (lspActiveForExt(aext))
+        {
+            std::string uri = lspUriForTab(doc());
+            if (!uri.empty())
+            {
+                lspSyncDoc(doc());
+                int line = 0, byteCol = 0;
+                doc().editor.GetCursorBytePosition(line, byteCol, 0);
+                int id = lspClient.requestDefinition(uri, line, byteCol);
+                if (id) { lspDefinitionId = id; lspDefLine = line; lspDefCol = byteCol; }
+            }
+        }
+    }
 
     // Qualified names (System.Diagnostics.Process, std::vector, foo->bar): grep
     // for the LAST segment (the type/member name that actually appears at a

@@ -139,6 +139,24 @@ public:
 		return (line < 0 || line > static_cast<int>(document.size())) ? "" : document.getLineText(line);
 	}
 
+	// A cursor's position as (line, UTF-8 BYTE offset on that line). The stored
+	// column is a tab-expanded VISIBLE column, so this converts visible -> codepoint
+	// -> byte. Used for LSP positions (clangd negotiates utf-8 = byte offsets).
+	inline void GetCursorBytePosition(int& line, int& byteOffset, size_t cursor) const {
+		int col = 0;
+		getCursor(line, col, cursor);
+		byteOffset = 0;
+		if (line < 0 || line >= document.lineCount()) return;
+		size_t cp = document.getIndex(document[line], col);   // visible column -> codepoint index
+		std::string ln = document.getLineText(line);
+		size_t b = 0;
+		for (size_t i = 0; i < cp && b < ln.size(); ++i) {
+			++b;
+			while (b < ln.size() && (((unsigned char) ln[b]) & 0xC0) == 0x80) ++b;
+		}
+		byteOffset = static_cast<int>(b);
+	}
+
 	inline std::string GetSectionText(int startLine, int startColumn, int endLine, int endColumn) const {
 		return document.getSectionText(
 			document.normalizeCoordinate(Coordinate(startLine, startColumn)),
