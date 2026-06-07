@@ -127,17 +127,40 @@ if ($code -ne 0) {
 
 Write-Host "`nBuild succeeded: $ExePath" -ForegroundColor Green
 
+# ── Dev run copy ──────────────────────────────────────────────────────────────
+# Always launch a COPY, never example.exe itself. The linker can't overwrite a
+# running exe (LNK1104/1168), so launching example.exe directly would block the
+# next build. We copy to ImGui-IDE-run.exe and launch that; example.exe stays free
+# to rebuild while you test. If that copy is locked (you're already running it),
+# we fall through to -run2, -run3… so the freshest build is always launchable.
+function New-RunCopy {
+    for ($i = 0; $i -lt 6; $i++) {
+        $name = if ($i -eq 0) { "ImGui-IDE-run.exe" } else { "ImGui-IDE-run$i.exe" }
+        $dest = Join-Path $BuildDir $name
+        try { Copy-Item $ExePath $dest -Force -ErrorAction Stop; return $dest } catch { }
+    }
+    return $null
+}
+$runCopy = New-RunCopy
+if ($runCopy) {
+    Write-Host "Run copy: $runCopy  (launch this — example.exe stays free to rebuild)" -ForegroundColor Green
+} else {
+    Write-Host "Could not refresh a run copy (all ImGui-IDE-run*.exe are in use)." -ForegroundColor Yellow
+}
+
 if ($Run) {
-    Write-Host "Launching (with dev-cmd env so MSVC %INCLUDE% is set) ..." -ForegroundColor Cyan
+    $launch = if ($runCopy) { $runCopy } else { $ExePath }
+    Write-Host "Launching $launch (dev-cmd env so MSVC %INCLUDE% is set) ..." -ForegroundColor Cyan
     # Run inside a cmd.exe that has vcvarsall applied. That makes %INCLUDE%,
     # %VCToolsInstallDir%, %WindowsSdkDir%, etc. visible to the editor process
     # — which is what lets `#include <vector>` resolve via the editor's
-    # "Go to File" menu without any extra config.
+    # "Go to File" menu without any extra config. `start` so the build shell
+    # returns immediately and you can rebuild while it runs.
     $runBat = [IO.Path]::GetTempFileName() -replace '\.tmp$', '.bat'
 @"
 @echo off
 call "$vcvarsall" x64 >nul || exit /b 1
-"$ExePath" %*
+start "" "$launch" %*
 "@ | Set-Content -Path $runBat -Encoding ASCII
     cmd /c $runBat
     Remove-Item $runBat -Force
