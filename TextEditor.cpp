@@ -6603,8 +6603,11 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 			{
 				setColor(line.begin(), line.end(), Color::preprocessor);
 				glyph = line.end();
-				// A trailing backslash continues the directive onto the next line.
-				if (lineEndsInBackslash(line)) state = State::inPreprocessor;
+				// A trailing '\' splices the next line onto this directive, but we
+				// deliberately do NOT carry the flat preprocessor color across it:
+				// multi-line macro BODIES (e.g. a big #define) should be syntax-
+				// highlighted as code, not blobbed one color. So the continuation
+				// lines fall through to normal tokenizing (state stays inText).
 
 				// handle custom tokenizer (if we have one)
 			}
