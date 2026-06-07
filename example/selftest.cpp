@@ -360,9 +360,18 @@ int main()
 		// Negatives.
 		CHECK(rc("/*U1*/", "3")          == "", "C++ numeric receiver -> empty");
 		CHECK(rc("/*U1*/", "undeclared") == "", "C++ undeclared receiver -> empty");
-		// Resolver -> STL table linkage (end to end for the std::vector case).
-		CHECK(ts::stlMembers(rc("/*U1*/", "items")) != nullptr,
-			"resolved 'items' type keys into the STL member table");
+		// Resolver -> STL table linkage (end to end for the std::vector case): the
+		// user's headline ask, "use even something like an std::vector and get proper
+		// members". `items` resolves to vector, whose member list carries push_back/
+		// size — exactly what the editor's member-completion popup shows for `items.`.
+		auto memHas = [](const std::vector<std::string>* v, const char* m) {
+			if (!v) return false;
+			for (auto& s : *v) if (s == m) return true;
+			return false;
+		};
+		const auto* itemsMembers = ts::stlMembers(rc("/*U1*/", "items"));
+		CHECK(memHas(itemsMembers, "push_back") && memHas(itemsMembers, "size"),
+			"end-to-end: std::vector receiver -> push_back/size in the completion set");
 
 		std::string cs =
 			"class Widget {\n"
