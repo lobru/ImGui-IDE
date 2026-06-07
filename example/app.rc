@@ -1,0 +1,3 @@
+// Windows resource script — gives ImGui-IDE.exe its file/taskbar icon.
+// The first ICON in the resource table is what Explorer and the taskbar use.
+1 ICON "app.ico"

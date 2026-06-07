@@ -95,6 +95,8 @@ target_compile_definitions(example PRIVATE STANDALONE=1)
 if(WIN32 AND MSVC)
 	set_target_properties(example PROPERTIES WIN32_EXECUTABLE ON)
 	target_link_options(example PRIVATE /ENTRY:mainCRTStartup)
+	# Embed the app icon (Explorer + taskbar) via the Windows resource script.
+	target_sources(example PRIVATE app.rc)
 endif()
 
 target_compile_options(example PRIVATE
