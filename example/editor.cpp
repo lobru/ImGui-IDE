@@ -2591,6 +2591,7 @@ void Editor::pollLsp()
             std::string p = lsp::uriToPath(loc.uri);
             if (!p.empty())
             {
+                commitPendingNavJump();   // record the pre-go-to-def origin (if the sync path didn't)
                 openFile(p);
                 if (!tabs.empty())
                 {
@@ -3979,11 +3980,69 @@ bool Editor::tsGoToDefinitionInDoc(const std::string &symbol)
     return true;
 }
 
+// ── Navigation history (back/forward) ────────────────────────────────────────
+
+NavLocation Editor::currentNavLocation() const
+{
+    NavLocation l;
+    if (tabs.empty())
+        return l;
+    const TabDocument &t = *tabs[activeTab];
+    if (t.filename.empty() || t.filename == "untitled")
+        return l;
+    l.file = t.filename;
+    t.editor.GetCursor(l.line, l.column, 0);
+    return l;
+}
+
+// Push the pending go-to-def origin onto the history (once per go-to-def). Called
+// at each actual jump site — sync (ts/index/grep) and async (LSP reply) — so the
+// origin is recorded regardless of which strategy resolved the definition.
+void Editor::commitPendingNavJump()
+{
+    if (!navJumpOriginValid)
+        return;
+    navHistory.record(navJumpOrigin);
+    navJumpOriginValid = false;
+}
+
+void Editor::applyNavLocation(const NavLocation &l)
+{
+    if (l.file.empty())
+        return;
+    openFile(l.file);
+    if (tabs.empty())
+        return;
+    auto &e = doc().editor;
+    e.SetCursor(l.line, l.column);
+    e.SelectLine(l.line);
+    e.ScrollToLine(l.line, TextEditor::Scroll::alignMiddle);
+}
+
+void Editor::navigateBack()
+{
+    NavLocation dst;
+    if (navHistory.back(currentNavLocation(), dst))
+        applyNavLocation(dst);
+}
+
+void Editor::navigateForward()
+{
+    NavLocation dst;
+    if (navHistory.forward(currentNavLocation(), dst))
+        applyNavLocation(dst);
+}
+
 void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration)
 {
     ScopedTimer _t(declaration ? "goToDeclaration" : "goToDefinition");
     if (word.empty())
         return;
+
+    // Snapshot where we are NOW; committed to the back stack at the first real
+    // jump below (sync or async LSP) so Back returns to this spot.
+    navJumpOrigin = currentNavLocation();
+    navJumpOriginValid = navJumpOrigin.valid();
 
     // LSP (clangd) go-to-definition: fire async at the cursor BEFORE the tree-sitter
     // fallbacks below. The instant ts jump still happens; pollLsp() then navigates to
@@ -4047,12 +4106,18 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
         // first jumps after opening a file resolve same-file defs without waiting
         // on the background index.
         if (tsGoToDefinitionInDoc(symbol))
+        {
+            commitPendingNavJump();
             return;
+        }
 
         // Then the prebuilt project index: a real parse beats the grep index for
         // accuracy (this is the fix for C# go-to-def landing on the wrong site).
         if (tsGoToDefinition(symbol))
+        {
+            commitPendingNavJump();
             return;
+        }
 
         // For a C# document, tree-sitter is authoritative over the project's own
         // source. A miss means the symbol isn't defined here (a NuGet/BCL type
@@ -4085,6 +4150,7 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
                 // bundled libraries.
                 if (best && best->score >= 100)
                 {
+                    commitPendingNavJump();
                     openFile(best->file);
                     if (!tabs.empty())
                     {
@@ -4450,6 +4516,7 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     std::stable_sort(hits.begin(), hits.end(),
                      [](const Hit &a, const Hit &b) { return a.score > b.score; });
     auto &best = hits.front();
+    commitPendingNavJump();
     openFile(best.path.string());
     // openFile leaves the newly-opened tab as the active one — scroll it.
     if (!tabs.empty())
@@ -6667,6 +6734,8 @@ void Editor::renderSettings()
                     {"code.lower", "Selection -> lowercase", "Ctrl+K Ctrl+L", "Code", true, "lowerCase"},
                     {"code.hSrc", "Switch Header / Source", "Alt+O", "Code", true, nullptr},
                     {"code.format", "Format Document", "Alt+Shift+F", "Code", true, nullptr},
+                    {"nav.back", "Navigate back", "Alt+LeftArrow", "Code", true, nullptr},
+                    {"nav.forward", "Navigate forward", "Alt+RightArrow", "Code", true, nullptr},
 
                     {"view.splitR", "Split tab right", "Ctrl+\\", "View", true, nullptr},
                     {"view.zoomIn", "Zoom in", "Ctrl++", "View", true, nullptr},
@@ -9274,6 +9343,15 @@ void Editor::renderMenuBar()
             {
                 formatActiveDocument();
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Navigate Back", "Alt+Left", false, navHistory.canBack()))
+            {
+                navigateBack();
+            }
+            if (ImGui::MenuItem("Navigate Forward", "Alt+Right", false, navHistory.canForward()))
+            {
+                navigateForward();
+            }
             ImGui::EndMenu();
         }
 
@@ -9576,6 +9654,21 @@ void Editor::renderMenuBar()
        ImGui::EndMenu();
         }
 
+        // Back / forward through the go-to-definition jump history (also Alt+Left/
+        // Right and the mouse thumb buttons). Greyed when the stack is empty.
+        ImGui::BeginDisabled(!navHistory.canBack());
+        if (ImGui::ArrowButton("##navback", ImGuiDir_Left))
+            navigateBack();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Back  (Alt+Left / mouse back)");
+        ImGui::BeginDisabled(!navHistory.canForward());
+        if (ImGui::ArrowButton("##navfwd", ImGuiDir_Right))
+            navigateForward();
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Forward  (Alt+Right / mouse forward)");
+
 
         // Active project name — right-aligned so the workspace is always visible.
         // Folder (or project-file parent) name; full path on hover.
@@ -9674,6 +9767,14 @@ void Editor::renderMenuBar()
         {
             formatActiveDocument();
         }
+        else if (keybindPressed("nav.back", "Alt+LeftArrow"))
+        {
+            navigateBack();
+        }
+        else if (keybindPressed("nav.forward", "Alt+RightArrow"))
+        {
+            navigateForward();
+        }
         else if (keybindPressed("proj.run", "F5"))
         {
             runProjectExeOrScript();
@@ -9682,6 +9783,12 @@ void Editor::renderMenuBar()
         {
             runProjectBuild();
         }
+
+        // Mouse thumb buttons: X1 = back, X2 = forward (browser convention).
+        if (ImGui::IsMouseClicked(3))
+            navigateBack();
+        else if (ImGui::IsMouseClicked(4))
+            navigateForward();
 
         // Tab cycling — now individually rebindable. Check the backward (Shift)
         // binding first so the default Ctrl+Shift+Tab isn't swallowed by the

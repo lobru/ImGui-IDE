@@ -27,6 +27,7 @@
 #include "../TextDiff.h"
 #include "tsindex.h"
 #include "lsp_client.h"
+#include "nav_history.h"
 
 
 //
@@ -302,6 +303,18 @@ private:
 	void        lspSyncDoc(TabDocument& t); // didOpen / didChange as needed
 	bool        lspActiveForExt(const std::string& ext) const;   // C/C++ + enabled + ready
 	std::string lspUriForTab(const TabDocument& t) const;
+
+	// Navigation history (back/forward after Go-to-Definition). The origin is
+	// captured when a go-to-def is invoked and committed to the stack at the
+	// first actual jump (sync or async LSP), so back returns to where you were.
+	NavHistory  navHistory;
+	NavLocation navJumpOrigin;              // pending origin for the in-flight go-to-def
+	bool        navJumpOriginValid = false; // origin set, not yet committed to history
+	NavLocation currentNavLocation() const; // active tab's file + cursor (invalid if none)
+	void        commitPendingNavJump();     // push the pending origin to history (once)
+	void        applyNavLocation(const NavLocation& l);  // openFile + cursor + scroll
+	void        navigateBack();             // return to the previous location
+	void        navigateForward();          // re-apply a location we backed out of
 
 	enum class State {
 		edit,

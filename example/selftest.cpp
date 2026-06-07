@@ -17,6 +17,7 @@
 #include "TextEditor.h"
 #include "tsindex.h"
 #include "lsp_protocol.h"
+#include "nav_history.h"
 
 static int gFailures = 0;
 static int gChecks = 0;
@@ -587,6 +588,49 @@ int main()
 		CHECK(lsp::parsePublishDiagnostics(
 			"{\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"file:///c%3A/y.cpp\",\"diagnostics\":[]}}",
 			u3, d3) && d3.empty(), "parsePublishDiagnostics: empty array clears");
+	}
+
+	// NavHistory — back/forward stack (go-to-def "return to position").
+	{
+		auto L = [](const char* f, int ln) { NavLocation l; l.file = f; l.line = ln; return l; };
+		NavHistory h;
+		CHECK(!h.canBack() && !h.canForward(), "NavHistory: empty initially");
+
+		// Jump A(10) -> def B(40): record origin A, land on B.
+		h.record(L("a.cpp", 10));
+		CHECK(h.canBack() && !h.canForward() && h.backDepth() == 1, "NavHistory: record pushes back, clears forward");
+
+		// Back from B -> A. Forward stack now holds B.
+		NavLocation out;
+		CHECK(h.back(L("b.cpp", 40), out) && out.file == "a.cpp" && out.line == 10,
+			"NavHistory: back returns origin");
+		CHECK(!h.canBack() && h.canForward(), "NavHistory: back moved entry to forward");
+
+		// Forward from A -> B.
+		CHECK(h.forward(L("a.cpp", 10), out) && out.file == "b.cpp" && out.line == 40,
+			"NavHistory: forward returns where we came from");
+		CHECK(h.canBack() && !h.canForward(), "NavHistory: forward moved entry back");
+
+		// A new record after a back branches history (forward is discarded).
+		h.clear();
+		h.record(L("a.cpp", 1));
+		h.record(L("b.cpp", 2));        // back: [a1, b2]
+		CHECK(h.back(L("c.cpp", 3), out) && out.line == 2, "NavHistory: back pops latest origin");
+		CHECK(h.canForward(), "NavHistory: forward available after back");
+		h.record(L("c.cpp", 3));        // new jump -> forward cleared
+		CHECK(!h.canForward(), "NavHistory: new record clears forward (branch)");
+
+		// Dedup: recording the same spot as the back top doesn't grow the stack.
+		h.clear();
+		h.record(L("a.cpp", 5));
+		h.record(L("a.cpp", 5));
+		CHECK(h.backDepth() == 1, "NavHistory: dedups consecutive same-spot record");
+
+		// Invalid (empty-file) locations are ignored.
+		h.clear();
+		h.record(NavLocation{});
+		CHECK(!h.canBack(), "NavHistory: ignores invalid origin");
+		CHECK(!h.back(NavLocation{}, out), "NavHistory: back on empty returns false");
 	}
 
 	if (gFailures == 0) {
