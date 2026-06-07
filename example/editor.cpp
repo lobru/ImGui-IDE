@@ -499,6 +499,7 @@ void Editor::renderScriptOutputWindow()
         {
             ImGui::SetScrollHereY(1.0f);
         }
+        middleMousePanScroll(3);   // output log
         ImGui::EndChild();
     }
     ImGui::End();
@@ -4341,6 +4342,7 @@ void Editor::renderReferencesPanel()
             ImGui::TextDisabled("%s", hit.text.c_str());
             ImGui::PopID();
         }
+        middleMousePanScroll(4);   // references panel
     }
     ImGui::End();
 }
@@ -4521,6 +4523,7 @@ void Editor::renderSymbolsPanel()
         {
             int uid = 0;
             renderSymbolGroup(symbolsCacheSyms, filter, jump, uid);
+            middleMousePanScroll(5);   // symbols (document)
         }
         ImGui::EndChild();
         ImGui::End();
@@ -4620,6 +4623,7 @@ void Editor::renderSymbolsPanel()
                 ImGui::PopID();
             }
         }
+        middleMousePanScroll(6);   // symbols (project)
     }
     ImGui::EndChild();
     ImGui::End();
@@ -4822,6 +4826,7 @@ void Editor::renderFindInFilesPanel()
             ImGui::TextDisabled("%s", hit.text.c_str());
             ImGui::PopID();
         }
+        middleMousePanScroll(7);   // find-in-files results
         ImGui::EndChild();
     }
     ImGui::End();
@@ -4995,6 +5000,7 @@ void Editor::renderDevTools()
             }
             ImGui::EndTable();
         }
+        middleMousePanScroll(8);   // developer tools
     }
     ImGui::End();
 }
@@ -7625,6 +7631,7 @@ void Editor::renderExternalChanges()
             }
             ImGui::EndTable();
         }
+        middleMousePanScroll(11);   // external changes
     }
     ImGui::End();
 }
