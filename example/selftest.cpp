@@ -582,6 +582,8 @@ int main()
 		ts::Symbol s1; s1.name = "Foo"; s1.kind = ts::Kind::Class;  s1.line = 10; s1.column = 2; s1.isDefinition = true;  s1.enclosingType = "ns";
 		ts::Symbol s2; s2.name = "bar"; s2.kind = ts::Kind::Method; s2.line = 12; s2.column = 4; s2.isDefinition = false; s2.enclosingType = "Foo";
 		a.symbols = {s1, s2};
+		a.memberTypes["Foo"]["bar"] = "Widget";
+		a.memberTypes["Foo"]["count"] = "int";
 		in["a/b/foo.cpp"] = a;
 
 		const char* path = "selftest_cache.idx";
@@ -601,6 +603,10 @@ int main()
 					  "cache roundtrip: symbol fields preserved");
 				CHECK(!it->second.symbols[1].isDefinition, "cache roundtrip: isDefinition=false preserved");
 			}
+			CHECK(it->second.memberTypes.count("Foo") &&
+				  it->second.memberTypes["Foo"]["bar"] == "Widget" &&
+				  it->second.memberTypes["Foo"]["count"] == "int",
+				  "cache roundtrip: memberTypes preserved");
 		}
 		CHECK(!ts::readIndexCache("definitely_missing_cache_file.idx", out),
 			  "readIndexCache fails on a missing file");

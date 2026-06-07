@@ -2470,6 +2470,9 @@ void Editor::loadIndexCache()
         }
         if (!kv.second.symbols.empty())
             idx->fileSymbols[kv.first] = kv.second.symbols;
+        for (auto &tkv : kv.second.memberTypes)
+            for (auto &mkv : tkv.second)
+                idx->memberTypes[tkv.first][mkv.first] = mkv.second;
     }
     idx->identifiers.assign(idset.begin(), idset.end());
     std::sort(idx->identifiers.begin(), idx->identifiers.end());
@@ -2773,6 +2776,12 @@ void Editor::rebuildProjectIndex()
             if (!syms.empty())
                 idx->fileSymbols[fpath] = syms;
         };
+        // Fold a file's per-type member types into the project-wide map (cross-file chains).
+        auto mergeMemberTypes = [&](const ts::MemberTypeMap &mt) {
+            for (auto &tkv : mt)
+                for (auto &mkv : tkv.second)
+                    idx->memberTypes[tkv.first][mkv.first] = mkv.second;
+        };
         std::error_code ec;
         int budget = 30000;   // higher now that dependency source is indexed too
 
@@ -2824,6 +2833,7 @@ void Editor::rebuildProjectIndex()
                 if (cit != oldCache.end() && cit->second.mtime == mtime && cit->second.size == fsize)
                 {
                     aggregate(fileStr, cit->second.symbols);
+                    mergeMemberTypes(cit->second.memberTypes);
                     newCache.emplace(fileStr, cit->second);
                     continue;
                 }
@@ -2843,9 +2853,12 @@ void Editor::rebuildProjectIndex()
                 tsFile = false;
             if (tsFile)
             {
-                auto syms = ts::extractSymbols(ts::langForExtension(ext), whole);
+                ts::Lang flang = ts::langForExtension(ext);
+                auto syms = ts::extractSymbols(flang, whole);
+                auto mtypes = ts::extractMemberTypes(flang, whole);   // {} for non-C++/C#
                 aggregate(fileStr, syms);
-                newCache.emplace(fileStr, ts::FileSyms{mtime, fsize, std::move(syms)});
+                mergeMemberTypes(mtypes);
+                newCache.emplace(fileStr, ts::FileSyms{mtime, fsize, std::move(syms), std::move(mtypes)});
             }
 
             // Identifier + heuristic-definition tokenization. Heuristic def sites are
@@ -11054,8 +11067,14 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                         ts::Lang lang = ts::langForExtension(
                             std::filesystem::path(tptr->filename).extension().string());
                         if (lang != ts::Lang::None)
+                        {
+                            // Pass the project index so chains hop into types from
+                            // other files (o.inner.items where Inner is in a header).
+                            auto idxSnap = indexSnapshot();
                             type = ts::resolveMemberChain(lang, tptr->editor.GetText(),
-                                                          (int) state.line, (int) k, chain);
+                                                          (int) state.line, (int) k, chain,
+                                                          idxSnap ? &idxSnap->memberTypes : nullptr);
+                        }
                         if (type.empty() && chain.size() == 1)
                             type = resolveReceiverType(tptr->editor.GetText(), receiver);
                     }

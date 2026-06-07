@@ -99,6 +99,7 @@ struct FileSyms {
 	long long          mtime = 0;   // last-write time (filesystem clock ticks)
 	unsigned long long size  = 0;   // byte size
 	std::vector<Symbol> symbols;
+	MemberTypeMap       memberTypes; // types defined in THIS file -> members -> type (for cross-file chains)
 };
 
 // Binary, host-endian (the cache is machine-local). Return false on any I/O or

@@ -261,6 +261,9 @@ private:
 		// Per-file symbol lists (tree-sitter). Backs the Symbols panel's Project
 		// tree (file -> types -> members) and the on-disk cache.
 		std::unordered_map<std::string, std::vector<ts::Symbol>> fileSymbols;
+		// type -> member -> member's type, merged project-wide. Lets member-chain
+		// completion (a.b.c) hop into types defined in other files.
+		ts::MemberTypeMap memberTypes;
 	};
 	struct IndexState {
 		std::mutex                          mutex;

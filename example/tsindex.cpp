@@ -230,7 +230,7 @@ bool cacheReadStr(std::istream& i, std::string& s)
 	if (n) i.read(&s[0], (std::streamsize) n);
 	return (bool) i;
 }
-const char kCacheMagic[8] = {'T', 'E', 'I', 'D', 'X', '0', '0', '1'};
+const char kCacheMagic[8] = {'T', 'E', 'I', 'D', 'X', '0', '0', '2'};   // 002: + per-file memberTypes
 } // namespace
 
 bool writeIndexCache(const std::string& path, const std::unordered_map<std::string, FileSyms>& files)
@@ -257,6 +257,20 @@ bool writeIndexCache(const std::string& path, const std::unordered_map<std::stri
 			cacheWrite(o, def);
 			cacheWriteStr(o, s.name);
 			cacheWriteStr(o, s.enclosingType);
+		}
+		// memberTypes: {type: {member: memberType}}
+		uint32_t tc = (uint32_t) kv.second.memberTypes.size();
+		cacheWrite(o, tc);
+		for (auto& tkv : kv.second.memberTypes)
+		{
+			cacheWriteStr(o, tkv.first);
+			uint32_t mc = (uint32_t) tkv.second.size();
+			cacheWrite(o, mc);
+			for (auto& mkv : tkv.second)
+			{
+				cacheWriteStr(o, mkv.first);
+				cacheWriteStr(o, mkv.second);
+			}
 		}
 	}
 	return (bool) o;
@@ -294,6 +308,23 @@ bool readIndexCache(const std::string& path, std::unordered_map<std::string, Fil
 			sym.isDefinition = def != 0;
 			if (!cacheReadStr(i, sym.name) || !cacheReadStr(i, sym.enclosingType)) return false;
 			fs.symbols.push_back(std::move(sym));
+		}
+		// memberTypes
+		uint32_t tc = 0;
+		if (!cacheRead(i, tc) || tc > (1u << 22)) return false;
+		for (uint32_t t = 0; t < tc; ++t)
+		{
+			std::string typeName;
+			if (!cacheReadStr(i, typeName)) return false;
+			uint32_t mc = 0;
+			if (!cacheRead(i, mc) || mc > (1u << 22)) return false;
+			auto& members = fs.memberTypes[typeName];
+			for (uint32_t m = 0; m < mc; ++m)
+			{
+				std::string mn, mt;
+				if (!cacheReadStr(i, mn) || !cacheReadStr(i, mt)) return false;
+				members[mn] = mt;
+			}
 		}
 		out[std::move(filePath)] = std::move(fs);
 	}
