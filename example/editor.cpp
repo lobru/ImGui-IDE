@@ -10205,73 +10205,91 @@ void Editor::renderStatusBar()
                       std::filesystem::path(t.filename).filename().string().c_str());
     }
 
-    // Right-align via SameLine's ABSOLUTE offset (offset_from_start_x), not its
-    // spacing arg: the spacing form adds to the previous item's end, so a wide
-    // left cluster (lang+MSVC+git) pushed the whole string off the right edge.
-    float size = ImGui::CalcTextSize(status).x;
-    float off = ImGui::GetContentRegionAvail().x - size - glyphWidth;
-    if (off < 0.0f)
-        off = 0.0f;
+    // ── Right cluster: status text + dirty dot + clangd + diagnostics, right-
+    //    aligned AS A GROUP. The offset must reserve the WHOLE cluster's width or
+    //    the trailing items clip off the edge; and the dirty dot gets a real item
+    //    slot (Dummy) so the clangd label can't overlap it ("●langd" cramming).
+    const float frameH  = ImGui::GetFrameHeight();
+    const float statusW = ImGui::CalcTextSize(status).x;
+    const float dotW    = frameH;   // dirty-state dot slot
+
+    // Pre-resolve the active file's diagnostics once (for width AND render). Keyed
+    // on the canonical path so it matches the store regardless of URI form.
+    int errs = 0, warns = 0;
+    const std::vector<lsp::Diagnostic>* diags = nullptr;
+    const bool lspReady = lspClient.ready();
+    if (lspEnabled && lspReady && !tabs.empty() && !lspDiagnostics.empty())
+    {
+        std::string key = lsp::uriToPath(lspUriForTab(doc()));
+        auto it = key.empty() ? lspDiagnostics.end() : lspDiagnostics.find(key);
+        if (it != lspDiagnostics.end())
+        {
+            for (const auto& d : it->second) (d.severity <= 1 ? errs : warns)++;
+            if (errs || warns) diags = &it->second;
+        }
+    }
+    const char* clangdLbl = lspReady ? "clangd \xE2\x97\x8F" : "clangd \xE2\x97\x8B";
+    char ebuf[32] = {0}, wbuf[32] = {0};
+    if (errs)  std::snprintf(ebuf, sizeof(ebuf), "\xE2\x9C\x96 %d", errs);
+    if (warns) std::snprintf(wbuf, sizeof(wbuf), "\xE2\x9A\xA0 %d", warns);
+
+    // Measure the whole trailing cluster so it right-aligns without clipping.
+    float trailing = statusW + glyphWidth + dotW;
+    if (lspEnabled) trailing += glyphWidth * 2.0f + ImGui::CalcTextSize(clangdLbl).x;
+    if (diags)
+    {
+        trailing += glyphWidth * 1.5f;
+        if (errs)  trailing += ImGui::CalcTextSize(ebuf).x;
+        if (warns) trailing += ImGui::CalcTextSize(wbuf).x + (errs ? glyphWidth : 0.0f);
+    }
+    float off = ImGui::GetContentRegionAvail().x - trailing - glyphWidth;
+    if (off < 0.0f) off = 0.0f;
+
     ImGui::SameLine(off);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(status);
 
+    // Dirty dot — reserve a real slot so the next item can't draw over it.
     ImGui::SameLine(0.0f, glyphWidth);
-    auto drawlist = ImGui::GetWindowDrawList();
-    auto pos = ImGui::GetCursorScreenPos();
-    auto offset = ImGui::GetFrameHeight() * 0.5f;
-    auto radius = offset * 0.6f;
-    auto color = isDirty() ? IM_COL32(164, 0, 0, 255) : IM_COL32(164, 164, 164, 255);
-    drawlist->AddCircleFilled(ImVec2(pos.x + offset, pos.y + offset), radius, color);
+    {
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(dotW, frameH));
+        float o = frameH * 0.5f, radius = o * 0.6f;
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(p.x + o, p.y + o), radius,
+            isDirty() ? IM_COL32(164, 0, 0, 255) : IM_COL32(164, 164, 164, 255));
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(isDirty() ? "Unsaved changes" : "Saved");
+    }
 
-    // clangd status: filled green dot when the LSP handshake is done, hollow grey
-    // while connecting / unavailable. Lets the user confirm real intellisense is live.
+    // clangd status: filled green dot once the handshake is done, hollow grey while
+    // connecting / unavailable. Lets the user confirm real intellisense is live.
     if (lspEnabled)
     {
         ImGui::SameLine(0.0f, glyphWidth * 2.0f);
         ImGui::AlignTextToFramePadding();
-        bool lspReady = lspClient.ready();
         ImGui::TextColored(lspReady ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f),
-                           lspReady ? "clangd \xE2\x97\x8F" : "clangd \xE2\x97\x8B");
+                           "%s", clangdLbl);
 
-        // Diagnostics count for the active file (errors/warnings from clangd).
-        // Keyed on the canonical path so it matches the store regardless of URI form.
-        if (lspReady && !tabs.empty() && !lspDiagnostics.empty())
+        if (diags)
         {
-            std::string key = lsp::uriToPath(lspUriForTab(doc()));
-            auto it = key.empty() ? lspDiagnostics.end() : lspDiagnostics.find(key);
-            if (it != lspDiagnostics.end())
+            ImGui::SameLine(0.0f, glyphWidth * 1.5f);
+            ImGui::AlignTextToFramePadding();
+            ImGui::BeginGroup();   // group so the tooltip covers BOTH counts
+            if (errs)  ImGui::TextColored(ImVec4(0.92f, 0.45f, 0.45f, 1.0f), "%s", ebuf);
+            if (warns) { if (errs) ImGui::SameLine(0.0f, glyphWidth); ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.40f, 1.0f), "%s", wbuf); }
+            ImGui::EndGroup();
+            if (ImGui::IsItemHovered())
             {
-                int errs = 0, warns = 0;
-                for (const auto& d : it->second)
-                    (d.severity <= 1 ? errs : warns)++;
-                if (errs || warns)
+                ImGui::BeginTooltip();
+                int shown = 0;
+                for (const auto& d : *diags)
                 {
-                    ImGui::SameLine(0.0f, glyphWidth * 1.5f);
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::BeginGroup();   // group so the tooltip triggers over BOTH counts, not just the last
-                    if (errs)
-                        ImGui::TextColored(ImVec4(0.92f, 0.45f, 0.45f, 1.0f), "\xE2\x9C\x96 %d", errs);
-                    if (warns)
-                    {
-                        if (errs) ImGui::SameLine(0.0f, glyphWidth);
-                        ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.40f, 1.0f), "\xE2\x9A\xA0 %d", warns);
-                    }
-                    ImGui::EndGroup();
-                    if (ImGui::IsItemHovered())
-                    {
-                        ImGui::BeginTooltip();
-                        int shown = 0;
-                        for (const auto& d : it->second)
-                        {
-                            if (shown++ >= 12) { ImGui::TextDisabled("…"); break; }
-                            ImVec4 c = d.severity <= 1 ? ImVec4(0.92f, 0.45f, 0.45f, 1.0f)
-                                                       : ImVec4(0.92f, 0.80f, 0.40f, 1.0f);
-                            ImGui::TextColored(c, "%d: %s", d.line + 1, d.message.c_str());
-                        }
-                        ImGui::EndTooltip();
-                    }
+                    if (shown++ >= 12) { ImGui::TextDisabled("…"); break; }
+                    ImVec4 cc = d.severity <= 1 ? ImVec4(0.92f, 0.45f, 0.45f, 1.0f)
+                                                : ImVec4(0.92f, 0.80f, 0.40f, 1.0f);
+                    ImGui::TextColored(cc, "%d: %s", d.line + 1, d.message.c_str());
                 }
+                ImGui::EndTooltip();
             }
         }
     }
