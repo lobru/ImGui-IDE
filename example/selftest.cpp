@@ -443,6 +443,7 @@ int main()
 			"struct Outer {\n"
 			"    Inner inner;\n"
 			"    Inner* ptr;\n"
+			"    Inner getInner() { return inner; }\n"   // inline method -> return type
 			"};\n"
 			"void use() {\n"
 			"    Outer o;\n"
@@ -469,6 +470,8 @@ int main()
 			"chain end-to-end: o.inner.items. completes push_back");
 		// Scalar member terminates resolution (int has no further members).
 		CHECK(chain({"o", "inner", "count"}) == "int", "chain: o.inner.count -> int");
+			CHECK(chain({"o", "getInner"}) == "Inner", "chain: o.getInner() -> Inner (same-doc inline method)");
+			CHECK(chain({"o", "getInner", "items"}) == "vector", "chain: o.getInner().items -> vector (same-doc)");
 		// A bad hop anywhere returns empty (no false member list).
 		CHECK(chain({"o", "nope"}).empty(), "chain: unknown member -> empty");
 		CHECK(chain({"o", "inner", "nope"}).empty(), "chain: unknown deep member -> empty");

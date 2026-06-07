@@ -970,12 +970,20 @@ TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std
 	return TSNode{};   // zero-init -> id == nullptr -> ts_node_is_null() true
 }
 
+void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
+void collectCsTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
+
 // Look up member `member`'s declared type inside the type-definition node `tdef`.
+// Uses the same full extraction as the project index (collect*), so the same-doc
+// chain hop resolves fields, properties, prototypes AND inline method bodies —
+// consistent with what cross-file resolution sees via the index.
 std::string memberTypeIn(Lang lang, TSNode tdef, const std::string& src, const std::string& member)
 {
-	if (lang == Lang::Cpp)    return searchCppClassMembers(tdef, src, member);
-	if (lang == Lang::CSharp) return searchCsClassMembers(tdef, src, member);
-	return {};
+	std::unordered_map<std::string, std::string> members;
+	if (lang == Lang::Cpp)         collectCppTypeMembers(tdef, src, members);
+	else if (lang == Lang::CSharp) collectCsTypeMembers(tdef, src, members);
+	auto it = members.find(member);
+	return it == members.end() ? std::string() : it->second;
 }
 
 // Collect ALL data members of a C++ class/struct body -> {member: type}. Includes
