@@ -60,3 +60,6 @@ companion.py
 .claude/imgui.ini
 .claude/places.txt
 .claude/memory/
+
+# Installer build output
+installer/output/
