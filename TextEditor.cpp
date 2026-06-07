@@ -1026,7 +1026,17 @@ void TextEditor::renderTextWrapped()
 	const float winRight = winLeft + ImGui::GetWindowSize().x - glyphSize.x * 1.5f - verticalScrollBarSize;
 	const float winBot   = winTop + ImGui::GetWindowSize().y;
 
-	auto cursorLine = cursors.getCurrent().getInteractiveEnd().line;
+	// Whole-line gutter selections end at column 0 of the next line; highlight the
+	// selected line, not the empty one below it (matches renderLineNumbers).
+	auto& gutterCursor = cursors.getCurrent();
+	auto cursorLine = gutterCursor.getInteractiveEnd().line;
+	if (gutterCursor.hasSelection())
+	{
+		auto selS = gutterCursor.getSelectionStart();
+		auto selE = gutterCursor.getSelectionEnd();
+		if (selE.column == 0 && selE.line > selS.line)
+			cursorLine = selE.line - 1;
+	}
 
 	// Line numbers + selection backgrounds first (under the glyphs).
 	for (int r = firstRow; r <= lastRow; ++r)
@@ -1236,7 +1246,18 @@ void TextEditor::renderLineNumbers()
 
 	auto drawList = ImGui::GetWindowDrawList();
 	auto cursorScreenPos = ImGui::GetCursorScreenPos();
-	auto cursorLine = cursors.getCurrent().getInteractiveEnd().line;
+	// A whole-line gutter selection ends at column 0 of the NEXT line, so the raw
+	// caret line would highlight the line BELOW the one the user selected. Treat a
+	// column-0 multi-line selection end as the line above it.
+	auto& gutterCursor = cursors.getCurrent();
+	auto cursorLine = gutterCursor.getInteractiveEnd().line;
+	if (gutterCursor.hasSelection())
+	{
+		auto selS = gutterCursor.getSelectionStart();
+		auto selE = gutterCursor.getSelectionEnd();
+		if (selE.column == 0 && selE.line > selS.line)
+			cursorLine = selE.line - 1;
+	}
 	auto position = ImVec2(ImGui::GetWindowPos().x + lineNumberRightOffset, cursorScreenPos.y);
 
 	int firstVisibleIndex = lineToVisualIndex(firstVisibleLine);
