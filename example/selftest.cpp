@@ -548,6 +548,15 @@ int main()
 			"parseInitializeResult reads utf-8");
 		CHECK(lsp::parseInitializeResult("{\"result\":{\"capabilities\":{}}}", enc) && enc == "utf-16",
 			"parseInitializeResult defaults to utf-16 when absent");
+
+		// Hover: MarkupContent, plain string, MarkedString[], null.
+		CHECK(lsp::parseHover("{\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":\"int x\"}}}") == "int x",
+			"parseHover: MarkupContent value");
+		CHECK(lsp::parseHover("{\"result\":{\"contents\":\"plain text\"}}") == "plain text",
+			"parseHover: string contents");
+		CHECK(lsp::parseHover("{\"result\":{\"contents\":[\"a\",{\"value\":\"b\"}]}}") == "a\nb",
+			"parseHover: MarkedString array joined");
+		CHECK(lsp::parseHover("{\"result\":null}").empty(), "parseHover: null result -> empty");
 	}
 
 	if (gFailures == 0) {

@@ -37,6 +37,7 @@ std::string buildDidChange(const std::string& uri, int version, const std::strin
 std::string buildDidClose(const std::string& uri);
 std::string buildCompletion(int id, const std::string& uri, int line, int character);
 std::string buildDefinition(int id, const std::string& uri, int line, int character);
+std::string buildHover(int id, const std::string& uri, int line, int character);
 std::string buildShutdown(int id);
 std::string buildExit();
 // Reply to a server->client request we don't implement, so clangd doesn't stall.
@@ -59,6 +60,8 @@ struct Location {
 // Parse a response body (the full JSON-RPC message). Empty vector on error/empty.
 std::vector<CompletionItem> parseCompletion(const std::string& body);
 std::vector<Location>       parseDefinition(const std::string& body);
+// Hover contents flattened to plain text (string / MarkupContent / MarkedString[]).
+std::string                 parseHover(const std::string& body);
 // Extract the negotiated offsetEncoding from an initialize result; defaults to
 // "utf-16" (the LSP spec default) when the server omits it.
 bool parseInitializeResult(const std::string& body, std::string& offsetEncoding);

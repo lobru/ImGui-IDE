@@ -211,6 +211,13 @@ std::string buildDefinition(int id, const std::string& uri, int line, int charac
 		{"position", {{"line", line}, {"character", character}}}}}});
 }
 
+std::string buildHover(int id, const std::string& uri, int line, int character)
+{
+	return rpc({{"jsonrpc", "2.0"}, {"id", id}, {"method", "textDocument/hover"}, {"params", {
+		{"textDocument", {{"uri", uri}}},
+		{"position", {{"line", line}, {"character", character}}}}}});
+}
+
 std::string buildShutdown(int id)
 {
 	return rpc({{"jsonrpc", "2.0"}, {"id", id}, {"method", "shutdown"}});
@@ -289,6 +296,33 @@ std::vector<Location> parseDefinition(const std::string& body)
 	const json& result = j["result"];
 	if (result.is_array()) for (const auto& e : result) pushLoc(out, e);
 	else if (result.is_object()) pushLoc(out, result);
+	return out;
+}
+
+std::string parseHover(const std::string& body)
+{
+	json j = parseBody(body);
+	if (j.is_discarded() || !j.contains("result") || j["result"].is_null()) return {};
+	const json& result = j["result"];
+	const json* contents = result.is_object() && result.contains("contents") ? &result["contents"] : &result;
+	auto oneValue = [](const json& v) -> std::string {
+		if (v.is_string()) return v.get<std::string>();
+		if (v.is_object() && v.contains("value") && v["value"].is_string()) return v["value"].get<std::string>();
+		return {};
+	};
+	std::string out;
+	if (contents->is_array())
+	{
+		for (const auto& e : *contents)
+		{
+			std::string s = oneValue(e);
+			if (!s.empty()) { if (!out.empty()) out += "\n"; out += s; }
+		}
+	}
+	else
+	{
+		out = oneValue(*contents);
+	}
 	return out;
 }
 

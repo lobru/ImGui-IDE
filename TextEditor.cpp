@@ -2781,6 +2781,35 @@ std::string TextEditor::GetWordAtScreenPos(const ImVec2& screenPos) const
 	return document.getSectionText(start, end);
 }
 
+bool TextEditor::GetBytePosAtScreenPos(const ImVec2& screenPos, int& line, int& byteOffset) const
+{
+	auto local = screenPos - lastRenderOrigin;
+	Coordinate g, c;
+	if (wordWrap && !wrapRows.empty())
+	{
+		int row = std::clamp(static_cast<int>(local.y / glyphSize.y), 0, static_cast<int>(wrapRows.size()) - 1);
+		int column = wrapRows[row].startColumn + std::max(0, static_cast<int>((local.x - textOffset) / glyphSize.x));
+		document.normalizeCoordinate(1.0f * wrapRows[row].line, 1.0f * column, g, c);
+	}
+	else
+	{
+		document.normalizeCoordinate(local.y / glyphSize.y, (local.x - textOffset) / glyphSize.x, g, c);
+	}
+	line = g.line;
+	byteOffset = 0;
+	if (line < 0 || line >= document.lineCount()) return false;
+	size_t cp = document.getIndex(document[line], g.column);   // visible column -> codepoint
+	std::string ln = document.getLineText(line);
+	size_t b = 0;
+	for (size_t i = 0; i < cp && b < ln.size(); ++i)
+	{
+		++b;
+		while (b < ln.size() && (((unsigned char) ln[b]) & 0xC0) == 0x80) ++b;
+	}
+	byteOffset = static_cast<int>(b);
+	return true;
+}
+
 
 //
 //	TextEditor::makeCursorVisible

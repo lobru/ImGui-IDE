@@ -166,8 +166,9 @@ void LspClient::dispatch(const std::string& body)
 		res.kind = kind;
 		if (!in.isError)
 		{
-			if (kind == ResultKind::Completion) res.completionItems = parseCompletion(body);
-			else                                res.locations = parseDefinition(body);
+			if (kind == ResultKind::Completion)      res.completionItems = parseCompletion(body);
+			else if (kind == ResultKind::Definition) res.locations = parseDefinition(body);
+			else                                     res.hoverText = parseHover(body);
 		}
 		std::lock_guard<std::mutex> lk(mInMutex);
 		mInQueue.push_back(std::move(res));
@@ -254,6 +255,20 @@ int LspClient::requestDefinition(const std::string& uri, int line, int character
 		mPending[id] = ResultKind::Definition;
 	}
 	enqueueOut(buildDefinition(id, uri, line, character));
+	flushOut();
+	return id;
+}
+
+int LspClient::requestHover(const std::string& uri, int line, int character)
+{
+	if (!mReady.load())
+		return 0;
+	int id = mNextId++;
+	{
+		std::lock_guard<std::mutex> lk(mInMutex);
+		mPending[id] = ResultKind::Hover;
+	}
+	enqueueOut(buildHover(id, uri, line, character));
 	flushOut();
 	return id;
 }

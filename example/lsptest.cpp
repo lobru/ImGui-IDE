@@ -142,6 +142,24 @@ int main(int argc, char** argv)
 	}
 	CHECK(gotDef, "go-to-definition of Foo resolves to its declaration (line 1)");
 
+	// Hover over 'Foo' use (line 3, char 4) — clangd returns the type's signature.
+	bool gotHover = false;
+	int hwaited = 0;
+	while (hwaited < 10000 && !gotHover)
+	{
+		client.requestHover(fileUri, 3, 4);
+		std::vector<lsp::LspResult> got;
+		pump(client, got, 1500, [&] {
+			for (auto& r : got) if (r.kind == lsp::ResultKind::Hover && !r.hoverText.empty()) return true;
+			return false;
+		});
+		for (auto& r : got)
+			if (r.kind == lsp::ResultKind::Hover && r.hoverText.find("Foo") != std::string::npos)
+				gotHover = true;
+		hwaited += 1500;
+	}
+	CHECK(gotHover, "hover over Foo returns type info mentioning 'Foo'");
+
 	client.stop();
 	SDL_Quit();
 

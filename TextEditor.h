@@ -253,6 +253,9 @@ public:
 
 	// get the word at a screen position
 	std::string GetWordAtScreenPos(const ImVec2& screenPos) const;
+	// Map a screen position to (line, UTF-8 byte offset) for LSP requests (hover).
+	// Returns false if the position isn't over a valid line.
+	bool GetBytePosAtScreenPos(const ImVec2& screenPos, int& line, int& byteOffset) const;
 	// Extract the word at a (line, column) text coordinate. Used by the
 	// right-click context-menu callback, which receives the click position in
 	// text coords — screenPos-based lookup gets stale by the time the menu's

@@ -2601,6 +2601,12 @@ void Editor::pollLsp()
             }
             lspDefinitionId = 0;   // consume; ignore stale duplicates
         }
+        // Hover: clangd's type/signature for the word under the mouse. The tooltip
+        // renders lspHoverText next frame while the hover persists.
+        else if (r.kind == lsp::ResultKind::Hover && r.id == lspHoverId)
+        {
+            lspHoverText = r.hoverText;
+        }
     }
 }
 
@@ -2980,6 +2986,10 @@ void Editor::renderHoverTooltip(TabDocument &t)
     if (hoverIdleSec < hoverDelaySec)
         return;
 
+    std::string hext = std::filesystem::path(t.filename).extension().string();
+    std::transform(hext.begin(), hext.end(), hext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    bool lspOn = lspActiveForExt(hext);
+
     if (hoverWord.empty())
     {
         hoverWord = t.editor.GetWordAtScreenPos(mp);
@@ -2988,9 +2998,29 @@ void Editor::renderHoverTooltip(TabDocument &t)
             hoverIdleSec = 0.0f;
             return;
         }
+        // Freshly hovered a word → ask clangd for its type/docs (async; shown when
+        // it lands via pollLsp). Cleared here so a stale reply can't bleed across.
+        lspHoverText.clear();
+        lspHoverId = 0;
+        if (lspOn)
+        {
+            int hl = 0, hb = 0;
+            if (t.editor.GetBytePosAtScreenPos(mp, hl, hb))
+            {
+                lspSyncDoc(t);
+                std::string uri = lspUriForTab(t);
+                if (!uri.empty())
+                {
+                    int id = lspClient.requestHover(uri, hl, hb);
+                    if (id) lspHoverId = id;
+                }
+            }
+        }
     }
 
-    if (!t.trie.contains(hoverWord))
+    // Without clangd, only known identifiers (the trie) get a tooltip; with clangd
+    // we show anything it can describe (std::, members, externals…).
+    if (!lspOn && !t.trie.contains(hoverWord))
         return;
 
     // Count occurrences and find the best-scoring definition line.
@@ -3020,11 +3050,23 @@ void Editor::renderHoverTooltip(TabDocument &t)
         }
     }
     ImGui::BeginTooltip();
-    ImGui::Text("%s", hoverWord.c_str());
-    ImGui::Separator();
-    if (defLine >= 0)
-        ImGui::TextDisabled("definition near line %d", defLine + 1);
-    ImGui::TextDisabled("%d reference%s in file", refCount, refCount == 1 ? "" : "s");
+    if (!lspHoverText.empty())
+    {
+        // clangd's type / signature / docs (real intellisense).
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+        ImGui::TextUnformatted(lspHoverText.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    else
+    {
+        ImGui::Text("%s", hoverWord.c_str());
+        ImGui::Separator();
+        if (defLine >= 0)
+            ImGui::TextDisabled("definition near line %d", defLine + 1);
+        ImGui::TextDisabled("%d reference%s in file", refCount, refCount == 1 ? "" : "s");
+        if (lspOn)
+            ImGui::TextDisabled("clangd…");
+    }
     ImGui::TextDisabled("(right-click → Find References)");
     ImGui::EndTooltip();
 }

@@ -293,6 +293,8 @@ private:
 	const TabDocument* lspCompletionTab = nullptr;     // tab that completion was fired for
 	int            lspDefinitionId = 0;     // latest outstanding definition request id
 	int            lspDefLine = -1, lspDefCol = -1;     // cursor snapshot at def request (staleness)
+	int            lspHoverId = 0;          // latest outstanding hover request id
+	std::string    lspHoverText;            // clangd hover text for the current hover word
 	void        detectClangd();             // locate clangd (VS -> PATH -> LLVM)
 	void        startLspForProject();       // (re)start the client for projectRoot
 	void        pollLsp();                  // per-frame: drain results, refine popup / navigate

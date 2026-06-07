@@ -20,13 +20,14 @@ struct SDL_Process;
 
 namespace lsp {
 
-enum class ResultKind { Completion, Definition };
+enum class ResultKind { Completion, Definition, Hover };
 
 struct LspResult {
 	int                         id = 0;
 	ResultKind                  kind = ResultKind::Completion;
 	std::vector<CompletionItem> completionItems;
 	std::vector<Location>       locations;
+	std::string                 hoverText;
 	bool                        serverGone = false;   // EOF/crash sentinel (delivered once)
 };
 
@@ -56,6 +57,7 @@ public:
 	// Fire a request; returns its id (correlate with poll() results) or 0 if not ready.
 	int requestCompletion(const std::string& uri, int line, int character);
 	int requestDefinition(const std::string& uri, int line, int character);
+	int requestHover(const std::string& uri, int line, int character);
 
 	// UI thread, once per frame: flush queued writes + return results that arrived.
 	std::vector<LspResult> poll();
