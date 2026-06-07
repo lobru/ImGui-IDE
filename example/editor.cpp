@@ -4704,6 +4704,7 @@ void Editor::renderReferencesPanel()
             std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
             if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
             {
+                navHistory.record(currentNavLocation());   // so Back returns here
                 openFile(hit.file);
                 if (!tabs.empty())
                 {
@@ -4889,6 +4890,7 @@ void Editor::renderSymbolsPanel()
             return;
         }
         auto jump = [&](int line) {
+            navHistory.record(currentNavLocation());   // so Back returns here
             auto &e = doc().editor;
             e.SetCursor(line, 0);
             e.SelectLine(line);
@@ -4941,6 +4943,7 @@ void Editor::renderSymbolsPanel()
     }
 
     auto projectJump = [&](const std::string &file, int line) {
+        navHistory.record(currentNavLocation());   // so Back returns here
         openFile(file);
         if (!tabs.empty())
         {
@@ -5188,6 +5191,7 @@ void Editor::renderFindInFilesPanel()
             std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
             if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
             {
+                navHistory.record(currentNavLocation());   // so Back returns here
                 openFile(hit.file);
                 if (!tabs.empty())
                 {
@@ -10828,6 +10832,7 @@ void Editor::renderGotoLine()
                 int maxLine = (std::max)(lineCount - 1, 0);
                 int ln = (std::min)(targetLine - 1, maxLine);
                 int col = (std::max)(targetCol - 1, 0);
+                navHistory.record(currentNavLocation());   // so Back returns here
                 t.editor.SetCursor(ln, col);
                 t.editor.ScrollToLine(ln, TextEditor::Scroll::alignMiddle);
                 t.wantFocus = true;
