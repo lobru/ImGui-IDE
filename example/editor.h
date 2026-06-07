@@ -25,6 +25,7 @@
 #include "../TextEditor.h"
 #include "../TextDiff.h"
 #include "tsindex.h"
+#include "lsp_client.h"
 
 
 //
@@ -35,6 +36,7 @@ class Editor {
 	public:
 	// constructor
 	Editor();
+	~Editor();   // stops the LSP client (joins its reader thread cleanly)
 
 	// file related functions
 	void newFile();
@@ -279,6 +281,23 @@ private:
 	// F6: walk up from the active doc to find a project build script
 	// (build.bat / build.ps1 / build.sh / Makefile / CMakeLists.txt) and run it.
 	void runProjectBuild();
+
+	// ── LSP (clangd) — real intellisense for C/C++; tree-sitter stays the
+	// instant fallback + Symbols outline. Off unless clangd is found.
+	lsp::LspClient lspClient;
+	std::string    clangdPath;              // resolved clangd.exe ("" = none)
+	bool           lspEnabled = true;       // user toggle (View menu)
+	std::unordered_map<std::size_t, std::size_t> lspDocHash;   // tab id -> last-synced GetText() hash
+	int            lspCompletionId = 0;     // latest outstanding completion request id
+	const TabDocument* lspCompletionTab = nullptr;     // tab that completion was fired for
+	int            lspDefinitionId = 0;     // latest outstanding definition request id
+	int            lspDefLine = -1, lspDefCol = -1;     // cursor snapshot at def request (staleness)
+	void        detectClangd();             // locate clangd (VS -> PATH -> LLVM)
+	void        startLspForProject();       // (re)start the client for projectRoot
+	void        pollLsp();                  // per-frame: drain results, refine popup / navigate
+	void        lspSyncDoc(TabDocument& t); // didOpen / didChange as needed
+	bool        lspActiveForExt(const std::string& ext) const;   // C/C++ + enabled + ready
+	std::string lspUriForTab(const TabDocument& t) const;
 
 	enum class State {
 		edit,

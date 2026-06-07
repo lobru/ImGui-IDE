@@ -390,6 +390,15 @@ void Editor::closeTab(size_t idx)
     if (idx >= tabs.size())
         return;
 
+    // Tell clangd the document is gone.
+    if (lspClient.spawned())
+    {
+        std::string uri = lspUriForTab(*tabs[idx]);
+        if (!uri.empty())
+            lspClient.didClose(uri);
+        lspDocHash.erase(tabs[idx]->id);
+    }
+
     // Remember this tab so Ctrl+Shift+T can bring it back. Skip empty untitled.
     {
         const auto &t = *tabs[idx];
@@ -1360,6 +1369,8 @@ void Editor::setProjectRoot(const std::filesystem::path &p)
     // background rebuild (which reuses the cache to skip unchanged files).
     loadIndexCache();
     rebuildProjectIndex();
+    // Spawn clangd for this project (real C/C++ completion; ts is the fallback).
+    startLspForProject();
     // Persist immediately so a crash/quit doesn't lose the session.
     saveSettings();
 }
@@ -2381,6 +2392,111 @@ void Editor::loadIndexCache()
     std::lock_guard<std::mutex> lock(indexState->mutex);
     indexState->index = idx;
     indexState->cache = std::move(disk);
+}
+
+Editor::~Editor()
+{
+    lspClient.stop();   // graceful shutdown + join the reader thread (no std::terminate)
+}
+
+// ── LSP (clangd) integration ─────────────────────────────────────────────────
+// clangd gives real C/C++ intellisense (full std::/system/ImGui members, accurate
+// completion) that the tree-sitter index can't. Tree-sitter stays the instant
+// baseline; clangd refines the completion popup asynchronously via pollLsp().
+
+void Editor::detectClangd()
+{
+    const char* candidates[] = {
+        "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin/clangd.exe",
+        "C:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/Llvm/x64/bin/clangd.exe",
+        "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/Llvm/x64/bin/clangd.exe",
+        "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/bin/clangd.exe",
+        "C:/Program Files/LLVM/bin/clangd.exe",
+    };
+    std::error_code ec;
+    for (const char* c : candidates)
+        if (std::filesystem::exists(c, ec)) { clangdPath = c; return; }
+    clangdPath = "clangd";   // last resort: rely on PATH (start() fails cleanly if absent)
+}
+
+void Editor::startLspForProject()
+{
+    if (!lspEnabled || projectRoot.empty())
+        return;
+    if (clangdPath.empty())
+        detectClangd();
+    lspClient.stop();
+    lspDocHash.clear();
+    lspClient.start(clangdPath, lsp::pathToUri(projectRoot.string()));
+}
+
+std::string Editor::lspUriForTab(const TabDocument& t) const
+{
+    if (t.filename.empty() || t.filename == "untitled")
+        return {};
+    return lsp::pathToUri(t.filename);
+}
+
+bool Editor::lspActiveForExt(const std::string& extLower) const
+{
+    if (!lspEnabled || !lspClient.ready())
+        return false;
+    return extLower == ".cpp" || extLower == ".cc" || extLower == ".cxx" || extLower == ".c" ||
+           extLower == ".h" || extLower == ".hpp" || extLower == ".hxx" || extLower == ".hh" || extLower == ".inl";
+}
+
+void Editor::lspSyncDoc(TabDocument& t)
+{
+    std::string uri = lspUriForTab(t);
+    if (uri.empty())
+        return;
+    std::string text = t.editor.GetText();
+    std::size_t h = std::hash<std::string>{}(text);
+    if (!lspClient.isOpen(uri))
+    {
+        lspClient.didOpen(uri, "cpp", text);
+        lspDocHash[t.id] = h;
+    }
+    else if (lspDocHash[t.id] != h)
+    {
+        lspClient.didChange(uri, text);
+        lspDocHash[t.id] = h;
+    }
+}
+
+void Editor::pollLsp()
+{
+    if (!lspClient.spawned())
+        return;
+    for (auto& r : lspClient.poll())
+    {
+        if (r.serverGone)
+        {
+            pushToast("clangd stopped", IM_COL32(240, 200, 90, 255));
+            continue;
+        }
+        // Completion: refine the popup only with a NON-empty reply for the LATEST
+        // request, and only if its tab is still active (avoids wiping the ts
+        // baseline on clangd's parse-not-ready empty replies / a tab switch).
+        if (r.kind == lsp::ResultKind::Completion && r.id == lspCompletionId && !r.completionItems.empty())
+        {
+            if (lspCompletionTab && !tabs.empty() && &doc() == lspCompletionTab)
+            {
+                std::vector<std::string> items;
+                std::unordered_set<std::string> seen;
+                for (auto& it : r.completionItems)
+                {
+                    const std::string& s = it.insertText.empty() ? it.label : it.insertText;
+                    if (!s.empty() && seen.insert(s).second)
+                        items.push_back(s);
+                    if (items.size() >= 50)
+                        break;
+                }
+                if (!items.empty())
+                    doc().editor.SetAutoCompleteSuggestions(items);
+            }
+        }
+    }
 }
 
 // Background walk of the project's code files. Collects every identifier token
@@ -7647,6 +7763,7 @@ void Editor::render()
     // Publish a finished background decompile (opens the cached .cs read-only,
     // or falls back to the Learn page on failure). Cheap atomic check per frame.
     pollDecompile();
+    pollLsp();   // drain clangd results → refine completion popup
 
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -9106,6 +9223,11 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("Symbols", nullptr, &symbolsPanelVisible))
             {
             }
+            if (ImGui::MenuItem("C/C++ IntelliSense (clangd)", nullptr, &lspEnabled))
+            {
+                if (lspEnabled) startLspForProject();
+                else            lspClient.stop();
+            }
             if (ImGui::MenuItem("Output", "F5", &script->visible))
             {
             }
@@ -9766,6 +9888,17 @@ void Editor::renderStatusBar()
     auto radius = offset * 0.6f;
     auto color = isDirty() ? IM_COL32(164, 0, 0, 255) : IM_COL32(164, 164, 164, 255);
     drawlist->AddCircleFilled(ImVec2(pos.x + offset, pos.y + offset), radius, color);
+
+    // clangd status: filled green dot when the LSP handshake is done, hollow grey
+    // while connecting / unavailable. Lets the user confirm real intellisense is live.
+    if (lspEnabled)
+    {
+        ImGui::SameLine(0.0f, glyphWidth * 2.0f);
+        ImGui::AlignTextToFramePadding();
+        bool lspReady = lspClient.ready();
+        ImGui::TextColored(lspReady ? ImVec4(0.45f, 0.85f, 0.45f, 1.0f) : ImVec4(0.55f, 0.55f, 0.55f, 1.0f),
+                           lspReady ? "clangd \xE2\x97\x8F" : "clangd \xE2\x97\x8B");
+    }
 
     ImGui::EndChild();
     ImGui::PopStyleColor();
@@ -10478,6 +10611,32 @@ void Editor::configureTabAutocomplete(TabDocument &t)
     TabDocument *tptr = &t;
     TextEditor::AutoCompleteConfig config;
     config.callback = [this, tptr](TextEditor::AutoCompleteState &state) {
+        // LSP completion (clangd): fire async at the cursor BEFORE the tree-sitter
+        // paths below (which fill an instant baseline). pollLsp() refines the popup
+        // when clangd replies. searchTermEndIndex is a CODEPOINT index → byte offset
+        // (clangd negotiated utf-8). Fires unconditionally so the member-path return
+        // doesn't pre-empt it.
+        {
+            std::string lext = std::filesystem::path(tptr->filename).extension().string();
+            std::transform(lext.begin(), lext.end(), lext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            if (lspActiveForExt(lext))
+            {
+                lspSyncDoc(*tptr);
+                std::string luri = lspUriForTab(*tptr);
+                if (!luri.empty())
+                {
+                    std::string lln = tptr->editor.GetLineText((int) state.line);
+                    size_t bcol = 0;
+                    for (size_t cp = 0; cp < (size_t) state.searchTermEndIndex && bcol < lln.size(); ++cp)
+                    {
+                        ++bcol;
+                        while (bcol < lln.size() && (((unsigned char) lln[bcol]) & 0xC0) == 0x80) ++bcol;
+                    }
+                    int rid = lspClient.requestCompletion(luri, (int) state.line, (int) bcol);
+                    if (rid) { lspCompletionId = rid; lspCompletionTab = tptr; state.suggestionsPromise = true; }
+                }
+            }
+        }
         // Member-aware completion: if the text right before the search term is a
         // member-access operator (. / -> / ::) on a receiver whose type we can
         // resolve, list ONLY that type's members. Precise-only: if anything is
