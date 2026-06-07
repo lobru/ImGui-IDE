@@ -1041,72 +1041,98 @@ void Editor::formatActiveDocument()
         std::transform(ext.begin(), ext.end(), ext.begin(),
                        [](unsigned char c) { return (char)std::tolower(c); });
     }
-    static const std::unordered_set<std::string> ok = {
-        ".c",
-        ".h",
-        ".cpp",
-        ".hpp",
-        ".cxx",
-        ".hxx",
-        ".cc",
-        ".hh",
-        ".inl",
-        ".m",
-        ".mm",
-        ".cs",
-        ".java",
-        ".js",
-        ".jsx",
-        ".ts",
-        ".tsx",
-        ".mjs",
-        ".cjs",
-        ".proto",
+    // Per-language formatter dispatch. clang-format handles the C-family + JS/TS/
+    // proto; other languages delegate to their canonical CLI formatter (each
+    // optional — a clear error if it isn't on PATH).
+    enum class Tool { ClangFormat, Stylua, Black, Rustfmt, Gofmt, None };
+    static const std::unordered_set<std::string> clangExt = {
+        ".c", ".h", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh", ".inl",
+        ".m", ".mm", ".cs", ".java", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".proto",
     };
-    if (!ok.count(ext))
+    Tool tool = Tool::None;
+    if (clangExt.count(ext))           tool = Tool::ClangFormat;
+    else if (ext == ".lua")            tool = Tool::Stylua;
+    else if (ext == ".py" || ext == ".pyw") tool = Tool::Black;
+    else if (ext == ".rs")             tool = Tool::Rustfmt;
+    else if (ext == ".go")             tool = Tool::Gofmt;
+    if (tool == Tool::None)
     {
-        showError("Format: clang-format doesn't handle '" + ext + "' files.");
+        showError("Format: no formatter configured for '" + ext + "' files.");
         return;
     }
 
     std::error_code ec;
     auto dir = userConfigDir() / "fmt";
     std::filesystem::create_directories(dir, ec);
-    {
-        std::ofstream cf(dir / ".clang-format", std::ios::trunc);
-        cf << "BasedOnStyle: Microsoft\n"
-           << "BreakBeforeBraces: " << (formatBraceNewLineForExt(ext) ? "Allman" : "Attach") << "\n"
-           << "ColumnLimit: 0\n"; // don't reflow lines to a width; just fix structure/spacing
-    }
-    auto src = dir / ("buffer" + ext);
+    auto src = dir / ("buffer" + (ext.empty() ? std::string(".txt") : ext));
     {
         std::ofstream f(src, std::ios::binary | std::ios::trunc);
         f << t.editor.GetText();
     }
 
-    // Run clang-format; capture the formatted source from stdout (clang-format
-    // reads the .clang-format we just wrote from the source file's directory).
-    std::string cmd = "clang-format \"" + src.string() + "\" 2>nul";
+    // Run a command, capturing stdout + the shell exit code.
     std::string out;
-    if (FILE *p = _popen(cmd.c_str(), "r"))
-    {
+    auto run = [&out](const std::string& cmd) -> int {
+        out.clear();
+        FILE* p = _popen(cmd.c_str(), "r");
+        if (!p) return -1;
         char buf[8192];
         size_t n;
         while ((n = fread(buf, 1, sizeof(buf), p)) > 0)
             out.append(buf, n);
-        _pclose(p);
+        return _pclose(p);   // shell/tool exit code (non-zero = tool missing or failed)
+    };
+
+    std::string q = "\"" + src.string() + "\"";
+    if (tool == Tool::ClangFormat)
+    {
+        std::ofstream cf(dir / ".clang-format", std::ios::trunc);
+        cf << "BasedOnStyle: Microsoft\n"
+           << "BreakBeforeBraces: " << (formatBraceNewLineForExt(ext) ? "Allman" : "Attach") << "\n"
+           << "ColumnLimit: 0\n";   // fix structure/spacing without reflowing to a width
+        cf.close();
+        int rc = run("clang-format " + q + " 2>nul");
+        std::filesystem::remove(src, ec);
+        if (rc != 0 || out.empty())
+        {
+            showError("Format: clang-format failed (on PATH? syntax error?).");
+            return;
+        }
+    }
+    else if (tool == Tool::Gofmt)
+    {
+        int rc = run("gofmt " + q + " 2>nul");   // gofmt writes to stdout
+        std::filesystem::remove(src, ec);
+        if (rc != 0 || out.empty())
+        {
+            showError("Format: gofmt failed (is it on PATH?).");
+            return;
+        }
     }
     else
     {
-        showError("Format: could not run clang-format (is it on PATH?).");
-        return;
-    }
-    std::filesystem::remove(src, ec);
-
-    if (out.empty())
-    {
-        showError("Format: clang-format produced no output (syntax error, or not on PATH).");
-        return;
+        // stylua / black / rustfmt format the file IN PLACE; read it back after.
+        const char* name = (tool == Tool::Stylua) ? "stylua" : (tool == Tool::Black) ? "black" : "rustfmt";
+        std::string cmd = (tool == Tool::Stylua)  ? "stylua " + q + " 2>nul"
+                        : (tool == Tool::Black)   ? "black -q " + q + " 2>nul"
+                                                  : "rustfmt " + q + " 2>nul";
+        int rc = run(cmd);
+        if (rc != 0)
+        {
+            std::filesystem::remove(src, ec);
+            showError(std::string("Format: ") + name + " failed (on PATH? syntax error?).");
+            return;
+        }
+        std::ifstream rf(src, std::ios::binary);
+        std::stringstream ss;
+        ss << rf.rdbuf();
+        out = ss.str();
+        std::filesystem::remove(src, ec);
+        if (out.empty())
+        {
+            showError(std::string("Format: ") + name + " produced no output.");
+            return;
+        }
     }
     // Normalise CRLF -> LF (the editor stores LF internally).
     if (out.find('\r') != std::string::npos)
@@ -2132,12 +2158,18 @@ void Editor::renderNavigationPanel()
             if (!excluded)
             {
                 if (ImGui::MenuItem("Exclude from view"))
+                {
                     navExcluded[canonKey] = true;
+                    rebuildProjectIndex();   // drop the now-hidden path's symbols
+                }
             }
             else
             {
                 if (ImGui::MenuItem("Re-include in view"))
+                {
                     navExcluded.erase(canonKey);
+                    rebuildProjectIndex();   // re-index the now-visible path
+                }
             }
             ImGui::EndPopup();
         }
@@ -2519,8 +2551,12 @@ void Editor::rebuildProjectIndex()
     int gen = ++st->gen;
     std::filesystem::path root = projectRoot;
     std::string cachePath = indexCachePath();
+    // Snapshot the user's "Exclude from view" set (UI-owned) so the background
+    // walk skips the same paths the nav tree hides — keeping them out of symbols,
+    // go-to-def and autocomplete too.
+    auto excludedSnap = navExcluded;
 
-    std::thread([st, gen, root, cachePath]() {
+    std::thread([st, gen, root, cachePath, excludedSnap]() {
         // Snapshot the previous build's per-file cache once; reused across passes
         // to skip re-parsing files whose mtime+size are unchanged.
         std::unordered_map<std::string, ts::FileSyms> oldCache;
@@ -2528,6 +2564,14 @@ void Editor::rebuildProjectIndex()
             std::lock_guard<std::mutex> lk(st->mutex);
             oldCache = st->cache;
         }
+        // Mirror navIsExcluded() against the snapshot (canonical-path keyed).
+        auto isExcluded = [&excludedSnap](const std::filesystem::path& p) {
+            if (excludedSnap.empty()) return false;
+            std::error_code e;
+            auto key = std::filesystem::weakly_canonical(p, e);
+            auto it = excludedSnap.find((e ? p : key).string());
+            return it != excludedSnap.end() && it->second;
+        };
         auto extOk = [](const std::string &e) {
             static const std::unordered_set<std::string> ok = {
                 ".c",
@@ -2658,7 +2702,7 @@ void Editor::rebuildProjectIndex()
             }
             if (it->is_directory(ec))
             {
-                if (skipDir(it->path().filename().string()))
+                if (skipDir(it->path().filename().string()) || isExcluded(it->path()))
                     it.disable_recursion_pending();
                 continue;
             }
@@ -2668,6 +2712,8 @@ void Editor::rebuildProjectIndex()
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
             if (!extOk(ext))
                 continue;
+            if (isExcluded(it->path()))
+                continue;   // user hid this file from the nav tree → keep it out of the index
 
             std::string fileStr = it->path().string();
             bool tsLang = ts::langForExtension(ext) != ts::Lang::None;
