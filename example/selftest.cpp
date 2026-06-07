@@ -496,6 +496,43 @@ int main()
 			"C# chain: this.branch.Leaf -> Leaf");
 	}
 
+	// ── Element-type access: v.front()/at()/value()/get() -> element type ──
+	{
+		auto pos = [](const std::string& s, const std::string& marker) -> std::pair<int,int> {
+			size_t off = s.find(marker);
+			if (off == std::string::npos) return {-1, -1};
+			int row = 0; size_t lineStart = 0;
+			for (size_t i = 0; i < off; ++i) if (s[i] == '\n') { ++row; lineStart = i + 1; }
+			return { row, (int)(off - lineStart) };
+		};
+		std::string cpp =
+			"struct Widget { Inner sub; int health; };\n"
+			"struct Inner { int x; };\n"
+			"void use() {\n"
+			"    std::vector<Widget> ws;\n"
+			"    std::optional<Widget> ow;\n"
+			"    std::shared_ptr<Widget> pw;\n"
+			"    std::map<int, Widget> mw;\n"
+			"    /*E*/;\n"
+			"}\n";
+		auto [row, col] = pos(cpp, "/*E*/");
+		auto el = [&](std::vector<std::string> segs) {
+			return ts::resolveMemberChain(ts::Lang::Cpp, cpp, row, col, segs);
+		};
+		CHECK(el({"ws", "front"}) == "Widget", "element: vector<Widget>.front() -> Widget");
+		CHECK(el({"ws", "at"}) == "Widget", "element: vector<Widget>.at() -> Widget");
+		CHECK(el({"ws", "back"}) == "Widget", "element: vector<Widget>.back() -> Widget");
+		CHECK(el({"ow", "value"}) == "Widget", "element: optional<Widget>.value() -> Widget");
+		CHECK(el({"pw", "get"}) == "Widget", "element: shared_ptr<Widget>.get() -> Widget");
+		// Full chain: ws.front().sub -> Inner (element type's member).
+		CHECK(el({"ws", "front", "sub"}) == "Inner", "element chain: ws.front().sub -> Inner");
+		CHECK(el({"ws", "front", "health"}) == "int", "element chain: ws.front().health -> int");
+		// map's element is the SECOND arg, which we don't track -> no false element.
+		CHECK(el({"mw", "at"}).empty(), "element: map<int,Widget>.at() not mis-resolved to the key type");
+		// A non-accessor member on the container is a normal (failing) hop, not element.
+		CHECK(el({"ws", "size"}).empty(), "element: vector.size() is not an element accessor");
+	}
+
 	// ── Cross-file member types (extractMemberTypes + index-backed chains) ──
 	{
 		// extractMemberTypes pulls every type's members + their declared types.

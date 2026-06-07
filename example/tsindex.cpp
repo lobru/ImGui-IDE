@@ -527,17 +527,37 @@ namespace {
 inline std::string tyOf(TSNode n) { const char* t = ts_node_type(n); return t ? t : std::string(); }
 
 // Reduce a C++ type node to its simple name ("vector" from std::vector<int>).
-std::string reduceCppType(TSNode t, const std::string& src)
+// When `elem` is non-null and the type is a template (vector<Widget>), *elem is
+// set to the FIRST template argument's simple name ("Widget") — used for element-
+// access completion (v.front()/v[0]). *elem is left untouched if there's no arg.
+std::string reduceCppType(TSNode t, const std::string& src, std::string* elem = nullptr)
 {
 	if (ts_node_is_null(t)) return {};
 	std::string ty = tyOf(t);
 	if (ty == "type_identifier" || ty == "primitive_type" ||
 		ty == "sized_type_specifier" || ty == "namespace_identifier")
 		return nodeText(t, src);
+	if (ty == "type_descriptor")   // wrapper around a template argument's type
+		return reduceCppType(ts_node_child_by_field_name(t, "type", 4), src, elem);
 	if (ty == "qualified_identifier")
-		return reduceCppType(ts_node_child_by_field_name(t, "name", 4), src);
+		return reduceCppType(ts_node_child_by_field_name(t, "name", 4), src, elem);
 	if (ty == "template_type")
+	{
+		if (elem)
+		{
+			TSNode args = ts_node_child_by_field_name(t, "arguments", 9);   // type_argument_list
+			if (!ts_node_is_null(args))
+			{
+				uint32_t n = ts_node_named_child_count(args);
+				for (uint32_t i = 0; i < n; ++i)
+				{
+					std::string a = reduceCppType(ts_node_named_child(args, i), src);   // simple name only
+					if (!a.empty()) { *elem = a; break; }
+				}
+			}
+		}
 		return reduceCppType(ts_node_child_by_field_name(t, "name", 4), src);
+	}
 	if (ty == "class_specifier" || ty == "struct_specifier" ||
 		ty == "union_specifier" || ty == "enum_specifier")
 	{
@@ -621,7 +641,7 @@ TSNode cppFuncDeclarator(TSNode d)
 
 // Match a C++ `declaration` (one type, possibly several declarators) to recv;
 // resolves `auto` from a new-expression or constructor call initializer.
-std::string matchCppDecl(TSNode decl, const std::string& src, const std::string& recv)
+std::string matchCppDecl(TSNode decl, const std::string& src, const std::string& recv, std::string* elem = nullptr)
 {
 	TSNode typeNode = ts_node_child_by_field_name(decl, "type", 4);
 	if (ts_node_is_null(typeNode)) return {};
@@ -636,7 +656,7 @@ std::string matchCppDecl(TSNode decl, const std::string& src, const std::string&
 		{
 			if (cppDeclName(ts_node_child_by_field_name(child, "declarator", 10), src) != recv)
 				continue;
-			if (!isAuto) return reduceCppType(typeNode, src);
+			if (!isAuto) return reduceCppType(typeNode, src, elem);
 			TSNode val = ts_node_child_by_field_name(child, "value", 5);
 			if (ts_node_is_null(val)) return {};
 			std::string vty = tyOf(val);
@@ -657,12 +677,12 @@ std::string matchCppDecl(TSNode decl, const std::string& src, const std::string&
 			return {};   // auto with unresolvable initializer
 		}
 		if (isAuto) continue;
-		if (cppDeclName(child, src) == recv) return reduceCppType(typeNode, src);
+		if (cppDeclName(child, src) == recv) return reduceCppType(typeNode, src, elem);
 	}
 	return {};
 }
 
-std::string searchCppBlock(TSNode block, const std::string& src, const std::string& recv, TSPoint cur)
+std::string searchCppBlock(TSNode block, const std::string& src, const std::string& recv, TSPoint cur, std::string* elem = nullptr)
 {
 	uint32_t n = ts_node_named_child_count(block);
 	for (uint32_t i = 0; i < n; ++i)
@@ -673,7 +693,7 @@ std::string searchCppBlock(TSNode block, const std::string& src, const std::stri
 			break;   // declaration-before-use
 		if (tyOf(child) == "declaration")
 		{
-			std::string r = matchCppDecl(child, src, recv);
+			std::string r = matchCppDecl(child, src, recv, elem);
 			if (!r.empty()) return r;
 		}
 	}
@@ -911,7 +931,7 @@ std::string resolveThisCs(TSNode start, const std::string& src)
 }
 
 std::string walkScopes(Lang lang, TSNode start, const std::string& src,
-					   const std::string& recv, TSPoint cur)
+					   const std::string& recv, TSPoint cur, std::string* elem = nullptr)
 {
 	for (TSNode n = start; !ts_node_is_null(n); n = ts_node_parent(n))
 	{
@@ -919,7 +939,7 @@ std::string walkScopes(Lang lang, TSNode start, const std::string& src,
 		std::string r;
 		if (lang == Lang::Cpp)
 		{
-			if (ty == "compound_statement")       r = searchCppBlock(n, src, recv, cur);
+			if (ty == "compound_statement")       r = searchCppBlock(n, src, recv, cur, elem);
 			else if (ty == "function_definition") r = searchCppParams(n, src, recv);
 			else if (ty == "for_range_loop")      r = searchCppForRange(n, src, recv);
 			else if (ty == "for_statement")       r = searchCppForInit(n, src, recv);
@@ -972,6 +992,23 @@ TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std
 
 void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
 void collectCsTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
+
+// Containers whose FIRST template argument is the element type (so front()/at()/[]
+// yield it). Excludes map/pair/tuple — their value type is a later argument.
+bool isFirstArgElementContainer(const std::string& t)
+{
+	static const std::unordered_set<std::string> s = {
+		"vector", "deque", "list", "forward_list", "array", "set", "multiset",
+		"unordered_set", "unordered_multiset", "optional", "unique_ptr", "shared_ptr",
+		"weak_ptr", "span", "valarray", "initializer_list", "stack", "queue", "priority_queue"};
+	return s.count(t) != 0;
+}
+// Members/accessors that return the container's element type.
+bool isElementAccessor(const std::string& m)
+{
+	return m == "front" || m == "back" || m == "at" || m == "value" ||
+		   m == "value_or" || m == "get" || m == "top";
+}
 
 // Look up member `member`'s declared type inside the type-definition node `tdef`.
 // Uses the same full extraction as the project index (collect*), so the same-doc
@@ -1173,13 +1210,27 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 	// hop: look up the next field's type in that type's definition — first in THIS
 	// document, then (if given) in the project-wide index so types from other
 	// files resolve too. Bails (returns "") the moment a hop can't be resolved.
+	// elem = the base receiver's element type (vector<Widget> -> "Widget"), so a
+	// hop like front()/at()/value() yields the element. Only the live-parsed base
+	// carries it (cross-file/field generics don't, for now).
+	std::string elem;
 	std::string type = (chain[0] == "this")
 		? (lang == Lang::Cpp ? resolveThisCpp(cursor, source) : resolveThisCs(cursor, source))
-		: walkScopes(lang, cursor, source, chain[0], pt);
+		: walkScopes(lang, cursor, source, chain[0], pt, &elem);
 	if (type.empty()) return {};
 
 	for (size_t i = 1; i < chain.size(); ++i)
 	{
+		// Element access: v.front()/at()/value()/get() on a known first-arg container
+		// resolves to its element type. Consumes elem (the element's own args aren't
+		// tracked). C++ only (elem comes from the C++ parse).
+		if (lang == Lang::Cpp && !elem.empty() &&
+			isFirstArgElementContainer(type) && isElementAccessor(chain[i]))
+		{
+			type = elem;
+			elem.clear();
+			continue;
+		}
 		std::string next;
 		TSNode tdef = findTypeDefNode(root, source, lang, type);
 		if (!ts_node_is_null(tdef))
