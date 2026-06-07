@@ -58,13 +58,31 @@ target_compile_options(tsindex PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
+# ── LSP protocol layer ───────────────────────────────────────────────────
+# Pure JSON-RPC framing/builders/parsers + UTF offset conversion (no SDL), so
+# the headless selftest can link it. The transport (lsp_client) adds SDL.
+add_library(lspproto STATIC lsp_protocol.cpp lsp_protocol.h)
+target_link_libraries(lspproto PUBLIC nlohmann_json)
+target_include_directories(lspproto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(lspproto PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
+# ── LSP client transport (spawns clangd via SDL3 process API) ─────────────
+add_library(lspclient STATIC lsp_client.cpp lsp_client.h)
+target_link_libraries(lspclient PUBLIC lspproto SDL3::SDL3 SDL3_Headers)
+target_include_directories(lspclient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(lspclient PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
 # ── Example executable ───────────────────────────────────────────────────
 add_executable(example
 	editor.cpp
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
 
 # The example executable owns main(); the editor library doesn't.
 target_compile_definitions(example PRIVATE STANDALONE=1)
@@ -100,9 +118,20 @@ add_custom_command(TARGET example POST_BUILD
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
 add_executable(selftest selftest.cpp)
-target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex)
+target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto)
 target_compile_options(selftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 enable_testing()
 add_test(NAME selftest COMMAND selftest)
+
+# ── LSP integration gate ──────────────────────────────────────────────────
+# Spawns a real clangd and asserts a completion + go-to-def round trip. SKIPs
+# (ctest return code 77) when no clangd is found, so CI without clangd stays green.
+add_executable(lsptest lsptest.cpp)
+target_link_libraries(lsptest PRIVATE lspclient SDL3::SDL3 SDL3_Headers)
+target_compile_options(lsptest PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+add_test(NAME lsptest COMMAND lsptest)
+set_tests_properties(lsptest PROPERTIES SKIP_RETURN_CODE 77)

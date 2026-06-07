@@ -16,6 +16,7 @@
 
 #include "TextEditor.h"
 #include "tsindex.h"
+#include "lsp_protocol.h"
 
 static int gFailures = 0;
 static int gChecks = 0;
@@ -483,6 +484,70 @@ int main()
 		}
 		CHECK(!ts::readIndexCache("definitely_missing_cache_file.idx", out),
 			  "readIndexCache fails on a missing file");
+	}
+
+	// ── LSP protocol layer (pure: framing, UTF-16 offsets, URIs, parsers) ──
+	{
+		// Content-Length framing roundtrip.
+		std::string framed = lsp::frameMessage("{\"x\":1}");
+		CHECK(framed.rfind("Content-Length: 7\r\n\r\n", 0) == 0, "frameMessage builds Content-Length header");
+		std::size_t pos = 0;
+		std::string body;
+		CHECK(lsp::parseFrame(framed, pos, body) && body == "{\"x\":1}", "parseFrame roundtrips one frame");
+		CHECK(pos == framed.size(), "parseFrame advances past the frame");
+		// Partial frame -> false, pos unchanged.
+		std::string partial = "Content-Length: 20\r\n\r\n{\"a\":1}";
+		std::size_t ppos = 0;
+		CHECK(!lsp::parseFrame(partial, ppos, body) && ppos == 0, "parseFrame returns false on a partial body");
+		// Extra header line tolerated.
+		std::string twoHdr = "Content-Type: x\r\nContent-Length: 3\r\n\r\nabc";
+		std::size_t tpos = 0;
+		CHECK(lsp::parseFrame(twoHdr, tpos, body) && body == "abc", "parseFrame tolerates extra headers");
+
+		// UTF-16 offset conversion. "aé𝄞b": a=1B, é=2B(1u16), 𝄞=4B(2u16), b=1B.
+		std::string s = "a\xC3\xA9\xF0\x9D\x84\x9E" "b";
+		CHECK(lsp::utf8ByteToUtf16(s, 0) == 0, "utf16: byte 0 -> 0");
+		CHECK(lsp::utf8ByteToUtf16(s, 1) == 1, "utf16: after ASCII -> 1");
+		CHECK(lsp::utf8ByteToUtf16(s, 3) == 2, "utf16: after 2-byte char -> 2 units");
+		CHECK(lsp::utf8ByteToUtf16(s, 7) == 4, "utf16: after astral char -> 4 units (surrogate pair)");
+		CHECK(lsp::utf16ToUtf8Byte(s, 4) == 7, "utf16->byte inverse at astral boundary");
+		CHECK(lsp::utf16ToUtf8Byte(s, 2) == 3, "utf16->byte inverse after 2-byte char");
+
+		// path <-> uri roundtrip incl. spaces (percent-encoded) and drive letter.
+		std::string uri = lsp::pathToUri("C:\\a b\\foo.cpp");
+		CHECK(uri == "file:///C:/a%20b/foo.cpp", "pathToUri encodes spaces + drive form");
+		CHECK(lsp::uriToPath(uri) == "C:/a b/foo.cpp", "uriToPath decodes back");
+		CHECK(lsp::uriToPath("file:///c%3A/x/y.cpp") == "c:/x/y.cpp", "uriToPath decodes %3A colon");
+
+		// Builders produce inspectable framed messages.
+		std::string init = lsp::buildInitialize(1, "file:///C:/p", 4321);
+		std::size_t ipos = 0; std::string ibody;
+		CHECK(lsp::parseFrame(init, ipos, ibody), "buildInitialize is a valid frame");
+		lsp::Incoming inq = lsp::inspect(ibody);
+		CHECK(inq.hasId && inq.id == 1 && inq.method == "initialize", "inspect reads id + method");
+
+		// Response parsers on canned clangd-shaped bodies.
+		std::string compResp =
+			"{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"isIncomplete\":false,\"items\":["
+			"{\"label\":\"push_back\",\"kind\":2,\"detail\":\"void\"},"
+			"{\"label\":\" size\",\"insertText\":\"size\",\"kind\":2}]}}";
+		auto comp = lsp::parseCompletion(compResp);
+		CHECK(comp.size() == 2, "parseCompletion: two items");
+		CHECK(!comp.empty() && comp[0].label == "push_back" && comp[0].insertText == "push_back",
+			"parseCompletion: label/insertText");
+		std::string defResp =
+			"{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":[{\"uri\":\"file:///C:/x.h\","
+			"\"range\":{\"start\":{\"line\":41,\"character\":6},\"end\":{\"line\":41,\"character\":9}}}]}";
+		auto defs = lsp::parseDefinition(defResp);
+		CHECK(defs.size() == 1 && defs[0].line == 41 && defs[0].character == 6, "parseDefinition: location");
+		CHECK(defs.size() == 1 && lsp::uriToPath(defs[0].uri) == "C:/x.h", "parseDefinition: uri");
+
+		// Encoding negotiation: present -> utf-8; absent -> spec default utf-16.
+		std::string enc;
+		CHECK(lsp::parseInitializeResult("{\"result\":{\"offsetEncoding\":\"utf-8\",\"capabilities\":{}}}", enc) && enc == "utf-8",
+			"parseInitializeResult reads utf-8");
+		CHECK(lsp::parseInitializeResult("{\"result\":{\"capabilities\":{}}}", enc) && enc == "utf-16",
+			"parseInitializeResult defaults to utf-16 when absent");
 	}
 
 	if (gFailures == 0) {
