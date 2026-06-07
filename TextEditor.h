@@ -205,8 +205,10 @@ public:
 
 	// manipulate cursors and selections (line numbers are zero-based)
 	inline void SetCursor(int line, int column) { foldRanges.unfoldContaining(line, document); moveTo(document.normalizeCoordinate(Coordinate(line, column)), false); }
+	inline void AddCursor(int line, int column) { cursors.addCursor(document.normalizeCoordinate(Coordinate(line, column))); }
 	inline void SelectAll() { selectAll(); }
 	inline void SelectLine(int line) { if (line >= 0 && line < document.lineCount()) selectLine(line); }
+	inline void SelectCursorLines() { selectCursorLines(); }   // Ctrl+L for every cursor
 	inline void SelectLines(int start, int end) { if (start >= 0 && end < document.lineCount() && start <= end) selectLines(start, end); }
 	inline void SelectRegion(int startLine, int startColumn, int endLine, int endColumn) { selectRegion(startLine, startColumn, endLine, endColumn); }
 	inline void SelectWord(int line, int column) {selectWord(line, column); }
@@ -1520,6 +1522,7 @@ protected:
 	// manipulate selections/cursors
 	void selectAll();
 	void selectLine(int line);
+	void selectCursorLines();   // Ctrl+L: expand EVERY cursor's selection to whole line(s); grows down on repeat
 
 	void selectWord(int line, int column);
 

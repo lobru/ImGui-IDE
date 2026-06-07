@@ -1709,13 +1709,11 @@ void TextEditor::handleKeyboardInputs()
 		else if (isOptionalShift && ImGui::IsKeyPressed(ImGuiKey_Home)) { moveToStartOfLine(shift); }
 		else if (isOptionalShift && ImGui::IsKeyPressed(ImGuiKey_End)) { moveToEndOfLine(shift); }
 		else if (isShortcut && ImGui::IsKeyPressed(ImGuiKey_A)) { selectAll(); }
-		// Ctrl+L: select the current line (or extend an existing line selection
-		// down to the next one — like VSCode).
+		// Ctrl+L: select the current line for EVERY cursor (extends each selection
+		// down to the next line on repeat — like VSCode). Multi-cursor aware.
 		else if (isShortcut && ImGui::IsKeyPressed(ImGuiKey_L))
 		{
-			auto& cursor = cursors.getCurrent();
-			auto endLine = cursor.getInteractiveEnd().line;
-			selectLine(endLine);
+			selectCursorLines();
 		}
 
 		else if (isShortcut && ImGui::IsKeyPressed(ImGuiKey_D) && cursors.currentCursorHasSelection()) { addNextOccurrence(); }
@@ -2458,6 +2456,33 @@ void TextEditor::selectLine(int line)
 	Coordinate start{ line, 0 };
 	moveTo(start, false);
 	moveTo(Coordinate(start.line, document[line].maxColumn), true);
+}
+
+
+//
+//	TextEditor::selectCursorLines
+//
+
+void TextEditor::selectCursorLines()
+{
+	// Ctrl+L: expand EVERY cursor's selection to cover its whole line(s) — full
+	// lines including the trailing newline (anchor at column 0, active at the next
+	// line's start) so a repeat press extends each selection down one more line,
+	// VSCode-style. Unlike selectLine(int) this preserves all cursors instead of
+	// collapsing to one.
+	int last = document.lineCount() - 1;
+	for (auto& cursor : cursors)
+	{
+		int startLine = cursor.getSelectionStart().line;
+		int endLineExclusive = cursor.getSelectionEnd().line + 1;
+		Coordinate ns(startLine, 0);
+		Coordinate ne = (endLineExclusive > last)
+			? Coordinate(last, document[last].maxColumn)   // last line: no phantom trailing line
+			: Coordinate(endLineExclusive, 0);
+		cursor.update(ns, ne);
+	}
+	cursors.update();        // merge cursors that now overlap (e.g. two on one line)
+	makeCursorVisible();
 }
 
 

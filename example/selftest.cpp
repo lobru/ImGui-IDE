@@ -117,6 +117,39 @@ int main()
 			"Lua: function ... end produces a fold");
 	}
 
+	// ── Ctrl+L (selectCursorLines): per-cursor whole-line select, grows on repeat ──
+	{
+		TextEditor ed;
+		ed.SetText("aaa\nbbb\nccc\nddd\neee\n");   // 5 content lines (+ trailing empty)
+
+		// Two cursors on different lines (1 and 3). Ctrl+L must select BOTH lines,
+		// not collapse to one.
+		ed.SetCursor(1, 2);
+		ed.AddCursor(3, 1);
+		CHECK(ed.GetNumberOfCursors() == 2, "Ctrl+L setup: two cursors");
+		ed.SelectCursorLines();
+		CHECK(ed.GetNumberOfCursors() == 2, "Ctrl+L: keeps both cursors (no collapse)");
+		auto s0 = ed.GetCursorSelection(0);
+		auto s1 = ed.GetCursorSelection(1);
+		// Each selection spans its own whole line (col 0 -> start of next line).
+		CHECK(s0.start.line == 1 && s0.start.column == 0 && s0.end.line == 2 && s0.end.column == 0,
+			"Ctrl+L: cursor on line 1 selects full line 1");
+		CHECK(s1.start.line == 3 && s1.start.column == 0 && s1.end.line == 4 && s1.end.column == 0,
+			"Ctrl+L: cursor on line 3 selects full line 3");
+		// Single cursor + repeat-grow (no merge ambiguity): line 0 -> select line 0,
+		// repeat -> grow to lines 0-1.
+		TextEditor ed2;
+		ed2.SetText("aaa\nbbb\nccc\nddd\neee\n");
+		ed2.SetCursor(0, 1);
+		ed2.SelectCursorLines();
+		auto z = ed2.GetCursorSelection(0);
+		CHECK(ed2.GetNumberOfCursors() == 1 && z.start.line == 0 && z.start.column == 0 && z.end.line == 1,
+			"Ctrl+L single cursor: selects its whole line");
+		ed2.SelectCursorLines();
+		z = ed2.GetCursorSelection(0);
+		CHECK(z.start.line == 0 && z.end.line == 2, "Ctrl+L repeat: selection grows down one line");
+	}
+
 	// ── Comment toggles: single-line uses "--", block uses "--[[ ]]" ──
 	{
 		// Ctrl+/ on a Lua line should prefix "--", NOT the block opener "--[[".
