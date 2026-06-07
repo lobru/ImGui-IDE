@@ -9687,20 +9687,23 @@ void Editor::renderMenuBar()
        ImGui::EndMenu();
         }
 
-        // Back / forward through the go-to-definition jump history (also Alt+Left/
-        // Right and the mouse thumb buttons). Greyed when the stack is empty.
-        ImGui::BeginDisabled(!navHistory.canBack());
-        if (ImGui::ArrowButton("##navback", ImGuiDir_Left))
-            navigateBack();
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Back  (Alt+Left / mouse back)");
-        ImGui::BeginDisabled(!navHistory.canForward());
-        if (ImGui::ArrowButton("##navfwd", ImGuiDir_Right))
-            navigateForward();
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Forward  (Alt+Right / mouse forward)");
+        // Back / forward through the jump history — shown ONLY once there's history
+        // to go to (they were awkward as always-present greyed arrows). Alt+Left/
+        // Right, the mouse thumb buttons, and the Edit menu cover it regardless.
+        if (navHistory.canBack() || navHistory.canForward())
+        {
+            if (navHistory.canBack())
+            {
+                if (ImGui::ArrowButton("##navback", ImGuiDir_Left)) navigateBack();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back  (Alt+Left / mouse back)");
+                ImGui::SameLine(0.0f, 2.0f);
+            }
+            if (navHistory.canForward())
+            {
+                if (ImGui::ArrowButton("##navfwd", ImGuiDir_Right)) navigateForward();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forward  (Alt+Right / mouse forward)");
+            }
+        }
 
 
         // Active project name — right-aligned so the workspace is always visible.
