@@ -499,6 +499,18 @@ int main()
 		// Without the index, the same chain can't be resolved (types not in doc).
 		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner"}).empty(),
 			"cross-file chain: unresolved without index (no false members)");
+
+		// Real composition: feed extractMemberTypes' OWN output (not a hand-built
+		// map) back into resolveMemberChain — this mirrors what the project index
+		// does (extract per file -> merge -> resolve), minus the file walk.
+		std::string defs =
+			"struct Inner { std::vector<int> items; int count; };\n"
+			"struct Outer { Inner inner; };\n";
+		auto produced = ts::extractMemberTypes(ts::Lang::Cpp, defs);
+		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner", "items"}, &produced) == "vector",
+			"cross-file chain (produced map): o.inner.items -> vector");
+		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner", "count"}, &produced) == "int",
+			"cross-file chain (produced map): o.inner.count -> int");
 	}
 
 	// ── Additional language grammars (Python, JavaScript) ──
