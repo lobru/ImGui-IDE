@@ -264,9 +264,14 @@ private:
 		std::atomic<bool>                   building{false};
 		std::atomic<int>                    gen{0};
 		std::atomic<bool>                   rebuildRequested{false}; // a save arrived mid-build
+		// Last-built per-file symbol cache (also persisted to disk). Read at the
+		// start of a build to skip re-parsing unchanged files; guarded by `mutex`.
+		std::unordered_map<std::string, ts::FileSyms> cache;
 	};
 	std::shared_ptr<IndexState> indexState = std::make_shared<IndexState>();
 	void rebuildProjectIndex();                              // spawn background build
+	std::string indexCachePath() const;                      // %APPDATA% cache file for projectRoot
+	void loadIndexCache();                                   // load cache + publish it as the initial index
 	std::shared_ptr<const ProjectIndex> indexSnapshot();     // thread-safe read
 	TextEditor::Trie projectTrie;        // shared project-wide identifier trie (one copy, not per-tab)
 	int projectTrieGen = -1;             // index gen projectTrie was built from (-1 = never)

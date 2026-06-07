@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -207,6 +208,96 @@ Lang langForExtension(const std::string& extIn)
 bool available()
 {
 	return languageFor(Lang::Cpp) != nullptr;
+}
+
+// ── On-disk symbol cache (binary, host-endian, machine-local) ────────────────
+
+namespace {
+template <class T> void cacheWrite(std::ostream& o, const T& v) { o.write(reinterpret_cast<const char*>(&v), sizeof(T)); }
+template <class T> bool cacheRead(std::istream& i, T& v) { return (bool) i.read(reinterpret_cast<char*>(&v), sizeof(T)); }
+void cacheWriteStr(std::ostream& o, const std::string& s)
+{
+	uint32_t n = (uint32_t) s.size();
+	cacheWrite(o, n);
+	if (n) o.write(s.data(), (std::streamsize) n);
+}
+bool cacheReadStr(std::istream& i, std::string& s)
+{
+	uint32_t n = 0;
+	if (!cacheRead(i, n)) return false;
+	if (n > (1u << 28)) return false;        // sanity cap (256MB) against corruption
+	s.resize(n);
+	if (n) i.read(&s[0], (std::streamsize) n);
+	return (bool) i;
+}
+const char kCacheMagic[8] = {'T', 'E', 'I', 'D', 'X', '0', '0', '1'};
+} // namespace
+
+bool writeIndexCache(const std::string& path, const std::unordered_map<std::string, FileSyms>& files)
+{
+	std::ofstream o(path, std::ios::binary | std::ios::trunc);
+	if (!o) return false;
+	o.write(kCacheMagic, 8);
+	uint32_t fc = (uint32_t) files.size();
+	cacheWrite(o, fc);
+	for (auto& kv : files)
+	{
+		cacheWriteStr(o, kv.first);
+		cacheWrite(o, kv.second.mtime);
+		cacheWrite(o, kv.second.size);
+		uint32_t sc = (uint32_t) kv.second.symbols.size();
+		cacheWrite(o, sc);
+		for (auto& s : kv.second.symbols)
+		{
+			int32_t kind = (int32_t) s.kind, line = s.line, col = s.column;
+			uint8_t def = s.isDefinition ? 1 : 0;
+			cacheWrite(o, kind);
+			cacheWrite(o, line);
+			cacheWrite(o, col);
+			cacheWrite(o, def);
+			cacheWriteStr(o, s.name);
+			cacheWriteStr(o, s.enclosingType);
+		}
+	}
+	return (bool) o;
+}
+
+bool readIndexCache(const std::string& path, std::unordered_map<std::string, FileSyms>& out)
+{
+	out.clear();
+	std::ifstream i(path, std::ios::binary);
+	if (!i) return false;
+	char magic[8];
+	if (!i.read(magic, 8) || std::memcmp(magic, kCacheMagic, 8) != 0) return false;
+	uint32_t fc = 0;
+	if (!cacheRead(i, fc) || fc > (1u << 24)) return false;
+	out.reserve(fc);
+	for (uint32_t f = 0; f < fc; ++f)
+	{
+		std::string filePath;
+		if (!cacheReadStr(i, filePath)) return false;
+		FileSyms fs;
+		if (!cacheRead(i, fs.mtime) || !cacheRead(i, fs.size)) return false;
+		uint32_t sc = 0;
+		if (!cacheRead(i, sc) || sc > (1u << 22)) return false;
+		fs.symbols.reserve(sc);
+		for (uint32_t s = 0; s < sc; ++s)
+		{
+			int32_t kind = 0, line = 0, col = 0;
+			uint8_t def = 0;
+			if (!cacheRead(i, kind) || !cacheRead(i, line) || !cacheRead(i, col) || !cacheRead(i, def))
+				return false;
+			Symbol sym;
+			sym.kind = (Kind) kind;
+			sym.line = line;
+			sym.column = col;
+			sym.isDefinition = def != 0;
+			if (!cacheReadStr(i, sym.name) || !cacheReadStr(i, sym.enclosingType)) return false;
+			fs.symbols.push_back(std::move(sym));
+		}
+		out[std::move(filePath)] = std::move(fs);
+	}
+	return true;
 }
 
 const std::vector<std::string>* stlMembers(const std::string& simpleType)

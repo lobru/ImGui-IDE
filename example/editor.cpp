@@ -1355,7 +1355,9 @@ void Editor::setProjectRoot(const std::filesystem::path &p)
     navPanelVisible = true;
     rememberRecentProject(abs.string());
     restoreProjectSession(abs);
-    // Kick off the background symbol index for this project (autocomplete + nav).
+    // Load the cached symbol index so it's usable instantly, then kick off the
+    // background rebuild (which reuses the cache to skip unchanged files).
+    loadIndexCache();
     rebuildProjectIndex();
     // Persist immediately so a crash/quit doesn't lose the session.
     saveSettings();
@@ -2322,6 +2324,64 @@ std::shared_ptr<const Editor::ProjectIndex> Editor::indexSnapshot()
     return indexState->index;
 }
 
+// Per-project cache file under %APPDATA%/ImGuiColorTextEdit/index/, named by a
+// hash of the project root so each project gets its own.
+std::string Editor::indexCachePath() const
+{
+    if (projectRoot.empty())
+        return {};
+    size_t h = std::hash<std::string>{}(projectRoot.string());
+    char name[32];
+    std::snprintf(name, sizeof(name), "%016zx.idx", (size_t) h);
+    std::error_code ec;
+    auto dir = userConfigDir() / "index";
+    std::filesystem::create_directories(dir, ec);
+    return (dir / name).string();
+}
+
+// Load the on-disk symbol cache and publish it as the initial index, so the
+// Symbols panel / go-to-def / member completion work immediately on project open
+// (before the background rebuild finishes). The cache is also kept so the rebuild
+// can skip re-parsing unchanged files.
+void Editor::loadIndexCache()
+{
+    std::string path = indexCachePath();
+    if (path.empty())
+        return;
+    std::unordered_map<std::string, ts::FileSyms> disk;
+    if (!ts::readIndexCache(path, disk) || disk.empty())
+        return;
+
+    auto idx = std::make_shared<ProjectIndex>();
+    std::unordered_set<std::string> idset;
+    for (auto &kv : disk)
+    {
+        for (auto &sym : kv.second.symbols)
+        {
+            idset.insert(sym.name);
+            if (!sym.isDefinition)
+                continue;
+            auto &dv = idx->tsDefs[sym.name];
+            if (dv.size() < 32)
+                dv.push_back({kv.first, sym.line, sym.kind});
+            if (!sym.enclosingType.empty())
+            {
+                auto &mv = idx->members[sym.enclosingType];
+                if (mv.size() < 256)
+                    mv.push_back(sym.name);
+            }
+        }
+        if (!kv.second.symbols.empty())
+            idx->fileSymbols[kv.first] = kv.second.symbols;
+    }
+    idx->identifiers.assign(idset.begin(), idset.end());
+    std::sort(idx->identifiers.begin(), idx->identifiers.end());
+
+    std::lock_guard<std::mutex> lock(indexState->mutex);
+    indexState->index = idx;
+    indexState->cache = std::move(disk);
+}
+
 // Background walk of the project's code files. Collects every identifier token
 // (for autocomplete) and the definition sites of each symbol (for Go-to-Def).
 // Published atomically when done; a newer build (gen) supersedes an older one.
@@ -2341,8 +2401,16 @@ void Editor::rebuildProjectIndex()
     st->rebuildRequested = false;
     int gen = ++st->gen;
     std::filesystem::path root = projectRoot;
+    std::string cachePath = indexCachePath();
 
-    std::thread([st, gen, root]() {
+    std::thread([st, gen, root, cachePath]() {
+        // Snapshot the previous build's per-file cache once; reused across passes
+        // to skip re-parsing files whose mtime+size are unchanged.
+        std::unordered_map<std::string, ts::FileSyms> oldCache;
+        {
+            std::lock_guard<std::mutex> lk(st->mutex);
+            oldCache = st->cache;
+        }
         auto extOk = [](const std::string &e) {
             static const std::unordered_set<std::string> ok = {
                 ".c",
@@ -2433,6 +2501,27 @@ void Editor::rebuildProjectIndex()
         {
         auto idx = std::make_shared<ProjectIndex>();
         std::unordered_set<std::string> idset;
+        std::unordered_map<std::string, ts::FileSyms> newCache;   // this pass's cache (-> disk)
+        // Fold a file's tree-sitter symbols into the index aggregates.
+        auto aggregate = [&](const std::string &fpath, const std::vector<ts::Symbol> &syms) {
+            for (auto &sym : syms)
+            {
+                idset.insert(sym.name);
+                if (!sym.isDefinition)
+                    continue;
+                auto &dv = idx->tsDefs[sym.name];
+                if (dv.size() < 32)
+                    dv.push_back({fpath, sym.line, sym.kind});
+                if (!sym.enclosingType.empty())
+                {
+                    auto &mv = idx->members[sym.enclosingType];
+                    if (mv.size() < 256)
+                        mv.push_back(sym.name);
+                }
+            }
+            if (!syms.empty())
+                idx->fileSymbols[fpath] = syms;
+        };
         std::error_code ec;
         int budget = 30000;   // higher now that dependency source is indexed too
 
@@ -2463,39 +2552,47 @@ void Editor::rebuildProjectIndex()
             if (!extOk(ext))
                 continue;
 
+            std::string fileStr = it->path().string();
+            bool tsLang = ts::langForExtension(ext) != ts::Lang::None;
+
+            // mtime + size key the cache staleness check.
+            std::error_code mec, sec;
+            auto wtime = std::filesystem::last_write_time(it->path(), mec);
+            long long mtime = mec ? 0 : (long long) wtime.time_since_epoch().count();
+            std::uintmax_t fsz = std::filesystem::file_size(it->path(), sec);
+            unsigned long long fsize = sec ? 0 : (unsigned long long) fsz;
+
+            // Incremental: an unchanged ts file reuses cached symbols and skips the
+            // (expensive) read + parse entirely. Non-ts files always re-tokenize
+            // (their identifiers aren't cached).
+            if (tsLang && mtime != 0)
+            {
+                auto cit = oldCache.find(fileStr);
+                if (cit != oldCache.end() && cit->second.mtime == mtime && cit->second.size == fsize)
+                {
+                    aggregate(fileStr, cit->second.symbols);
+                    newCache.emplace(fileStr, cit->second);
+                    continue;
+                }
+            }
+
             std::ifstream f(it->path(), std::ios::binary);
             if (!f.is_open())
                 continue;
-            std::string fileStr = it->path().string();
             std::string whole((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
             f.close();
 
-            // Tree-sitter pass (C/C++/C#): accurate, kind-ranked definition sites +
+            // Tree-sitter pass (C/C++/C#/…): accurate, kind-ranked definition sites +
             // per-type member names. Skip very large files so a generated mega-header
             // can't stall the background build.
-            bool tsFile = ts::langForExtension(ext) != ts::Lang::None;
+            bool tsFile = tsLang;
             if (tsFile && whole.size() > 1500000)
                 tsFile = false;
             if (tsFile)
             {
                 auto syms = ts::extractSymbols(ts::langForExtension(ext), whole);
-                for (auto &sym : syms)
-                {
-                    idset.insert(sym.name);
-                    if (!sym.isDefinition)
-                        continue;
-                    auto &dv = idx->tsDefs[sym.name];
-                    if (dv.size() < 32)
-                        dv.push_back({fileStr, sym.line, sym.kind});
-                    if (!sym.enclosingType.empty())
-                    {
-                        auto &mv = idx->members[sym.enclosingType];
-                        if (mv.size() < 256)
-                            mv.push_back(sym.name);
-                    }
-                }
-                if (!syms.empty())
-                    idx->fileSymbols[fileStr] = std::move(syms);
+                aggregate(fileStr, syms);
+                newCache.emplace(fileStr, ts::FileSyms{mtime, fsize, std::move(syms)});
             }
 
             // Identifier + heuristic-definition tokenization. Heuristic def sites are
@@ -2605,8 +2702,13 @@ void Editor::rebuildProjectIndex()
 
         if (curGen == st->gen.load())
         {
+            // Persist the cache to disk (outside the lock — it's file I/O), then
+            // publish the index + keep the cache for the next incremental pass.
+            if (!cachePath.empty())
+                ts::writeIndexCache(cachePath, newCache);
             std::lock_guard<std::mutex> lock(st->mutex);
             st->index = idx;
+            st->cache = std::move(newCache);
         }
         }                              // end try
         catch (...) {}                 // never leave `building` stuck true on a throw

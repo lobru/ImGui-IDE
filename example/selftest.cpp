@@ -11,6 +11,7 @@
 
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "TextEditor.h"
@@ -447,6 +448,39 @@ int main()
 		std::fprintf(stderr, "[ts:rust] symbols=%zu\n", rusts.size());
 		CHECK(hasDef(rusts, "run"),    "Rust: fn run found");
 		CHECK(hasDef(rusts, "Widget"), "Rust: struct Widget found");
+	}
+
+	// ── On-disk symbol cache roundtrip ──
+	{
+		std::unordered_map<std::string, ts::FileSyms> in;
+		ts::FileSyms a;
+		a.mtime = 123456789LL;
+		a.size = 4096ULL;
+		ts::Symbol s1; s1.name = "Foo"; s1.kind = ts::Kind::Class;  s1.line = 10; s1.column = 2; s1.isDefinition = true;  s1.enclosingType = "ns";
+		ts::Symbol s2; s2.name = "bar"; s2.kind = ts::Kind::Method; s2.line = 12; s2.column = 4; s2.isDefinition = false; s2.enclosingType = "Foo";
+		a.symbols = {s1, s2};
+		in["a/b/foo.cpp"] = a;
+
+		const char* path = "selftest_cache.idx";
+		CHECK(ts::writeIndexCache(path, in), "writeIndexCache succeeds");
+		std::unordered_map<std::string, ts::FileSyms> out;
+		CHECK(ts::readIndexCache(path, out), "readIndexCache succeeds");
+		CHECK(out.size() == 1, "cache roundtrip: one file entry");
+		auto it = out.find("a/b/foo.cpp");
+		CHECK(it != out.end(), "cache roundtrip: file key preserved");
+		if (it != out.end()) {
+			CHECK(it->second.mtime == 123456789LL && it->second.size == 4096ULL, "cache roundtrip: mtime/size");
+			CHECK(it->second.symbols.size() == 2, "cache roundtrip: two symbols");
+			if (it->second.symbols.size() == 2) {
+				auto& r1 = it->second.symbols[0];
+				CHECK(r1.name == "Foo" && r1.kind == ts::Kind::Class && r1.line == 10 &&
+					  r1.column == 2 && r1.isDefinition && r1.enclosingType == "ns",
+					  "cache roundtrip: symbol fields preserved");
+				CHECK(!it->second.symbols[1].isDefinition, "cache roundtrip: isDefinition=false preserved");
+			}
+		}
+		CHECK(!ts::readIndexCache("definitely_missing_cache_file.idx", out),
+			  "readIndexCache fails on a missing file");
 	}
 
 	if (gFailures == 0) {

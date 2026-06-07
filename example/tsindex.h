@@ -8,6 +8,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ts {
@@ -66,5 +67,20 @@ const std::vector<std::string>* stlMembers(const std::string& simpleType);
 
 // True if tree-sitter built in and a grammar is available.
 bool available();
+
+// ── On-disk symbol cache ────────────────────────────────────────────────────
+// One entry per indexed source file: its tree-sitter symbols plus the mtime/size
+// used to detect staleness on the next project load. Lets the index persist
+// across sessions and rebuild incrementally (skip unchanged files' parses).
+struct FileSyms {
+	long long          mtime = 0;   // last-write time (filesystem clock ticks)
+	unsigned long long size  = 0;   // byte size
+	std::vector<Symbol> symbols;
+};
+
+// Binary, host-endian (the cache is machine-local). Return false on any I/O or
+// format error — the caller then just rebuilds from scratch.
+bool writeIndexCache(const std::string& path, const std::unordered_map<std::string, FileSyms>& files);
+bool readIndexCache(const std::string& path, std::unordered_map<std::string, FileSyms>& out);
 
 } // namespace ts
