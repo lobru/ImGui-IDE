@@ -1434,6 +1434,32 @@ bool Editor::navIsExcluded(const std::filesystem::path &p) const
     return it != navExcluded.end() && it->second;
 }
 
+// ── Nav multi-select (canonical-path keyed, same as exclusion) ──
+static std::string navCanonKey(const std::filesystem::path &p)
+{
+    std::error_code ec;
+    auto k = std::filesystem::weakly_canonical(p, ec);
+    return (ec ? p : k).string();
+}
+
+bool Editor::navIsSelected(const std::filesystem::path &p) const
+{
+    return navSelected.count(navCanonKey(p)) != 0;
+}
+
+void Editor::navToggleSelected(const std::filesystem::path &p)
+{
+    std::string k = navCanonKey(p);
+    if (!navSelected.erase(k))
+        navSelected.insert(k);
+}
+
+void Editor::navSetOnlySelected(const std::filesystem::path &p)
+{
+    navSelected.clear();
+    navSelected.insert(navCanonKey(p));
+}
+
 bool Editor::navIsCodeFile(const std::filesystem::path &p) const
 {
     // "Code-only" filter — same set as the project-wide grep walker, plus a
@@ -1753,6 +1779,8 @@ static void navRenderEntry(Editor *self,
     if (isDir)
     {
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (self->navIsSelected(absPath))
+            flags |= ImGuiTreeNodeFlags_Selected;
         // Collapse-all / expand-all: force every folder node open/closed for the
         // one frame the toolbar button set the request.
         if (self->navBulkOpenRequest() >= 0)
@@ -1760,9 +1788,15 @@ static void navRenderEntry(Editor *self,
         bool open = ImGui::TreeNodeEx(name.c_str(), flags);
         navTooltip(e, true);
         navDnD(true);
+        // Ctrl-click a folder toggles its selection (the click also toggles the
+        // expand state — acceptable; selection is for batch actions like exclude).
+        if (ImGui::IsItemClicked() && ImGui::GetIO().KeyCtrl)
+            self->navToggleSelected(absPath);
         if (ImGui::BeginPopupContextItem())
         {
             contextPath = absPath;
+            if (!self->navIsSelected(absPath))
+                self->navSetOnlySelected(absPath);
             ImGui::EndPopup();
         }
         if (open)
@@ -1778,16 +1812,28 @@ static void navRenderEntry(Editor *self,
     else
     {
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (self->navIsSelected(absPath))
+            flags |= ImGuiTreeNodeFlags_Selected;
         ImGui::TreeNodeEx(name.c_str(), flags);
         navTooltip(e, false);
         navDnD(false);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
         {
-            self->openFile(absPath);
+            if (ImGui::GetIO().KeyCtrl)
+                self->navToggleSelected(absPath);   // ctrl-click → add/remove from multi-selection
+            else
+            {
+                self->navSetOnlySelected(absPath);
+                self->openFile(absPath);
+            }
         }
         if (ImGui::BeginPopupContextItem())
         {
             contextPath = absPath;
+            // Right-clicking an unselected item targets just it; right-clicking a
+            // selected one keeps the whole multi-selection for the action.
+            if (!self->navIsSelected(absPath))
+                self->navSetOnlySelected(absPath);
             ImGui::EndPopup();
         }
     }
@@ -2155,20 +2201,27 @@ void Editor::renderNavigationPanel()
             auto canon = std::filesystem::weakly_canonical(ctxPath, wec);
             std::string canonKey = (wec ? std::filesystem::path(ctxPath) : canon).string();
             bool excluded = navExcluded.count(canonKey) && navExcluded[canonKey];
+            // The action targets the whole multi-selection (navSelected always
+            // includes the right-clicked item). The right-clicked item's state
+            // picks Exclude vs Re-include; the count suffix shows the batch size.
+            size_t selN = navSelected.size();
+            std::string suffix = (selN > 1) ? (" (" + std::to_string(selN) + ")") : std::string();
             if (!excluded)
             {
-                if (ImGui::MenuItem("Exclude from view"))
+                if (ImGui::MenuItem(("Exclude from view" + suffix).c_str()))
                 {
-                    navExcluded[canonKey] = true;
-                    rebuildProjectIndex();   // drop the now-hidden path's symbols
+                    for (auto &k : navSelected)
+                        navExcluded[k] = true;
+                    rebuildProjectIndex();   // drop the now-hidden paths' symbols
                 }
             }
             else
             {
-                if (ImGui::MenuItem("Re-include in view"))
+                if (ImGui::MenuItem(("Re-include in view" + suffix).c_str()))
                 {
-                    navExcluded.erase(canonKey);
-                    rebuildProjectIndex();   // re-index the now-visible path
+                    for (auto &k : navSelected)
+                        navExcluded.erase(k);
+                    rebuildProjectIndex();   // re-index the now-visible paths
                 }
             }
             ImGui::EndPopup();

@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <imgui.h>
 #include "../TextEditor.h"
@@ -339,6 +340,7 @@ private:
 	bool         navFlatFiles    = false;   // collapse folder bodies (show folders only)
 	int          navSetAllOpen   = -1;      // one-shot bulk tree open/close: -1 none, 0 collapse all, 1 expand all
 	std::unordered_map<std::string, bool> navExcluded; // abs path → true = hidden in tree
+	std::unordered_set<std::string> navSelected;       // canonical abs paths multi-selected in the tree
 	std::string  navClipboardPath;          // last "Copy" target — used by Paste
 	bool         navClipboardIsCut = false; // true = move on paste, false = copy
 	std::string  navRenameTarget;           // path currently being renamed in-place
@@ -352,6 +354,9 @@ public:
 	bool         navIsCodeFile(const std::filesystem::path& p) const;
 	void         navOpenExternally(const std::string& path); // for non-text non-image
 	bool         navIsExcluded(const std::filesystem::path& p) const;
+	bool         navIsSelected(const std::filesystem::path& p) const;     // multi-select state
+	void         navToggleSelected(const std::filesystem::path& p);       // ctrl-click
+	void         navSetOnlySelected(const std::filesystem::path& p);      // plain click / right-click
 	bool         navIsCodeOnly() const { return navCodeOnly; }
 	bool         navIsFlat() const     { return navFlatFiles; }
 	int          navBulkOpenRequest() const { return navSetAllOpen; }   // -1 none / 0 collapse / 1 expand
