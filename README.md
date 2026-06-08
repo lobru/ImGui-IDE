@@ -1,3 +1,60 @@
+# ImGui-IDE
+
+A lightweight, fast "IDE-lite" code editor built on a fork of
+[goossens/ImGuiColorTextEdit](https://github.com/goossens/ImGuiColorTextEdit),
+using [Dear ImGui](https://github.com/ocornut/imgui) (docking branch) + SDL3.
+
+> Status: pre-release (0.1.0). Windows-first; the editor core is cross-platform.
+
+## Features
+
+- **Multi-tab, dockable** editor with split views, a project nav tree, and a
+  symbol browser.
+- **Syntax highlighting + code folding** for C/C++, C#, Lua, Python, JS/TS,
+  GLSL/HLSL, XAML/XML, JSON, Markdown, SQL, INI, and more (runtime `.lang` defs).
+- **Tree-sitter intellisense** (no language server required):
+  - member completion incl. **chained** (`a.b.c`), **cross-file**,
+    **method-return** (`o.get().x`), and **STL element types**
+    (`v.front().x`, `v[i].x`, `m[k].x`);
+  - project-wide go-to-definition, find-in-files, navigation history.
+- **clangd integration** (optional, C/C++): go-to-definition, hover, and inline
+  diagnostics — refines the tree-sitter baseline when clangd is available.
+- **Navigation history** (back/forward) across every jump — `Alt+←/→`, the mouse
+  thumb buttons, the Edit menu, or the toolbar arrows.
+- Multi-cursor editing (`Ctrl+L` per cursor), rebindable keybinds, document
+  formatting (clang-format / black / stylua / rustfmt / gofmt), git status,
+  an image viewer, and markdown preview.
+
+## Build (Windows)
+
+```powershell
+./build.ps1 -Config Release -Run    # builds ImGui-IDE.exe, launches a run-copy
+```
+
+Requires Visual Studio 2022 (C++ Desktop workload) + CMake. `-Run` launches a
+**copy** (`ImGui-IDE-run.exe`) so the exe stays free to rebuild while you test it.
+
+## Install
+
+```powershell
+./installer/build-installer.ps1     # -> installer/output/ImGui-IDE-Setup-*.exe
+```
+
+The installer (Inno Setup) adds Start-menu / desktop shortcuts and **"Open with
+ImGui-IDE"** to the file, folder, and folder-background right-click menus.
+
+## Open from the command line / Explorer
+
+```
+ImGui-IDE.exe path\to\file.cpp       # opens the file as a document
+ImGui-IDE.exe path\to\project\       # opens the folder as a project
+```
+
+---
+
+ImGui-IDE is a fork of the editor library documented below — all upstream credit
+to its authors.
+
 <div align="center">
 
 ![MacOS status](https://img.shields.io/github/actions/workflow/status/goossens/ImGuiColorTextEdit/macos.yml?branch=master&label=MacOS&style=for-the-badge)
