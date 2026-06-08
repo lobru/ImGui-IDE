@@ -84,6 +84,10 @@ add_executable(example
 
 target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
 
+# Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
+# build scripts / object paths are unchanged) — only the produced file is renamed.
+set_target_properties(example PROPERTIES OUTPUT_NAME "ImGui-IDE")
+
 # The example executable owns main(); the editor library doesn't.
 target_compile_definitions(example PRIVATE STANDALONE=1)
 

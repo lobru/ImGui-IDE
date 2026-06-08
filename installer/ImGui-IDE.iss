@@ -39,7 +39,7 @@ Name: "filecontext";  Description: "Add ""Open with ImGui-IDE"" to the file righ
 Name: "dircontext";   Description: "Add ""Open with ImGui-IDE"" to the folder right-click menu"; GroupDescription: "Explorer integration:"
 
 [Files]
-Source: "{#BuildDir}\example.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\languages\*"; DestDir: "{app}\languages"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\example\app.ico";      DestDir: "{app}"; Flags: ignoreversion
 

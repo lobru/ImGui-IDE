@@ -28,7 +28,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Root     = $PSScriptRoot
 $BuildDir = "$Root\example\out\build\x64-$Config"
-$ExePath  = "$BuildDir\example.exe"
+$ExePath  = "$BuildDir\ImGui-IDE.exe"
 
 # ── locate Visual Studio ──────────────────────────────────────────────────────
 $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -107,12 +107,13 @@ $buildOut = & cmd /c $bat 2>&1
 $buildOut | ForEach-Object { Write-Host $_ }
 $code = $LASTEXITCODE
 
-# Self-host workflow: if the only thing that failed is the linker not being able
-# to overwrite a running example.exe (LNK1168), close the running instance and
-# retry once. Lets you rebuild the editor from inside the editor.
-if ($code -ne 0 -and ($buildOut -match 'LNK1168')) {
-    Write-Host "`nexample.exe is running and locked its own output — closing it and retrying ..." -ForegroundColor Yellow
-    Get-Process example -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Self-host workflow: if the link failed only because a running ImGui-IDE.exe held
+# its own output (LNK1168/1104), close the instance and retry once. Normally you
+# run a COPY (ImGui-IDE-run.exe) so this never triggers, but it covers the case of
+# launching ImGui-IDE.exe directly.
+if ($code -ne 0 -and ($buildOut -match 'LNK1168|LNK1104')) {
+    Write-Host "`nImGui-IDE.exe is running and locked its own output — closing it and retrying ..." -ForegroundColor Yellow
+    Get-Process ImGui-IDE -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 600
     $buildOut = & cmd /c $bat 2>&1
     $buildOut | ForEach-Object { Write-Host $_ }
