@@ -1002,6 +1002,11 @@ TSNode findTypeDefNode(TSNode node, const std::string& src, Lang lang, const std
 void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
 void collectCsTypeMembers(TSNode cls, const std::string& src, std::unordered_map<std::string, std::string>& out);
 
+// A member's stored type may carry its element type as "type\x1felem" (e.g. a
+// field `std::vector<Widget> v;` stores "vector\x1fWidget") so element access can
+// chain THROUGH fields/methods, not just a local base. Never appears in a type name.
+constexpr char kElemSep = '\x1f';
+
 // Containers with a tracked element/value type (reduceCppType put it in `elem`:
 // arg[0] for sequences, arg[1] for map-like). pair/tuple excluded (no single elem).
 bool containerHasElement(const std::string& t)
@@ -1050,24 +1055,27 @@ void collectCppTypeMembers(TSNode cls, const std::string& src, std::unordered_ma
 		{
 			TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
 			if (ts_node_is_null(typeNode)) continue;
-			std::string mty = reduceCppType(typeNode, src);
+			std::string elem;
+			std::string mty = reduceCppType(typeNode, src, &elem);
 			if (mty.empty()) continue;
+			std::string val = elem.empty() ? mty : (mty + kElemSep + elem);   // type[\x1f elem]
 			uint32_t m = ts_node_named_child_count(child);
 			for (uint32_t j = 0; j < m; ++j)
 			{
 				TSNode fd = ts_node_named_child(child, j);
 				if (ts_node_eq(fd, typeNode)) continue;
 				std::string nm = cppDeclName(fd, src);   // descends function_declarator -> method name too
-				if (!nm.empty()) out[nm] = mty;
+				if (!nm.empty()) out[nm] = val;
 			}
 		}
 		else if (cty == "function_definition")   // inline method body
 		{
 			TSNode typeNode = ts_node_child_by_field_name(child, "type", 4);
-			std::string mty = reduceCppType(typeNode, src);
+			std::string elem;
+			std::string mty = reduceCppType(typeNode, src, &elem);
 			if (mty.empty()) continue;             // ctor/dtor/operator with no return type
 			std::string nm = cppDeclName(ts_node_child_by_field_name(child, "declarator", 10), src);
-			if (!nm.empty()) out[nm] = mty;
+			if (!nm.empty()) out[nm] = elem.empty() ? mty : (mty + kElemSep + elem);
 		}
 	}
 }
@@ -1220,9 +1228,11 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 	// hop: look up the next field's type in that type's definition — first in THIS
 	// document, then (if given) in the project-wide index so types from other
 	// files resolve too. Bails (returns "") the moment a hop can't be resolved.
-	// elem = the base receiver's element type (vector<Widget> -> "Widget"), so a
-	// hop like front()/at()/value() yields the element. Only the live-parsed base
-	// carries it (cross-file/field generics don't, for now).
+	// elem = the CURRENT type's element type (vector<Widget> -> "Widget"), carried
+	// so a hop like front()/at()/value()/[] yields the element. The base gets it
+	// from the live parse; subsequent hops recover it from the member's stored
+	// "type\x1felem" encoding — so element access chains THROUGH fields/methods too
+	// (o.vec.front().x), same-doc and cross-file.
 	std::string elem;
 	std::string type = (chain[0] == "this")
 		? (lang == Lang::Cpp ? resolveThisCpp(cursor, source) : resolveThisCs(cursor, source))
@@ -1231,9 +1241,8 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 
 	for (size_t i = 1; i < chain.size(); ++i)
 	{
-		// Element access: v.front()/at()/value()/get() on a known first-arg container
-		// resolves to its element type. Consumes elem (the element's own args aren't
-		// tracked). C++ only (elem comes from the C++ parse).
+		// Element access: front()/at()/value()/get()/[] on a known container with a
+		// tracked element type resolves to that element. Consumes elem.
 		if (lang == Lang::Cpp && !elem.empty() &&
 			containerHasElement(type) && isElementAccessor(chain[i]))
 		{
@@ -1255,7 +1264,10 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 			}
 		}
 		if (next.empty()) return {};
-		type = next;
+		// Decode "type\x1felem": set the hop's type AND its element type (if any).
+		size_t sep = next.find(kElemSep);
+		if (sep == std::string::npos) { type = next; elem.clear(); }
+		else { type = next.substr(0, sep); elem = next.substr(sep + 1); }
 	}
 	return type;
 }

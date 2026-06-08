@@ -475,9 +475,14 @@ int main()
 		// A bad hop anywhere returns empty (no false member list).
 		CHECK(chain({"o", "nope"}).empty(), "chain: unknown member -> empty");
 		CHECK(chain({"o", "inner", "nope"}).empty(), "chain: unknown deep member -> empty");
-		// An STL receiver can't be descended same-document (vector isn't defined here).
-		CHECK(chain({"o", "inner", "items", "front"}).empty(),
-			"chain: STL receiver hop unresolved (no false members)");
+		// Element access THROUGH a field-of-field: o.inner.items is vector<int>, so
+		// .front() yields int (the element type rides along on the field's stored
+		// "vector\x1fint", not just on a local base).
+		CHECK(chain({"o", "inner", "items", "front"}) == "int",
+			"chain: o.inner.items.front() -> int (element through nested fields)");
+		// A non-accessor member on the container still bails (no false members).
+		CHECK(chain({"o", "inner", "items", "nope"}).empty(),
+			"chain: vector.nope is not resolvable (no false members)");
 
 		// C# property/field chain: Outer.Inner.Value.
 		std::string cs =
@@ -508,11 +513,13 @@ int main()
 		std::string cpp =
 			"struct Widget { Inner sub; int health; };\n"
 			"struct Inner { int x; };\n"
+			"struct Holder { std::vector<Widget> widgets; std::vector<Widget> makeAll(); };\n"
 			"void use() {\n"
 			"    std::vector<Widget> ws;\n"
 			"    std::optional<Widget> ow;\n"
 			"    std::shared_ptr<Widget> pw;\n"
 			"    std::map<int, Widget> mw;\n"
+			"    Holder h;\n"
 			"    /*E*/;\n"
 			"}\n";
 		auto [row, col] = pos(cpp, "/*E*/");
@@ -536,6 +543,13 @@ int main()
 		CHECK(el({"mw", "[]", "sub"}) == "Inner", "element chain: mw[k].sub -> Inner");
 		// A non-accessor member on the container is a normal (failing) hop, not element.
 		CHECK(el({"ws", "size"}).empty(), "element: vector.size() is not an element accessor");
+		// Element access THROUGH a field-of-container (h.widgets is vector<Widget>):
+		// h.widgets.front().sub -> Inner, h.widgets[i].health -> int. And through a
+		// method returning a container: h.makeAll().front().sub -> Inner.
+		CHECK(el({"h", "widgets", "front"}) == "Widget", "element through field: h.widgets.front() -> Widget");
+		CHECK(el({"h", "widgets", "front", "sub"}) == "Inner", "element through field: h.widgets.front().sub -> Inner");
+		CHECK(el({"h", "widgets", "[]", "health"}) == "int", "element through field: h.widgets[i].health -> int");
+		CHECK(el({"h", "makeAll", "front", "sub"}) == "Inner", "element through method: h.makeAll().front().sub -> Inner");
 	}
 
 	// ── Cross-file member types (extractMemberTypes + index-backed chains) ──
@@ -553,7 +567,10 @@ int main()
 			"    Inner* makeInner() { return nullptr; }\n"  // inline method -> return type
 			"};\n";
 		auto mt = ts::extractMemberTypes(ts::Lang::Cpp, cpp);
-		CHECK(mt.count("Inner") && mt["Inner"]["items"] == "vector", "extractMemberTypes: Inner.items -> vector");
+		// items is a vector field — stored as "vector\x1f<elem>" so element access can
+		// chain through it. Assert the type prefix (encoding-tolerant).
+		CHECK(mt.count("Inner") && mt["Inner"]["items"].rfind("vector", 0) == 0,
+			"extractMemberTypes: Inner.items -> vector (type prefix)");
 		CHECK(mt["Inner"]["count"] == "int", "extractMemberTypes: Inner.count -> int");
 		CHECK(mt["Inner"]["self"] == "Inner", "extractMemberTypes: pointer member reduced");
 		CHECK(mt.count("Outer") && mt["Outer"]["inner"] == "Inner", "extractMemberTypes: Outer.inner -> Inner");
@@ -599,6 +616,10 @@ int main()
 			"cross-file chain (produced map): o.inner.items -> vector");
 		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner", "count"}, &produced) == "int",
 			"cross-file chain (produced map): o.inner.count -> int");
+		// Element access THROUGH the index: o.inner.items.front() -> int, proving the
+		// element type survives extract -> (cache-shaped) map -> resolve, cross-file.
+		CHECK(ts::resolveMemberChain(ts::Lang::Cpp, doc, xrow, xcol, {"o", "inner", "items", "front"}, &produced) == "int",
+			"cross-file element through field: o.inner.items.front() -> int (via index)");
 	}
 
 	// ── Additional language grammars (Python, JavaScript) ──
