@@ -9687,6 +9687,13 @@ void Editor::renderMenuBar()
        ImGui::EndMenu();
         }
 
+        if (ImGui::BeginMenu("Help"))
+        {
+            if (ImGui::MenuItem("About ImGui-IDE"))
+                showAboutDialog = true;
+            ImGui::EndMenu();
+        }
+
         // Back / forward through the jump history — shown ONLY once there's history
         // to go to (they were awkward as always-present greyed arrows). Alt+Left/
         // Right, the mouse thumb buttons, and the Edit menu cover it regardless.
@@ -9726,6 +9733,27 @@ void Editor::renderMenuBar()
 
         ImGui::PopStyleVar(); // WindowPadding pushed after BeginMenuBar
         ImGui::EndMenuBar();
+    }
+
+    // Help > About — opened at the host-window level (not inside the menu popup,
+    // which would mismatch the popup ID stack).
+    if (showAboutDialog)
+    {
+        ImGui::OpenPopup("About ImGui-IDE");
+        showAboutDialog = false;
+    }
+    if (ImGui::BeginPopupModal("About ImGui-IDE", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("ImGui-IDE  0.1.0");
+        ImGui::Separator();
+        ImGui::TextDisabled("A lightweight IDE-lite editor.");
+        ImGui::TextDisabled("Dear ImGui (docking) + SDL3 + tree-sitter.");
+        ImGui::Spacing();
+        ImGui::TextDisabled("Fork of goossens/ImGuiColorTextEdit (MIT).");
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
 
     // global keyboard shortcuts (work whenever no input wants the keys)

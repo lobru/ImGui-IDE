@@ -318,6 +318,7 @@ private:
 	void        applyNavLocation(const NavLocation& l);  // openFile + cursor + scroll
 	void        navigateBack();             // return to the previous location
 	void        navigateForward();          // re-apply a location we backed out of
+	bool        showAboutDialog = false;    // Help > About ImGui-IDE popup request
 
 	enum class State {
 		edit,
