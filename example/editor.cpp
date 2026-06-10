@@ -9745,11 +9745,13 @@ void Editor::renderMenuBar()
     if (ImGui::BeginPopupModal("About ImGui-IDE", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
         ImGui::Text("ImGui-IDE  0.1.0");
+        ImGui::TextDisabled("(c) 2026 Logan Brunet  -  MIT");
         ImGui::Separator();
         ImGui::TextDisabled("A lightweight IDE-lite editor.");
         ImGui::TextDisabled("Dear ImGui (docking) + SDL3 + tree-sitter.");
         ImGui::Spacing();
-        ImGui::TextDisabled("Fork of goossens/ImGuiColorTextEdit (MIT).");
+        ImGui::TextDisabled("Editor widget forked from ImGuiColorTextEdit");
+        ImGui::TextDisabled("by Johan A. Goossens.");
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();

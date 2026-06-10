@@ -7,7 +7,7 @@
 
 #define MyAppName "ImGui-IDE"
 #define MyAppVersion "0.1.0"
-#define MyAppPublisher "lobotomy-x"
+#define MyAppPublisher "Logan Brunet"
 #define MyAppExeName "ImGui-IDE.exe"
 ; Source paths are relative to this .iss (installer/). Override BuildDir on the
 ; ISCC command line with /DBuildDir=... if your build tree differs.

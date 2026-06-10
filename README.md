@@ -52,8 +52,11 @@ ImGui-IDE.exe path\to\project\       # opens the folder as a project
 
 ---
 
-ImGui-IDE is a fork of the editor library documented below — all upstream credit
-to its authors.
+ImGui-IDE © 2026 Logan Brunet (MIT). It is built on a fork of
+[ImGuiColorTextEdit](https://github.com/goossens/ImGuiColorTextEdit) by
+**Johan A. Goossens** — the underlying syntax-highlighting editor/diff widget,
+documented below, whose sources retain his copyright. All credit to him for that
+foundation.
 
 <div align="center">
 
