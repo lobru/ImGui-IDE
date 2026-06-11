@@ -2457,6 +2457,7 @@ void Editor::renderNavigationPanel()
                     for (auto &k : navSelected)
                         navExcluded[k] = true;
                     rebuildProjectIndex();   // drop the now-hidden paths' symbols
+                    navMarkListDirty();      // flat view filters on the cached list
                 }
             }
             else
@@ -2466,6 +2467,7 @@ void Editor::renderNavigationPanel()
                     for (auto &k : navSelected)
                         navExcluded.erase(k);
                     rebuildProjectIndex();   // re-index the now-visible paths
+                    navMarkListDirty();      // flat view filters on the cached list
                 }
             }
             ImGui::EndPopup();
@@ -10706,12 +10708,13 @@ void Editor::renderStatusBar()
         if (errs)  trailing += ImGui::CalcTextSize(ebuf).x;
         if (warns) trailing += ImGui::CalcTextSize(wbuf).x + (errs ? glyphWidth : 0.0f);
     }
-    // Align the trailing cluster to the bar's true right edge. Clamp so it never
-    // overlaps the left cluster (lang/toolchain/git) when the window is narrow.
-    const float leftEndX = ImGui::GetCursorPosX();
+    // Align the trailing cluster to the bar's true right edge. Clamp to a small
+    // left margin so a too-narrow window can't push the offset off the left edge
+    // (the trailing cluster may still overlap the left cluster when there isn't
+    // room for both — acceptable; the alternative is clipping the status text).
     float off = statusStartX + statusFullW - trailing - glyphWidth;
-    if (off < leftEndX + glyphWidth)
-        off = leftEndX + glyphWidth;
+    if (off < statusStartX + glyphWidth)
+        off = statusStartX + glyphWidth;
 
     ImGui::SameLine(off);
     ImGui::AlignTextToFramePadding();
