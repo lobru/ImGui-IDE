@@ -378,6 +378,9 @@ private:
 	bool         navClipboardIsCut = false; // true = move on paste, false = copy
 	std::string  navRenameTarget;           // path currently being renamed in-place
 	char         navRenameBuf[256] = {0};   // edit buffer for the rename input
+	char         navFilterBuf[128] = {0};   // "filter by name" box (case-insensitive substring)
+	mutable std::unordered_set<std::string> navMatchDirs;   // dirs with a descendant matching the filter
+	mutable std::string navMatchFilterCached;               // filter text navMatchDirs was built for
 	std::string  navPendingDelete;          // path queued for confirm-delete modal
 	std::string  navDragSource;             // payload for the move/copy drag-source
 	void         navOpenPathInExplorer(const std::string& path);
@@ -387,6 +390,9 @@ public:
 	bool         navIsCodeFile(const std::filesystem::path& p) const;
 	void         navOpenExternally(const std::string& path); // for non-text non-image
 	bool         navIsExcluded(const std::filesystem::path& p) const;
+	bool         navFilterActive() const { return navFilterBuf[0] != 0; }
+	bool         navNameMatches(const std::string& name) const;           // case-insensitive substring of the filter
+	bool         navDirHasMatch(const std::filesystem::path& dir) const;  // any descendant matches the filter (bounded)
 	bool         navIsSelected(const std::filesystem::path& p) const;     // multi-select state
 	void         navToggleSelected(const std::filesystem::path& p);       // ctrl-click
 	void         navSetOnlySelected(const std::filesystem::path& p);      // plain click / right-click

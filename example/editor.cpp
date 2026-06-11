@@ -1465,6 +1465,51 @@ void Editor::navSetOnlySelected(const std::filesystem::path &p)
     navSelected.insert(navCanonKey(p));
 }
 
+// ── Nav name filter ──
+bool Editor::navNameMatches(const std::string &name) const
+{
+    if (navFilterBuf[0] == 0)
+        return true;
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        return s;
+    };
+    return lower(name).find(lower(navFilterBuf)) != std::string::npos;
+}
+
+// True if `dir` has any descendant whose name matches the filter. Backed by a set
+// rebuilt with ONE project walk whenever the filter text changes (cheap per-frame
+// after that). Bounded so a giant tree can't stall a keystroke.
+bool Editor::navDirHasMatch(const std::filesystem::path &dir) const
+{
+    if (navFilterBuf[0] == 0)
+        return true;
+    if (navMatchFilterCached != navFilterBuf)
+    {
+        navMatchFilterCached = navFilterBuf;
+        navMatchDirs.clear();
+        auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
+        std::error_code ec;
+        int budget = 200000;
+        for (auto it = std::filesystem::recursive_directory_iterator(
+                 root, std::filesystem::directory_options::skip_permission_denied, ec);
+             it != std::filesystem::recursive_directory_iterator() && budget-- > 0; it.increment(ec))
+        {
+            if (ec) { ec.clear(); continue; }
+            if (!navNameMatches(it->path().filename().string()))
+                continue;
+            // Mark every ancestor dir up to the project root.
+            for (auto a = it->path().parent_path(); ; a = a.parent_path())
+            {
+                navMatchDirs.insert(navCanonKey(a));
+                if (a == root || !a.has_parent_path())
+                    break;
+            }
+        }
+    }
+    return navMatchDirs.count(navCanonKey(dir)) != 0;
+}
+
 bool Editor::navIsCodeFile(const std::filesystem::path &p) const
 {
     // "Code-only" filter — same set as the project-wide grep walker, plus a
@@ -1657,6 +1702,14 @@ static void navRenderEntry(Editor *self,
     bool isDir = e.is_directory(ec);
     auto absPath = e.path().string();
 
+    // Name filter: hide non-matching files, and folders with no matching
+    // descendant. Surviving folders auto-expand below so the matches show.
+    if (self->navFilterActive())
+    {
+        if (isDir) { if (!self->navDirHasMatch(e.path())) return; }
+        else if (!self->navNameMatches(name))             return;
+    }
+
     // In-place rename: replace the row with an InputText.
     if (renameTarget == absPath)
     {
@@ -1790,6 +1843,8 @@ static void navRenderEntry(Editor *self,
         // one frame the toolbar button set the request.
         if (self->navBulkOpenRequest() >= 0)
             ImGui::SetNextItemOpen(self->navBulkOpenRequest() == 1, ImGuiCond_Always);
+        else if (self->navFilterActive())
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always);   // reveal filtered matches
         bool open = ImGui::TreeNodeEx(name.c_str(), flags);
         navTooltip(e, true);
         navDnD(true);
@@ -1940,6 +1995,8 @@ static void navRenderFlat(Editor *self, const std::filesystem::path &root,
         // Flat view shows project source/content only.
         if (!self->navIsCodeFile(it->path()))
             continue;
+        if (!self->navNameMatches(name))   // name filter
+            continue;
         auto canon = std::filesystem::weakly_canonical(it->path(), ec);
         if (!seen.insert((ec ? it->path() : canon).string()).second)
             continue; // no dupes
@@ -2054,12 +2111,49 @@ void Editor::renderNavigationPanel()
     if (ImGui::Begin("Navigation##projectNav", &navPanelVisible))
     {
         auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
-        ImGui::TextDisabled("%s", root.string().c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("..."))
+
+        // Project path: WRAPPED (long paths don't overflow the panel) and clickable
+        // — click it to edit the root directly; type a folder + Enter to switch.
+        static bool navEditingPath = false;
+        static char navPathBuf[1024] = {0};
+        if (navEditingPath)
         {
-            openProjectFolderPicker();
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            bool commit = ImGui::InputText("##navPathEdit", navPathBuf, sizeof(navPathBuf),
+                                           ImGuiInputTextFlags_EnterReturnsTrue);
+            if (commit)
+            {
+                std::error_code pec;
+                std::filesystem::path np(navPathBuf);
+                if (std::filesystem::is_directory(np, pec))
+                    setProjectRoot(np);
+                navEditingPath = false;
+            }
+            else if (ImGui::IsItemDeactivated())
+                navEditingPath = false;   // focus loss cancels
         }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", root.string().c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Click to edit the project path");
+            if (ImGui::IsItemClicked())
+            {
+                std::snprintf(navPathBuf, sizeof(navPathBuf), "%s", root.string().c_str());
+                navEditingPath = true;
+            }
+        }
+
+        // Name filter — only entries whose name contains this show (matching files
+        // keep their ancestor folders visible; folders auto-expand to reveal them).
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputTextWithHint("##navFilter", "filter by name...", navFilterBuf, sizeof(navFilterBuf));
+
+        if (ImGui::SmallButton("Pick..."))
+            openProjectFolderPicker();
+        ImGui::SameLine();
         // Filters tucked into a popup; defaults persisted in [editor] of settings.txt.
         if (ImGui::SmallButton("Filters"))
             ImGui::OpenPopup("##navFilters");
