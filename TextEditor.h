@@ -1225,6 +1225,7 @@ protected:
 		Coordinate end;
 		FoldType type;
 		bool folded = false;
+		bool docComment = false;   // Comment fold whose run is `///` doc-comments (distinct preview)
 
 		FoldRange() = default;
 		FoldRange(const Coordinate& s, const Coordinate& e, FoldType t, bool f = false)

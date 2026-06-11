@@ -952,7 +952,7 @@ void TextEditor::renderText()
 					const char* preview = nullptr;
 					switch (fr.type)
 					{
-					case Comment:       preview = " /*...*/"; break;
+					case Comment:       preview = fr.docComment ? " ///..." : " /*...*/"; break;
 					case IfDef:         preview = " #if...";  break;
 					case Region:        preview = " //...";   break;
 					case PragmaRegion:  preview = " //...";   break;
@@ -3878,18 +3878,22 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	}
 	int  lineCommentBlockStart = -1;        // first line of current run, or -1
 	int  lineCommentBlockCol = 0;          // column where the // sits on start line
+	bool lineCommentBlockTriple = false;    // run's start line is a `///` doc comment
 	auto flushLineCommentBlock = [&](int endLine)
 		{
 			if (lineCommentBlockStart < 0) return;
 			int runLength = endLine - lineCommentBlockStart + 1;
 			if (runLength >= 3)
 			{
-				push_back(FoldRange(
+				FoldRange fr(
 					Coordinate(lineCommentBlockStart, lineCommentBlockCol),
 					Coordinate(endLine, 0),
-					Comment));
+					Comment);
+				fr.docComment = lineCommentBlockTriple;
+				push_back(fr);
 			}
 			lineCommentBlockStart = -1;
+			lineCommentBlockTriple = false;
 		};
 
 	for (int line = 0; line < lineCount; ++line)
@@ -4078,6 +4082,9 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				{
 					lineCommentBlockStart = line;
 					lineCommentBlockCol = static_cast<int>(idx2);
+					// A `///` doc-comment run gets its own preview. Detected by three
+					// slashes at the marker column (works for // langs; harmless else).
+					lineCommentBlockTriple = (text.compare(idx2, 3, "///") == 0);
 				}
 			}
 			else
