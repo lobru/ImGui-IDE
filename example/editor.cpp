@@ -2166,13 +2166,24 @@ void Editor::renderNavigationPanel()
     {
         auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
 
-        // Project path: WRAPPED (long paths don't overflow the panel) and clickable
-        // — click it to edit the root directly; type a folder + Enter to switch.
+        // Row 1: a small nameless folder-picker button on the LEFT, then the project
+        // path filling the rest. The path is right-aligned + truncated (tail kept) by
+        // default with the full path on hover; a setting switches to wrapping. Click
+        // the path to edit the root in place (type a folder + Enter); focus loss
+        // without committing reverts to the display.
         static bool navEditingPath = false;
+        static bool navPathFocus = false;     // one-shot: focus the input on entry
         static char navPathBuf[1024] = {0};
+        if (ImGui::SmallButton("..."))
+            openProjectFolderPicker();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Pick project folder");
+        ImGui::SameLine();
+
         if (navEditingPath)
         {
             ImGui::SetNextItemWidth(-FLT_MIN);
+            if (navPathFocus) { ImGui::SetKeyboardFocusHere(); navPathFocus = false; }
             bool commit = ImGui::InputText("##navPathEdit", navPathBuf, sizeof(navPathBuf),
                                            ImGuiInputTextFlags_EnterReturnsTrue);
             if (commit)
@@ -2184,39 +2195,56 @@ void Editor::renderNavigationPanel()
                 navEditingPath = false;
             }
             else if (ImGui::IsItemDeactivated())
-                navEditingPath = false;   // focus loss cancels
+                navEditingPath = false;   // focus loss without Enter reverts to display
         }
         else
         {
+            const std::string full = root.string();
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            ImGui::TextWrapped("%s", root.string().c_str());
+            if (navPathWrap)
+            {
+                ImGui::TextWrapped("%s", full.c_str());
+            }
+            else
+            {
+                // Truncate the FRONT (keep the tail = deepest folder) to fit, then
+                // right-align what remains.
+                float avail = ImGui::GetContentRegionAvail().x;
+                std::string shown = full;
+                if (ImGui::CalcTextSize(full.c_str()).x > avail && full.size() > 1)
+                {
+                    size_t lo = 0;
+                    while (lo < full.size() &&
+                           ImGui::CalcTextSize(("..." + full.substr(lo)).c_str()).x > avail)
+                        ++lo;
+                    shown = "..." + full.substr(lo);
+                }
+                float w = ImGui::CalcTextSize(shown.c_str()).x;
+                if (avail > w + 2.0f)
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - w));
+                ImGui::TextUnformatted(shown.c_str());
+            }
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Click to edit the project path");
+                ImGui::SetTooltip("%s\n(click to edit)", full.c_str());
             if (ImGui::IsItemClicked())
             {
-                std::snprintf(navPathBuf, sizeof(navPathBuf), "%s", root.string().c_str());
+                std::snprintf(navPathBuf, sizeof(navPathBuf), "%s", full.c_str());
                 navEditingPath = true;
+                navPathFocus = true;
             }
         }
 
-        // Name filter — only entries whose name contains this show (matching files
-        // keep their ancestor folders visible; folders auto-expand to reveal them).
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputTextWithHint("##navFilter", "filter by name...", navFilterBuf, sizeof(navFilterBuf));
-
-        if (ImGui::SmallButton("Pick..."))
-            openProjectFolderPicker();
-        ImGui::SameLine();
-        // Filters tucked into a popup; defaults persisted in [editor] of settings.txt.
+        // Row 2: Filters popup + collapse/expand. Filter box goes BELOW the separator.
         if (ImGui::SmallButton("Filters"))
             ImGui::OpenPopup("##navFilters");
         if (ImGui::BeginPopup("##navFilters"))
         {
-            ImGui::Checkbox("Show dotfiles (.git, .env, …)", &navShowDotFiles);
+            ImGui::Checkbox("Show dotfiles (.git, .env, ...)", &navShowDotFiles);
             ImGui::Checkbox("Code / project files only", &navCodeOnly);
             ImGui::Checkbox("Show excluded items", &navShowExcluded);
             ImGui::Checkbox("Flat view (no folder nesting)", &navFlatFiles);
+            ImGui::Checkbox("Wrap project path", &navPathWrap);
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -2230,6 +2258,11 @@ void Editor::renderNavigationPanel()
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Expand all folders");
         ImGui::Separator();
+
+        // Name filter — below the separator. Only entries whose name contains this
+        // show (matching files keep their ancestor folders visible + auto-expand).
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputTextWithHint("##navFilter", "filter by name...", navFilterBuf, sizeof(navFilterBuf));
 
         navContextPath.clear();
         navVisibleOrder.clear();   // rebuilt this frame in render order (shift-range select)
@@ -6263,6 +6296,8 @@ void Editor::loadSettings()
                 navCodeOnly = (v == "1" || v == "true");
             else if (k == "nav_flat")
                 navFlatFiles = (v == "1" || v == "true");
+            else if (k == "nav_path_wrap")
+                navPathWrap = (v == "1" || v == "true");
         }
         else if (section == "toolchains")
         {
@@ -6374,6 +6409,7 @@ void Editor::saveSettings()
     f << "nav_show_excl=" << (navShowExcluded ? "1" : "0") << "\n";
     f << "nav_code_only=" << (navCodeOnly ? "1" : "0") << "\n";
     f << "nav_flat=" << (navFlatFiles ? "1" : "0") << "\n";
+    f << "nav_path_wrap=" << (navPathWrap ? "1" : "0") << "\n";
     f << "font_size=" << prefFontSize << "\n";
     if (!fontPath.empty())
         f << "font_path=" << fontPath << "\n";

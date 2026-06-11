@@ -371,6 +371,7 @@ private:
 	bool         navShowExcluded = false;   // expose hidden-from-view items
 	bool         navCodeOnly     = false;   // hide non-source files
 	bool         navFlatFiles    = false;   // collapse folder bodies (show folders only)
+	bool         navPathWrap     = false;   // project-path display: wrap (true) vs right-align+truncate (false)
 	int          navSetAllOpen   = -1;      // one-shot bulk tree open/close: -1 none, 0 collapse all, 1 expand all
 	std::unordered_map<std::string, bool> navExcluded; // abs path → true = hidden in tree
 	std::unordered_set<std::string> navSelected;       // canonical abs paths multi-selected in the tree
