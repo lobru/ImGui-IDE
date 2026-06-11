@@ -387,6 +387,15 @@ private:
 	std::vector<std::string> navVisibleOrder;  // entries in render order this frame (for range select)
 	std::string  navPendingDelete;          // path queued for confirm-delete modal
 	std::string  navDragSource;             // payload for the move/copy drag-source
+	// Nav directory-listing cache (see navCachedDir/navCachedFlatList below).
+	struct NavDirListing { std::vector<std::filesystem::directory_entry> entries; double scanned = -1.0; };
+	struct NavFlatItem { std::filesystem::path path; std::string name; };
+	std::unordered_map<std::string, NavDirListing> navDirCache;  // tree view: per-dir, sorted
+	std::vector<NavFlatItem> navFlatCache;  // flat view: whole-tree file list, sorted, unfiltered
+	std::string  navFlatCacheRoot;          // root the flat cache was built for
+	bool         navFlatCacheDot = false;   // showDot state the flat cache was built for
+	double       navFlatCacheTime = -1.0;   // ImGui::GetTime() of the last flat rebuild
+	bool         navListDirty = false;      // an edit invalidated the listings; rebuild next render
 	void         navOpenPathInExplorer(const std::string& path);
 	void         navInitDockLayout(unsigned int dockId);   // first-frame split layout
 	void         navDeletePath(const std::string& p);      // recycle bin (Win) / fallback
@@ -411,6 +420,13 @@ public:
 	void         navDragSourceSet(const std::string& p) { navDragSource = p; }
 	void         navMoveOrCopy(const std::string& src,
 	                           const std::string& destDir, bool copy);
+	// Cached directory listings — the nav-render helpers call these instead of
+	// walking the filesystem every frame (the panel's dominant cost). A short TTL
+	// refreshes them; navMarkListDirty() forces an immediate rebuild after the
+	// nav's own edits (rename/move/delete) so the change shows next frame.
+	const std::vector<std::filesystem::directory_entry>& navCachedDir(const std::filesystem::path& dir);
+	const std::vector<NavFlatItem>& navCachedFlatList(const std::filesystem::path& root, bool showDot);
+	void         navMarkListDirty() { navListDirty = true; }
 	// Public so the static nav-render helpers (navRenderEntry/navRenderFlat) can
 	// draw an image thumbnail in a file's hover tooltip.
 	static bool  isImageExt(const std::string& ext);

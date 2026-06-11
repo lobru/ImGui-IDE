@@ -1651,6 +1651,112 @@ void Editor::navMoveOrCopy(const std::string &src,
     {
         std::filesystem::rename(s, target, ec);
     }
+    navMarkListDirty();
+}
+
+// Cached, sorted listing of one directory. The nav tree calls this every frame
+// instead of re-running a directory_iterator (+ sort + per-entry is_directory)
+// per expanded folder — that filesystem churn was the panel's dominant cost. A
+// 0.5s TTL absorbs external changes; the nav's own edits call navMarkListDirty.
+// Safe to hold the returned reference across recursive calls: inserting new keys
+// into an unordered_map never invalidates references to existing elements.
+const std::vector<std::filesystem::directory_entry> &
+Editor::navCachedDir(const std::filesystem::path &dir)
+{
+    const double kTTL = 0.5;
+    double now = ImGui::GetTime();
+    auto &slot = navDirCache[dir.string()];
+    if (slot.scanned >= 0.0 && (now - slot.scanned) < kTTL)
+        return slot.entries;
+    slot.entries.clear();
+    std::error_code ec;
+    for (auto &e : std::filesystem::directory_iterator(
+             dir, std::filesystem::directory_options::skip_permission_denied, ec))
+    {
+        if (ec)
+            break;
+        slot.entries.push_back(e);
+    }
+    std::sort(slot.entries.begin(), slot.entries.end(), [](const auto &a, const auto &b) {
+        bool aDir = a.is_directory(), bDir = b.is_directory();
+        if (aDir != bDir)
+            return aDir;
+        auto an = a.path().filename().string(), bn = b.path().filename().string();
+        std::transform(an.begin(), an.end(), an.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        std::transform(bn.begin(), bn.end(), bn.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        return an < bn;
+    });
+    slot.scanned = now;
+    return slot.entries;
+}
+
+// Cached whole-tree file list for flat view. The recursive walk (up to 20000
+// entries) used to run every frame; now it runs at most every 0.5s (or on edit).
+// The list is unfiltered by the name box — that filter is applied per-frame at
+// render so changing it doesn't force a re-walk.
+const std::vector<Editor::NavFlatItem> &
+Editor::navCachedFlatList(const std::filesystem::path &root, bool showDot)
+{
+    const double kTTL = 0.5;
+    double now = ImGui::GetTime();
+    std::string rootKey = root.string();
+    if (navFlatCacheTime >= 0.0 && navFlatCacheRoot == rootKey &&
+        navFlatCacheDot == showDot && (now - navFlatCacheTime) < kTTL)
+        return navFlatCache;
+
+    navFlatCache.clear();
+    navFlatCacheRoot = rootKey;
+    navFlatCacheDot = showDot;
+    navFlatCacheTime = now;
+
+    std::error_code ec;
+    std::unordered_set<std::string> seen;
+    int budget = 20000;
+    auto isBuildDir = [](const std::string &n) {
+        return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
+               n == "bin" || n == "obj" || n == "out" || n == "build" ||
+               n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
+               n == "__pycache__" || n == "packages" || n == "Debug" || n == "Release";
+    };
+    for (auto it = std::filesystem::recursive_directory_iterator(
+             root, std::filesystem::directory_options::skip_permission_denied, ec);
+         it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+    {
+        if (ec)
+        {
+            ec.clear();
+            continue;
+        }
+        auto name = it->path().filename().string();
+        if (it->is_directory(ec))
+        {
+            bool dotdir = !showDot && !name.empty() && name[0] == '.';
+            if (dotdir || isBuildDir(name) || navIsExcluded(it->path()))
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (--budget < 0)
+            break;
+        if (!it->is_regular_file(ec))
+            continue;
+        if (!showDot && !name.empty() && name[0] == '.')
+            continue;
+        if (navIsExcluded(it->path()))
+            continue;
+        if (!navIsCodeFile(it->path()))
+            continue;
+        auto canon = std::filesystem::weakly_canonical(it->path(), ec);
+        if (!seen.insert((ec ? it->path() : canon).string()).second)
+            continue;
+        navFlatCache.push_back({it->path(), name});
+    }
+    std::sort(navFlatCache.begin(), navFlatCache.end(), [](const NavFlatItem &a, const NavFlatItem &b) {
+        std::string an = a.name, bn = b.name;
+        std::transform(an.begin(), an.end(), an.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        std::transform(bn.begin(), bn.end(), bn.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        return an < bn;
+    });
+    return navFlatCache;
 }
 
 // Best-effort "send to recycle bin" so right-click → Delete isn't a one-way
@@ -1682,6 +1788,7 @@ void Editor::navDeletePath(const std::string &p)
         std::filesystem::remove_all(p, dec);
     }
 #endif
+    navMarkListDirty();
 }
 
 void Editor::navOpenPathInExplorer(const std::string &path)
@@ -1768,6 +1875,7 @@ static void navRenderEntry(Editor *self,
                 auto target = e.path().parent_path() / newName;
                 std::error_code rec;
                 std::filesystem::rename(e.path(), target, rec);
+                self->navMarkListDirty();
             }
             renameTarget.clear();
         }
@@ -1964,26 +2072,11 @@ static void renderDirNode(Editor *self,
 {
     if (depth > 20)
         return;
-    std::error_code ec;
-    std::vector<std::filesystem::directory_entry> entries;
-    for (auto &e : std::filesystem::directory_iterator(
-             dir, std::filesystem::directory_options::skip_permission_denied, ec))
-    {
-        if (ec)
-            break;
-        entries.push_back(e);
-    }
-    std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
-        bool aDir = a.is_directory(), bDir = b.is_directory();
-        if (aDir != bDir)
-            return aDir;
-        auto an = a.path().filename().string(), bn = b.path().filename().string();
-        std::transform(an.begin(), an.end(), an.begin(),
-                       [](unsigned char c) { return (char)std::tolower(c); });
-        std::transform(bn.begin(), bn.end(), bn.begin(),
-                       [](unsigned char c) { return (char)std::tolower(c); });
-        return an < bn;
-    });
+    // Cached, sorted listing (TTL-refreshed) — no per-frame filesystem walk.
+    // The reference stays valid across the recursive renderDirNode calls below:
+    // those insert new keys into navDirCache, which never invalidates references
+    // to existing unordered_map elements.
+    const auto &entries = self->navCachedDir(dir);
     for (auto &e : entries)
     {
         auto name = e.path().filename().string();
@@ -2009,80 +2102,32 @@ static void renderDirNode(Editor *self,
 static void navRenderFlat(Editor *self, const std::filesystem::path &root,
                           bool showDot, std::string &contextPath)
 {
-    std::error_code ec;
-    std::vector<std::filesystem::path> files;
-    std::unordered_set<std::string> seen; // dedupe by canonical path
-    int budget = 20000;
-    auto isBuildDir = [](const std::string &n) {
-        return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
-               n == "bin" || n == "obj" || n == "out" || n == "build" ||
-               n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
-               n == "__pycache__" || n == "packages" || n == "Debug" || n == "Release";
-    };
-    for (auto it = std::filesystem::recursive_directory_iterator(
-             root, std::filesystem::directory_options::skip_permission_denied, ec);
-         it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+    // Cached whole-tree listing (built at most every 0.5s, not every frame). The
+    // name filter is applied here per-frame so typing in it doesn't re-walk.
+    const auto &files = self->navCachedFlatList(root, showDot);
+    int id = 0;
+    for (const auto &item : files)
     {
-        if (ec)
-        {
-            ec.clear();
+        if (!self->navNameMatches(item.name)) // name filter (cheap string compare)
             continue;
-        }
-        auto name = it->path().filename().string();
-        if (it->is_directory(ec))
-        {
-            // Don't descend into build/vendor/vcs trees — that's what produced
-            // junk + duplicate copies of project files in the flat list.
-            bool dotdir = !showDot && !name.empty() && name[0] == '.';
-            if (dotdir || isBuildDir(name) || self->navIsExcluded(it->path()))
-                it.disable_recursion_pending();
-            continue;
-        }
-        if (--budget < 0)
-            break;
-        if (!it->is_regular_file(ec))
-            continue; // actual files only
-        if (!showDot && !name.empty() && name[0] == '.')
-            continue;
-        if (self->navIsExcluded(it->path()))
-            continue;
-        // Flat view shows project source/content only.
-        if (!self->navIsCodeFile(it->path()))
-            continue;
-        if (!self->navNameMatches(name))   // name filter
-            continue;
-        auto canon = std::filesystem::weakly_canonical(it->path(), ec);
-        if (!seen.insert((ec ? it->path() : canon).string()).second)
-            continue; // no dupes
-        files.push_back(it->path());
-    }
-    std::sort(files.begin(), files.end(), [](const auto &a, const auto &b) {
-        auto an = a.filename().string(), bn = b.filename().string();
-        std::transform(an.begin(), an.end(), an.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-        std::transform(bn.begin(), bn.end(), bn.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-        return an < bn;
-    });
-    for (size_t i = 0; i < files.size(); ++i)
-    {
-        ImGui::PushID((int)i);
-        auto name = files[i].filename().string();
-        if (ImGui::Selectable(name.c_str()))
-            self->openFile(files[i].string());
+        ImGui::PushID(id++);
+        if (ImGui::Selectable(item.name.c_str()))
+            self->openFile(item.path.string());
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
         {
             std::error_code rec;
-            auto rel = std::filesystem::relative(files[i], root, rec);
-            auto ext = files[i].extension().string();
+            auto rel = std::filesystem::relative(item.path, root, rec);
+            auto ext = item.path.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted((rec ? files[i] : rel).string().c_str());
+            ImGui::TextUnformatted((rec ? item.path : rel).string().c_str());
             if (Editor::isImageExt(ext))
-                self->navShowImageThumbnail(files[i].string());
+                self->navShowImageThumbnail(item.path.string());
             ImGui::EndTooltip();
         }
         if (ImGui::BeginPopupContextItem())
         {
-            contextPath = files[i].string();
+            contextPath = item.path.string();
             ImGui::EndPopup();
         }
         ImGui::PopID();
@@ -2165,6 +2210,16 @@ void Editor::renderNavigationPanel()
     if (ImGui::Begin("Navigation##projectNav", &navPanelVisible))
     {
         auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
+
+        // A nav edit (rename/move/delete/paste) invalidated the cached listings.
+        // Clear here — at the top, before anything iterates a cached vector — so a
+        // mutation that fires mid-render can't pull the rug out from under the loop.
+        if (navListDirty)
+        {
+            navDirCache.clear();
+            navFlatCacheTime = -1.0;
+            navListDirty = false;
+        }
 
         // Row 1: a small nameless folder-picker button on the LEFT, then the project
         // path filling the rest. The path is right-aligned + truncated (tail kept) by
@@ -2371,6 +2426,7 @@ void Editor::renderNavigationPanel()
                                           pec);
                 if (navClipboardIsCut)
                     navClipboardPath.clear();
+                navMarkListDirty();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Rename"))
@@ -2449,6 +2505,7 @@ void Editor::renderNavigationPanel()
                 {
                     navDeletePath(navPendingDelete);
                 }
+                navMarkListDirty();
                 navPendingDelete.clear();
                 ImGui::CloseCurrentPopup();
             }
