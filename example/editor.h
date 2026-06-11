@@ -185,6 +185,11 @@ public:
 	// Frame-pacing prefs, read by main.cpp each loop iteration.
 	int  fpsLimit() const       { return prefFpsLimit; }
 	bool idleThrottle() const   { return prefIdleThrottle; }
+
+	// Themes — public so main.cpp can set the default before the Editor exists.
+	static int  themeCount();
+	static const char* themeName(int index);
+	static void applyTheme(int index);      // sets ImGui style colors + rounding
 private:
 
 	// Languages discovered at startup from `./languages/*.lang` (or relative to
@@ -320,6 +325,13 @@ private:
 	void        navigateBack();             // return to the previous location
 	void        navigateForward();          // re-apply a location we backed out of
 	bool        showAboutDialog = false;    // Help > About ImGui-IDE popup request
+
+	// Theme system: a few built-in palettes + the live ImGui style editor. The
+	// chosen theme persists (prefTheme) and is applied after settings load + on
+	// every menu pick. applyTheme is static so main.cpp can set the default before
+	// the Editor exists.
+	int         prefTheme = 0;              // index into the theme table
+	bool        showStyleEditor = false;    // View > Style Editor window toggle
 
 	enum class State {
 		edit,

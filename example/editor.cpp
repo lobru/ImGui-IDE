@@ -292,6 +292,7 @@ Editor::Editor()
     loadRuntimeLanguages();
     // Load editor-wide preferences (interpreter overrides, build commands, etc.)
     loadSettings();
+    applyTheme(prefTheme);   // restore the saved theme over main.cpp's default
     // If the user picked a custom font in a previous session, load it now into
     // the atlas so the first render uses it. Empty path = stick with bundled.
     if (!fontPath.empty())
@@ -6079,6 +6080,11 @@ void Editor::loadSettings()
                 prefFormatBraceJava = (v == "1" || v == "true");
             else if (k == "show_fps")
                 prefShowFps = (v == "1" || v == "true");
+            else if (k == "theme")
+            {
+                prefTheme = std::atoi(v.c_str());
+                if (prefTheme < 0 || prefTheme >= themeCount()) prefTheme = 0;
+            }
             else if (k == "ctrl_scroll_zoom")
                 prefCtrlScrollZoom = (v == "1" || v == "true");
             else if (k == "autocomplete")
@@ -6205,6 +6211,7 @@ void Editor::saveSettings()
     f << "format_brace_js=" << (prefFormatBraceJs ? "1" : "0") << "\n";
     f << "format_brace_java=" << (prefFormatBraceJava ? "1" : "0") << "\n";
     f << "show_fps=" << (prefShowFps ? "1" : "0") << "\n";
+    f << "theme=" << prefTheme << "\n";
     f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
     f << "autocomplete=" << (autocomplete ? "1" : "0") << "\n";
     f << "invert_pan=" << (prefInvertPan ? "1" : "0") << "\n";
@@ -9475,6 +9482,22 @@ void Editor::renderMenuBar()
                 decreaseFontSIze();
             }
             ImGui::Separator();
+            if (ImGui::BeginMenu("Theme"))
+            {
+                for (int i = 0; i < themeCount(); ++i)
+                {
+                    if (ImGui::MenuItem(themeName(i), nullptr, prefTheme == i))
+                    {
+                        prefTheme = i;
+                        applyTheme(i);
+                        saveSettings();
+                    }
+                }
+                ImGui::Separator();
+                ImGui::MenuItem("Style Editor...", nullptr, &showStyleEditor);
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
             bool flag;
             flag = e.IsShowLineNumbersEnabled();
             if (ImGui::MenuItem("Show Line Numbers", nullptr, &flag))
@@ -9757,6 +9780,17 @@ void Editor::renderMenuBar()
         if (ImGui::Button("Close", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
+    }
+
+    // View > Style Editor — ImGui's built-in live style editor for fine-tuning the
+    // current theme's colours/sizes. Changes are live (not persisted); pick a Theme
+    // again to reset. Lets the user customize on top of the chosen palette.
+    if (showStyleEditor)
+    {
+        ImGui::SetNextWindowSize(ImVec2(420.0f, 540.0f), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Style Editor", &showStyleEditor))
+            ImGui::ShowStyleEditor();
+        ImGui::End();
     }
 
     // global keyboard shortcuts (work whenever no input wants the keys)
@@ -10054,6 +10088,117 @@ void Editor::renderGitDialogs()
         if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
+    }
+}
+
+// ── Themes ───────────────────────────────────────────────────────────────────
+static const char* kThemeNames[] = {
+    "ImGui-IDE Dark", "Midnight", "Light", "High Contrast", "Classic Dark",
+};
+int Editor::themeCount() { return (int) (sizeof(kThemeNames) / sizeof(kThemeNames[0])); }
+const char* Editor::themeName(int i) { return (i >= 0 && i < themeCount()) ? kThemeNames[i] : "?"; }
+
+// Apply a built-in theme: shared rounding/borders + a per-theme palette. Does NOT
+// touch structural prefs (window padding, scrollbar size) so those persist across
+// theme switches. The ImGui style editor (View > Style Editor) can override live.
+void Editor::applyTheme(int index)
+{
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowRounding = 6.0f; s.ChildRounding = 4.0f; s.FrameRounding = 4.0f;
+    s.PopupRounding = 4.0f;  s.GrabRounding = 3.0f;  s.TabRounding = 5.0f;
+    s.ScrollbarRounding = 4.0f; s.WindowBorderSize = 1.0f; s.FrameBorderSize = 0.0f;
+    s.TabBarBorderSize = 1.0f;
+
+    ImVec4* c = s.Colors;
+    switch (index)
+    {
+    case 4: // Classic Dark — stock ImGui, no recolor.
+        ImGui::StyleColorsDark();
+        return;
+
+    case 3: // High Contrast — near-black with bright amber/cyan accents.
+        ImGui::StyleColorsDark();
+        c[ImGuiCol_WindowBg]      = ImVec4(0.04f, 0.04f, 0.05f, 1.00f);
+        c[ImGuiCol_ChildBg]       = ImVec4(0.06f, 0.06f, 0.07f, 1.00f);
+        c[ImGuiCol_PopupBg]       = ImVec4(0.05f, 0.05f, 0.06f, 0.98f);
+        c[ImGuiCol_FrameBg]       = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
+        c[ImGuiCol_TitleBgActive] = ImVec4(0.16f, 0.14f, 0.06f, 1.00f);
+        c[ImGuiCol_Header]        = ImVec4(0.85f, 0.55f, 0.10f, 0.55f);
+        c[ImGuiCol_HeaderHovered] = ImVec4(0.95f, 0.65f, 0.15f, 0.80f);
+        c[ImGuiCol_HeaderActive]  = ImVec4(1.00f, 0.72f, 0.20f, 1.00f);
+        c[ImGuiCol_Button]        = ImVec4(0.20f, 0.20f, 0.24f, 1.00f);
+        c[ImGuiCol_ButtonHovered] = ImVec4(0.95f, 0.65f, 0.15f, 0.70f);
+        c[ImGuiCol_ButtonActive]  = ImVec4(1.00f, 0.72f, 0.20f, 1.00f);
+        c[ImGuiCol_CheckMark]     = ImVec4(0.30f, 0.95f, 0.95f, 1.00f);
+        c[ImGuiCol_TabSelected]   = ImVec4(0.30f, 0.24f, 0.06f, 1.00f);
+        c[ImGuiCol_Text]          = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
+        return;
+
+    case 2: // Light.
+        ImGui::StyleColorsLight();
+        c[ImGuiCol_WindowBg]      = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
+        c[ImGuiCol_Header]        = ImVec4(0.40f, 0.55f, 0.85f, 0.55f);
+        c[ImGuiCol_HeaderHovered] = ImVec4(0.40f, 0.55f, 0.85f, 0.75f);
+        c[ImGuiCol_HeaderActive]  = ImVec4(0.36f, 0.50f, 0.80f, 1.00f);
+        c[ImGuiCol_TabSelected]   = ImVec4(0.62f, 0.72f, 0.92f, 1.00f);
+        c[ImGuiCol_TabHovered]    = ImVec4(0.55f, 0.66f, 0.90f, 1.00f);
+        return;
+
+    case 1: // Midnight — deep blue-black, cyan accents.
+        ImGui::StyleColorsDark();
+        c[ImGuiCol_WindowBg]      = ImVec4(0.07f, 0.08f, 0.12f, 1.00f);
+        c[ImGuiCol_ChildBg]       = ImVec4(0.08f, 0.09f, 0.14f, 1.00f);
+        c[ImGuiCol_PopupBg]       = ImVec4(0.06f, 0.07f, 0.11f, 0.98f);
+        c[ImGuiCol_TitleBgActive] = ImVec4(0.10f, 0.13f, 0.22f, 1.00f);
+        c[ImGuiCol_MenuBarBg]     = ImVec4(0.09f, 0.11f, 0.17f, 1.00f);
+        c[ImGuiCol_FrameBg]       = ImVec4(0.12f, 0.14f, 0.21f, 1.00f);
+        c[ImGuiCol_FrameBgHovered]= ImVec4(0.16f, 0.19f, 0.28f, 1.00f);
+        c[ImGuiCol_Header]        = ImVec4(0.16f, 0.30f, 0.45f, 1.00f);
+        c[ImGuiCol_HeaderHovered] = ImVec4(0.20f, 0.40f, 0.60f, 1.00f);
+        c[ImGuiCol_HeaderActive]  = ImVec4(0.24f, 0.48f, 0.72f, 1.00f);
+        c[ImGuiCol_Button]        = ImVec4(0.14f, 0.22f, 0.34f, 1.00f);
+        c[ImGuiCol_ButtonHovered] = ImVec4(0.20f, 0.34f, 0.52f, 1.00f);
+        c[ImGuiCol_ButtonActive]  = ImVec4(0.26f, 0.46f, 0.70f, 1.00f);
+        c[ImGuiCol_CheckMark]     = ImVec4(0.35f, 0.80f, 0.95f, 1.00f);
+        c[ImGuiCol_SliderGrab]    = ImVec4(0.30f, 0.65f, 0.90f, 1.00f);
+        c[ImGuiCol_TabSelected]   = ImVec4(0.14f, 0.26f, 0.40f, 1.00f);
+        c[ImGuiCol_TabHovered]    = ImVec4(0.20f, 0.40f, 0.60f, 1.00f);
+        c[ImGuiCol_DockingPreview]= ImVec4(0.25f, 0.55f, 0.85f, 0.70f);
+        return;
+
+    case 0: // ImGui-IDE Dark (default) — cool gray.
+    default:
+        ImGui::StyleColorsDark();
+        c[ImGuiCol_WindowBg]            = ImVec4(0.105f, 0.115f, 0.130f, 1.00f);
+        c[ImGuiCol_ChildBg]             = ImVec4(0.120f, 0.130f, 0.145f, 1.00f);
+        c[ImGuiCol_PopupBg]             = ImVec4(0.095f, 0.105f, 0.120f, 0.98f);
+        c[ImGuiCol_Border]              = ImVec4(0.220f, 0.240f, 0.275f, 0.55f);
+        c[ImGuiCol_FrameBg]             = ImVec4(0.160f, 0.175f, 0.200f, 1.00f);
+        c[ImGuiCol_FrameBgHovered]      = ImVec4(0.215f, 0.235f, 0.270f, 1.00f);
+        c[ImGuiCol_FrameBgActive]       = ImVec4(0.255f, 0.285f, 0.330f, 1.00f);
+        c[ImGuiCol_TitleBg]             = ImVec4(0.085f, 0.095f, 0.110f, 1.00f);
+        c[ImGuiCol_TitleBgActive]       = ImVec4(0.130f, 0.150f, 0.185f, 1.00f);
+        c[ImGuiCol_MenuBarBg]           = ImVec4(0.130f, 0.140f, 0.160f, 1.00f);
+        c[ImGuiCol_Header]              = ImVec4(0.200f, 0.245f, 0.310f, 1.00f);
+        c[ImGuiCol_HeaderHovered]       = ImVec4(0.255f, 0.315f, 0.400f, 1.00f);
+        c[ImGuiCol_HeaderActive]        = ImVec4(0.300f, 0.380f, 0.480f, 1.00f);
+        c[ImGuiCol_Button]              = ImVec4(0.200f, 0.230f, 0.285f, 1.00f);
+        c[ImGuiCol_ButtonHovered]       = ImVec4(0.280f, 0.340f, 0.425f, 1.00f);
+        c[ImGuiCol_ButtonActive]        = ImVec4(0.340f, 0.420f, 0.525f, 1.00f);
+        c[ImGuiCol_Separator]           = ImVec4(0.250f, 0.270f, 0.305f, 1.00f);
+        c[ImGuiCol_Tab]                 = ImVec4(0.130f, 0.150f, 0.180f, 1.00f);
+        c[ImGuiCol_TabHovered]          = ImVec4(0.260f, 0.320f, 0.400f, 1.00f);
+        c[ImGuiCol_TabSelected]         = ImVec4(0.205f, 0.260f, 0.340f, 1.00f);
+        c[ImGuiCol_TabDimmed]           = ImVec4(0.110f, 0.120f, 0.135f, 1.00f);
+        c[ImGuiCol_TabDimmedSelected]   = ImVec4(0.160f, 0.190f, 0.240f, 1.00f);
+        c[ImGuiCol_CheckMark]           = ImVec4(0.450f, 0.620f, 0.900f, 1.00f);
+        c[ImGuiCol_SliderGrab]          = ImVec4(0.400f, 0.550f, 0.800f, 1.00f);
+        c[ImGuiCol_SliderGrabActive]    = ImVec4(0.480f, 0.640f, 0.900f, 1.00f);
+        c[ImGuiCol_ScrollbarBg]         = ImVec4(0.090f, 0.100f, 0.115f, 0.60f);
+        c[ImGuiCol_ScrollbarGrab]       = ImVec4(0.275f, 0.300f, 0.340f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.340f, 0.370f, 0.420f, 1.00f);
+        c[ImGuiCol_DockingPreview]      = ImVec4(0.300f, 0.420f, 0.620f, 0.70f);
+        return;
     }
 }
 

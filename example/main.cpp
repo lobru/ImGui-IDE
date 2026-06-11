@@ -258,49 +258,13 @@ int main(int argc, char** argv) {
 		// ── ImGui-IDE theme ──────────────────────────────────────────────────
 		// A calm, cool-gray dark theme so panels/tabs/menus read as one product
 		// rather than raw StyleColorsDark. Rounded corners + softened borders.
-		style.WindowRounding    = 6.0f;
-		style.ChildRounding     = 4.0f;
-		style.FrameRounding     = 4.0f;
-		style.PopupRounding     = 4.0f;
-		style.GrabRounding      = 3.0f;
-		style.TabRounding       = 5.0f;
-		style.ScrollbarRounding = 4.0f;
-		style.WindowBorderSize  = 1.0f;
-		style.FrameBorderSize   = 0.0f;
-		style.TabBarBorderSize  = 1.0f;
-		style.ItemSpacing       = ImVec2(8.0f, 5.0f);
-		style.FramePadding      = ImVec2(7.0f, 4.0f);
-		ImVec4* c = style.Colors;
-		c[ImGuiCol_WindowBg]            = ImVec4(0.105f, 0.115f, 0.130f, 1.00f);
-		c[ImGuiCol_ChildBg]             = ImVec4(0.120f, 0.130f, 0.145f, 1.00f);
-		c[ImGuiCol_PopupBg]             = ImVec4(0.095f, 0.105f, 0.120f, 0.98f);
-		c[ImGuiCol_Border]              = ImVec4(0.220f, 0.240f, 0.275f, 0.55f);
-		c[ImGuiCol_FrameBg]             = ImVec4(0.160f, 0.175f, 0.200f, 1.00f);
-		c[ImGuiCol_FrameBgHovered]      = ImVec4(0.215f, 0.235f, 0.270f, 1.00f);
-		c[ImGuiCol_FrameBgActive]       = ImVec4(0.255f, 0.285f, 0.330f, 1.00f);
-		c[ImGuiCol_TitleBg]             = ImVec4(0.085f, 0.095f, 0.110f, 1.00f);
-		c[ImGuiCol_TitleBgActive]       = ImVec4(0.130f, 0.150f, 0.185f, 1.00f);
-		c[ImGuiCol_MenuBarBg]           = ImVec4(0.130f, 0.140f, 0.160f, 1.00f);
-		c[ImGuiCol_Header]              = ImVec4(0.200f, 0.245f, 0.310f, 1.00f);
-		c[ImGuiCol_HeaderHovered]       = ImVec4(0.255f, 0.315f, 0.400f, 1.00f);
-		c[ImGuiCol_HeaderActive]        = ImVec4(0.300f, 0.380f, 0.480f, 1.00f);
-		c[ImGuiCol_Button]              = ImVec4(0.200f, 0.230f, 0.285f, 1.00f);
-		c[ImGuiCol_ButtonHovered]       = ImVec4(0.280f, 0.340f, 0.425f, 1.00f);
-		c[ImGuiCol_ButtonActive]        = ImVec4(0.340f, 0.420f, 0.525f, 1.00f);
-		c[ImGuiCol_Separator]           = ImVec4(0.250f, 0.270f, 0.305f, 1.00f);
-		c[ImGuiCol_Tab]                 = ImVec4(0.130f, 0.150f, 0.180f, 1.00f);
-		c[ImGuiCol_TabHovered]          = ImVec4(0.260f, 0.320f, 0.400f, 1.00f);
-		c[ImGuiCol_TabSelected]         = ImVec4(0.205f, 0.260f, 0.340f, 1.00f);
-		c[ImGuiCol_TabDimmed]           = ImVec4(0.110f, 0.120f, 0.135f, 1.00f);
-		c[ImGuiCol_TabDimmedSelected]   = ImVec4(0.160f, 0.190f, 0.240f, 1.00f);
-		c[ImGuiCol_CheckMark]           = ImVec4(0.450f, 0.620f, 0.900f, 1.00f);
-		c[ImGuiCol_SliderGrab]          = ImVec4(0.400f, 0.550f, 0.800f, 1.00f);
-		c[ImGuiCol_SliderGrabActive]    = ImVec4(0.480f, 0.640f, 0.900f, 1.00f);
-		c[ImGuiCol_ScrollbarBg]         = ImVec4(0.090f, 0.100f, 0.115f, 0.60f);
-		c[ImGuiCol_ScrollbarGrab]       = ImVec4(0.275f, 0.300f, 0.340f, 1.00f);
-		c[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.340f, 0.370f, 0.420f, 1.00f);
-		c[ImGuiCol_DockingPreview]      = ImVec4(0.300f, 0.420f, 0.620f, 0.70f);
+		style.ItemSpacing  = ImVec2(8.0f, 5.0f);
+		style.FramePadding = ImVec2(7.0f, 4.0f);
 	}
+	// Rounding + the colour palette live in Editor::applyTheme so themes are
+	// switchable at runtime (View > Theme). Set the default now; the Editor
+	// re-applies the user's saved theme (prefTheme) right after it loads settings.
+	Editor::applyTheme(0);
 
 	// setup platform/renderer backends
 	ImGui_ImplSDL3_InitForSDLGPU(window);
