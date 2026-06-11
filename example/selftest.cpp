@@ -449,7 +449,7 @@ int main()
 			"    Outer o;\n"
 			"    /*M*/;\n"
 			"}\n";
-		auto [row, col] = pos(cpp, "/*M*/");
+		auto pm = pos(cpp, "/*M*/"); int row = pm.first, col = pm.second;   // plain ints: capturing a structured binding is a C++20 ext (Apple clang -Werror)
 		auto chain = [&](std::vector<std::string> segs) {
 			return ts::resolveMemberChain(ts::Lang::Cpp, cpp, row, col, segs);
 		};
@@ -522,7 +522,7 @@ int main()
 			"    Holder h;\n"
 			"    /*E*/;\n"
 			"}\n";
-		auto [row, col] = pos(cpp, "/*E*/");
+		auto pe = pos(cpp, "/*E*/"); int row = pe.first, col = pe.second;   // plain ints (see above)
 		auto el = [&](std::vector<std::string> segs) {
 			return ts::resolveMemberChain(ts::Lang::Cpp, cpp, row, col, segs);
 		};
