@@ -1465,6 +1465,42 @@ void Editor::navSetOnlySelected(const std::filesystem::path &p)
     navSelected.insert(navCanonKey(p));
 }
 
+// ── Nav shift-click range selection ──
+// navVisibleOrder is filled in render order each frame; a shift-click records a
+// target, and navApplyRangeSelect() (called after the tree renders) selects every
+// entry between the anchor and the target inclusive.
+void Editor::navTrackVisible(const std::filesystem::path &p) { navVisibleOrder.push_back(navCanonKey(p)); }
+void Editor::navSetAnchor(const std::filesystem::path &p)    { navSelAnchor = navCanonKey(p); }
+void Editor::navRangeRequestTo(const std::filesystem::path &p) { navRangeTarget = navCanonKey(p); }
+
+void Editor::navApplyRangeSelect()
+{
+    if (navRangeTarget.empty())
+        return;
+    std::string target = navRangeTarget;
+    navRangeTarget.clear();
+    if (navSelAnchor.empty())
+    {
+        navSelected.insert(target);
+        navSelAnchor = target;
+        return;
+    }
+    int ai = -1, ti = -1;
+    for (int i = 0; i < (int) navVisibleOrder.size(); ++i)
+    {
+        if (navVisibleOrder[i] == navSelAnchor) ai = i;
+        if (navVisibleOrder[i] == target)       ti = i;
+    }
+    if (ai < 0 || ti < 0)
+    {
+        navSelected.insert(target);   // anchor/target not both visible — just add it
+        return;
+    }
+    if (ai > ti) std::swap(ai, ti);
+    for (int i = ai; i <= ti; ++i)
+        navSelected.insert(navVisibleOrder[i]);
+}
+
 // ── Nav name filter ──
 bool Editor::navNameMatches(const std::string &name) const
 {
@@ -1709,6 +1745,7 @@ static void navRenderEntry(Editor *self,
         if (isDir) { if (!self->navDirHasMatch(e.path())) return; }
         else if (!self->navNameMatches(name))             return;
     }
+    self->navTrackVisible(e.path());   // render order, for shift-click range select
 
     // In-place rename: replace the row with an InputText.
     if (renameTarget == absPath)
@@ -1848,10 +1885,20 @@ static void navRenderEntry(Editor *self,
         bool open = ImGui::TreeNodeEx(name.c_str(), flags);
         navTooltip(e, true);
         navDnD(true);
-        // Ctrl-click a folder toggles its selection (the click also toggles the
-        // expand state — acceptable; selection is for batch actions like exclude).
-        if (ImGui::IsItemClicked() && ImGui::GetIO().KeyCtrl)
-            self->navToggleSelected(absPath);
+        // Ctrl-click a folder toggles its selection; shift-click extends the range
+        // (the click also toggles the expand state — acceptable; selection is for
+        // batch actions like exclude). A plain click just expands (no select change).
+        if (ImGui::IsItemClicked())
+        {
+            ImGuiIO &dio = ImGui::GetIO();
+            if (dio.KeyShift)
+                self->navRangeRequestTo(e.path());
+            else if (dio.KeyCtrl)
+            {
+                self->navToggleSelected(absPath);
+                self->navSetAnchor(e.path());
+            }
+        }
         if (ImGui::BeginPopupContextItem())
         {
             contextPath = absPath;
@@ -1879,11 +1926,18 @@ static void navRenderEntry(Editor *self,
         navDnD(false);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
         {
-            if (ImGui::GetIO().KeyCtrl)
-                self->navToggleSelected(absPath);   // ctrl-click → add/remove from multi-selection
+            ImGuiIO &cio = ImGui::GetIO();
+            if (cio.KeyShift)
+                self->navRangeRequestTo(e.path());   // shift-click → select anchor..here
+            else if (cio.KeyCtrl)
+            {
+                self->navToggleSelected(absPath);    // ctrl-click → add/remove from selection
+                self->navSetAnchor(e.path());
+            }
             else
             {
                 self->navSetOnlySelected(absPath);
+                self->navSetAnchor(e.path());
                 self->openFile(absPath);
             }
         }
@@ -2178,6 +2232,7 @@ void Editor::renderNavigationPanel()
         ImGui::Separator();
 
         navContextPath.clear();
+        navVisibleOrder.clear();   // rebuilt this frame in render order (shift-range select)
         std::error_code ec;
         if (std::filesystem::is_directory(root, ec))
         {
@@ -2191,6 +2246,7 @@ void Editor::renderNavigationPanel()
         {
             ImGui::TextDisabled("(no project root set)");
         }
+        navApplyRangeSelect();   // resolve a pending shift-click range now that order is known
         navSetAllOpen = -1; // bulk open/close request consumed this frame
 
         // Context-menu popup. BeginPopupContextItem above sets contextPath when

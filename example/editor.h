@@ -381,6 +381,9 @@ private:
 	char         navFilterBuf[128] = {0};   // "filter by name" box (case-insensitive substring)
 	mutable std::unordered_set<std::string> navMatchDirs;   // dirs with a descendant matching the filter
 	mutable std::string navMatchFilterCached;               // filter text navMatchDirs was built for
+	std::string navSelAnchor;                  // shift-click range anchor (canon key)
+	std::string navRangeTarget;                // pending shift-click target, applied at end of frame
+	std::vector<std::string> navVisibleOrder;  // entries in render order this frame (for range select)
 	std::string  navPendingDelete;          // path queued for confirm-delete modal
 	std::string  navDragSource;             // payload for the move/copy drag-source
 	void         navOpenPathInExplorer(const std::string& path);
@@ -396,6 +399,10 @@ public:
 	bool         navIsSelected(const std::filesystem::path& p) const;     // multi-select state
 	void         navToggleSelected(const std::filesystem::path& p);       // ctrl-click
 	void         navSetOnlySelected(const std::filesystem::path& p);      // plain click / right-click
+	void         navTrackVisible(const std::filesystem::path& p);         // record render order (range select)
+	void         navSetAnchor(const std::filesystem::path& p);            // remember the range anchor
+	void         navRangeRequestTo(const std::filesystem::path& p);       // shift-click → range to here
+	void         navApplyRangeSelect();                                   // resolve a pending range (end of frame)
 	bool         navIsCodeOnly() const { return navCodeOnly; }
 	bool         navIsFlat() const     { return navFlatFiles; }
 	int          navBulkOpenRequest() const { return navSetAllOpen; }   // -1 none / 0 collapse / 1 expand
