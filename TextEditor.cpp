@@ -421,13 +421,13 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 		renderPanScrollIndicator();
 	}
 
-	if (ImGui::BeginPopup("LineNumberContextMenu"))
+	if (ImGui::BeginPopup("LineNumberContextMenu", ImGuiWindowFlags_NoMove))
 	{
 		lineNumberContextMenuCallback(contextMenuLine);
 		ImGui::EndPopup();
 	}
 
-	if (ImGui::BeginPopup("TextContextMenu"))
+	if (ImGui::BeginPopup("TextContextMenu", ImGuiWindowFlags_NoMove))
 	{
 		textContextMenuCallback(contextMenuLine, contextMenuColumn);
 		ImGui::EndPopup();
@@ -8139,6 +8139,7 @@ bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, cons
 
 	ImGuiWindowFlags flags =
 		ImGuiWindowFlags_NoFocusOnAppearing |
+		ImGuiWindowFlags_NoMove |
 		ImGuiWindowFlags_NoNav;
 
 	if (ImGui::BeginPopup("AutoCompleteContextMenu", flags))

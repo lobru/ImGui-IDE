@@ -188,7 +188,11 @@ Lang langForExtension(const std::string& extIn)
 	std::string ext = extIn;
 	std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
 	if (ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c" ||
-		ext == ".h" || ext == ".hpp" || ext == ".hxx" || ext == ".hh" || ext == ".inl")
+		ext == ".h" || ext == ".hpp" || ext == ".hxx" || ext == ".hh" || ext == ".inl" ||
+		// Shader sources (ReShade FX / HLSL) are C-like; the C++ grammar extracts
+		// their structs, functions and techniques well enough for navigation.
+		ext == ".fx" || ext == ".fxh" || ext == ".addonfx" ||
+		ext == ".hlsl" || ext == ".hlsli")
 		return Lang::Cpp;
 	if (ext == ".cs")
 		return Lang::CSharp;

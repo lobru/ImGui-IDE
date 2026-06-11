@@ -261,7 +261,7 @@ const TextEditor::Language *Editor::languageForPath(const std::string &path)
     if (ext == ".glsl" || ext == ".vert" || ext == ".frag" ||
         ext == ".geom" || ext == ".comp" || ext == ".tesc" || ext == ".tese")
         return TextEditor::Language::Glsl();
-    if (ext == ".hlsl" || ext == ".fx" || ext == ".fxh" || ext == ".addonfx")
+    if (ext == ".hlsl" || ext == ".hlsli" || ext == ".fx" || ext == ".fxh" || ext == ".addonfx")
         return TextEditor::Language::Hlsl();
     if (ext == ".json" || ext == ".jsonl" || ext == ".uplugin" || ext == ".uproject" || ext == ".gltf")
         return TextEditor::Language::Json();
@@ -2238,7 +2238,7 @@ void Editor::renderNavigationPanel()
         // Row 2: Filters popup + collapse/expand. Filter box goes BELOW the separator.
         if (ImGui::SmallButton("Filters"))
             ImGui::OpenPopup("##navFilters");
-        if (ImGui::BeginPopup("##navFilters"))
+        if (ImGui::BeginPopup("##navFilters", ImGuiWindowFlags_NoMove))
         {
             ImGui::Checkbox("Show dotfiles (.git, .env, ...)", &navShowDotFiles);
             ImGui::Checkbox("Code / project files only", &navCodeOnly);
@@ -2289,7 +2289,7 @@ void Editor::renderNavigationPanel()
         {
             ImGui::OpenPopup("##navCtx");
         }
-        if (ImGui::BeginPopup("##navCtx"))
+        if (ImGui::BeginPopup("##navCtx", ImGuiWindowFlags_NoMove))
         {
             // Cache the path on first open so it survives across frames while
             // the popup is up. (BeginPopupContextItem only fires once.)
@@ -2908,6 +2908,12 @@ void Editor::rebuildProjectIndex()
                 ".r",
                 ".jl",
                 ".dart",
+                // Shader sources (ReShade FX / HLSL) — indexed via the C++ grammar.
+                ".fx",
+                ".fxh",
+                ".addonfx",
+                ".hlsl",
+                ".hlsli",
             };
             return ok.count(e) != 0;
         };
@@ -5574,8 +5580,12 @@ void Editor::renderDevTools()
             {"Gutter markers", "renderMarkers", "TextEditor.cpp"},
             {"Mouse / pan-scroll", "handleMouseInteractions", "TextEditor.cpp"},
         };
+        // No ScrollY: let the table grow to full height so the outer window owns
+        // the scroll — that's what middleMousePanScroll(8) below pans. With an
+        // internal table scroll the pan would target the (non-scrolling) outer
+        // window and do nothing.
         if (ImGui::BeginTable("##devmap", 2,
-                              ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY))
+                              ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH))
         {
             ImGui::TableSetupColumn("Feature");
             ImGui::TableSetupColumn("Function - file");
@@ -5868,6 +5878,7 @@ void Editor::renderMarkdownPreview()
             }
             renderMarkdownInline(body, avail);
         }
+        middleMousePanScroll(9);   // markdown preview
     }
     ImGui::End();
 }
@@ -6075,6 +6086,7 @@ void Editor::renderImageWindows()
             {
                 ImGui::TextDisabled("loading…");
             }
+            middleMousePanScroll(10);   // image viewport
             ImGui::EndChild();
         }
         ImGui::End();
@@ -8538,8 +8550,35 @@ void Editor::renderDockedDocuments()
     {
         if (countDocNodes() >= 2)
         {
-            // Already two panes — the file stays opened as a central tab.
-            pushToast("Split limit: only two side-by-side editor panes", IM_COL32(240, 200, 90, 255));
+            // Already at the split limit. Don't dump the file into whatever node
+            // is "central" (that's always the left pane) — dock it as a tab in the
+            // existing LEFT or RIGHT pane so it lands on the requested side.
+            ImGuiDockNode *leftNode = nullptr, *rightNode = nullptr;
+            for (auto &up : tabs)
+            {
+                ImGuiWindow *w = ImGui::FindWindowByName(windowLabelFor(*up).c_str());
+                if (!w || !w->DockNode)
+                    continue;
+                ImGuiDockNode *nd = w->DockNode;
+                if (!leftNode || nd->Pos.x < leftNode->Pos.x)
+                    leftNode = nd;
+                if (!rightNode || nd->Pos.x > rightNode->Pos.x)
+                    rightNode = nd;
+            }
+            ImGuiDockNode *target = (pendingSideDir < 0) ? leftNode : rightNode;
+            if (target)
+            {
+                for (auto &up : tabs)
+                {
+                    if (up->id != pendingSideDocId)
+                        continue;
+                    ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), target->ID);
+                    ImGui::DockBuilderFinish(rootId);
+                    up->dockedOnce = true;   // keep the loop from re-docking it to centre
+                    up->wantFocus = true;
+                    break;
+                }
+            }
         }
         else if (central && central->IsLeafNode())
         {
@@ -8672,7 +8711,7 @@ void Editor::renderDockedDocuments()
             }
         }
     }
-    if (tabCtxIdx >= 0 && tabCtxIdx < (int)tabs.size() && ImGui::BeginPopup("##tabCtxMenu"))
+    if (tabCtxIdx >= 0 && tabCtxIdx < (int)tabs.size() && ImGui::BeginPopup("##tabCtxMenu", ImGuiWindowFlags_NoMove))
     {
         renderTabContextMenu(tabCtxIdx);
         ImGui::EndPopup();
