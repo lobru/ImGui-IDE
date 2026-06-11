@@ -10526,6 +10526,12 @@ void Editor::renderStatusBar()
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
     ImGui::BeginChild("StatusBar", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
+    // Capture the line's start X and full width BEFORE any item so the right
+    // cluster can be aligned to the true right edge. (Reading the remaining avail
+    // later — after the left cluster — yields a width short by the left cluster,
+    // which is what made the trailing status sit mid-bar instead of flush right.)
+    const float statusStartX = ImGui::GetCursorPosX();
+    const float statusFullW  = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(120.0f);
 
     if (ImGui::BeginCombo("##LangSel", langName.c_str()))
@@ -10700,8 +10706,12 @@ void Editor::renderStatusBar()
         if (errs)  trailing += ImGui::CalcTextSize(ebuf).x;
         if (warns) trailing += ImGui::CalcTextSize(wbuf).x + (errs ? glyphWidth : 0.0f);
     }
-    float off = ImGui::GetContentRegionAvail().x - trailing - glyphWidth;
-    if (off < 0.0f) off = 0.0f;
+    // Align the trailing cluster to the bar's true right edge. Clamp so it never
+    // overlaps the left cluster (lang/toolchain/git) when the window is narrow.
+    const float leftEndX = ImGui::GetCursorPosX();
+    float off = statusStartX + statusFullW - trailing - glyphWidth;
+    if (off < leftEndX + glyphWidth)
+        off = leftEndX + glyphWidth;
 
     ImGui::SameLine(off);
     ImGui::AlignTextToFramePadding();
