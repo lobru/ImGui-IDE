@@ -121,22 +121,19 @@ otherwise a clean fit for `te_*` + file IO on the add-on side.
 
 ### Web (Emscripten)
 
-The core builds with plain C++17 + ImGui and has no platform code, so an
-Emscripten build of this same target (as a static lib into a wasm host that
-brings its own ImGui+WebGL backend) is expected to work; the git-API-powered
-web IDE host is a separate track.
+Two hosts live in `hosts/web/`, both built to a single self-contained .html
+(open straight from disk, no server):
 
-## API stability
+- `main.cpp` / `build_web.sh` - minimal test host: one editor, samples,
+  localStorage persistence.
+- `ide_main.cpp` / `build_ide.sh` - **cloud IDE**: where the desktop shell
+  walks the filesystem with std::filesystem/WinAPI, this shell talks to the
+  GitHub REST API (CORS-enabled, works from any origin). Repo tree from
+  `git/trees?recursive=1`, file reads via the contents API (raw media type),
+  saves are commits via PUT (blob sha from the tree; 409/422 conflicts
+  surfaced in the status line), branch picker, new-file, and code search
+  (GitHub indexes the default branch only). Auth is a fine-grained PAT pasted
+  into Settings, persisted in localStorage. The transport-free parsing layer
+  (`gh_parse.h`) is unit-tested natively by `tests/gh_parse_test.cpp`.
 
-`TE_EMBED_VERSION` is semver; the C surface in `texteditor_embed.h` only grows
-within a major version. The C++ classes inside the DLL are deliberately **not**
-exported - the C API is the only contract.
-
-## Verified
-
-- Linux: builds clean with `-Werror -Wall -Wpedantic -Wextra` (GCC 11),
-  exports exactly the `te_*` surface (`nm -D`), and passes a `dlopen` smoke
-  test: text roundtrip + two-call sizing + truncation, line count, dirty
-  tracking, markers, safe `te_render` no-op without a bound context.
-- Windows/MSVC: built by the same CMake project; add it to CI alongside the
-  desktop IDE build (planned).
+## API
