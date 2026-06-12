@@ -21,3 +21,30 @@ jobs:
 
     - name: Build
       run: cmake --build build --config Release
+
+  # embed DLL + headless gates, in both ImGui modes (full / public-API-only).
+  # No X11/GL deps: the embed library has no backends and the tests are headless.
+  verify-embed-ubuntu:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Configure (default)
+      run: cmake -B build-embed -DCMAKE_BUILD_TYPE=Release -S embed
+
+    - name: Build (default)
+      run: cmake --build build-embed
+
+    - name: Test (default)
+      run: ctest --test-dir build-embed --output-on-failure
+
+    - name: Configure (public-ImGui-API-only)
+      run: cmake -B build-embed-shim -DCMAKE_BUILD_TYPE=Release -DTE_EMBED_NO_IMGUI_INTERNAL=ON -S embed
+
+    - name: Build (public-ImGui-API-only)
+      run: cmake --build build-embed-shim
+
+    - name: Test (public-ImGui-API-only)
+      run: ctest --test-dir build-embed-shim --output-on-failure
