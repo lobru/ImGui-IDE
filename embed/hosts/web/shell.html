@@ -1,0 +1,52 @@
+<!doctype html>
+<!--
+	shell.html - minimal emscripten shell for the ImGui-IDE web host
+	Part of ImGui-IDE (github.com/lobotomy-x/ImGuiColorTextEdit)
+	MIT license - see <https://opensource.org/licenses/MIT>.
+-->
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>ImGui-IDE web</title>
+	<style>
+		html, body {
+			margin: 0;
+			padding: 0;
+			height: 100%;
+			overflow: hidden;
+			background: #0f0f12;
+		}
+
+		#canvas {
+			display: block;
+			width: 100vw;
+			height: 100vh;
+			outline: none;
+		}
+
+		#status {
+			position: absolute;
+			top: 50%;
+			width: 100%;
+			text-align: center;
+			color: #888;
+			font: 14px system-ui, sans-serif;
+		}
+	</style>
+</head>
+<body>
+	<div id="status">loading editor…</div>
+	<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+	<script>
+		var Module = {
+			canvas: document.getElementById('canvas'),
+			onRuntimeInitialized: function() {
+				var s = document.getElementById('status');
+				if (s) { s.remove(); }
+			}
+		};
+	</script>
+	{{{ SCRIPT }}}
+</body>
+</html>
