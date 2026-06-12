@@ -10656,19 +10656,20 @@ void Editor::renderStatusBar()
     e.GetCurrentCursor(line, column);
     float glyphWidth = ImGui::CalcTextSize("#").x;
     char status[256];
+    // Filename intentionally omitted — it's already the tab label and window
+    // title; keeping it here is the widest trailing chunk and forced the cluster
+    // to overlap the left cluster on a narrow bar.
     if (prefShowFps)
     {
         std::snprintf(status, sizeof(status),
-                      "%.0f fps  Ln %d, Col %d  Tab: %d  %s",
-                      ImGui::GetIO().Framerate, line + 1, column + 1, e.GetTabSize(),
-                      std::filesystem::path(t.filename).filename().string().c_str());
+                      "%.0f fps  Ln %d, Col %d  Tab: %d",
+                      ImGui::GetIO().Framerate, line + 1, column + 1, e.GetTabSize());
     }
     else
     {
         std::snprintf(status, sizeof(status),
-                      "Ln %d, Col %d  Tab: %d  %s",
-                      line + 1, column + 1, e.GetTabSize(),
-                      std::filesystem::path(t.filename).filename().string().c_str());
+                      "Ln %d, Col %d  Tab: %d",
+                      line + 1, column + 1, e.GetTabSize());
     }
 
     // ── Right cluster: status text + dirty dot + clangd + diagnostics, right-
@@ -10708,13 +10709,17 @@ void Editor::renderStatusBar()
         if (errs)  trailing += ImGui::CalcTextSize(ebuf).x;
         if (warns) trailing += ImGui::CalcTextSize(wbuf).x + (errs ? glyphWidth : 0.0f);
     }
-    // Align the trailing cluster to the bar's true right edge. Clamp to a small
-    // left margin so a too-narrow window can't push the offset off the left edge
-    // (the trailing cluster may still overlap the left cluster when there isn't
-    // room for both — acceptable; the alternative is clipping the status text).
+    // Align the trailing cluster to the bar's true right edge, but never start it
+    // left of the left cluster's right edge (lang/toolchain/git) — that overlap is
+    // what crammed the status text over the MSVC combo on a narrow bar. The last
+    // submitted item IS the left cluster's tail; GetItemRectMax is screen-space, so
+    // convert to the local X that SameLine() expects. When the bar is too narrow
+    // for both, the cluster butts against the left one and clips at the right edge
+    // (preferable to drawing on top of the left cluster).
+    float leftEndLocal = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX();
     float off = statusStartX + statusFullW - trailing - glyphWidth;
-    if (off < statusStartX + glyphWidth)
-        off = statusStartX + glyphWidth;
+    if (off < leftEndLocal + glyphWidth)
+        off = leftEndLocal + glyphWidth;
 
     ImGui::SameLine(off);
     ImGui::AlignTextToFramePadding();
