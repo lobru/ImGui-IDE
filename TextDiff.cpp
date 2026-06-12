@@ -11,7 +11,13 @@
 //
 
 #include <cmath>
+
+// TE_NO_IMGUI_INTERNAL: public-ImGui-API-only build (function-table hosts
+// like ReShade addons). The diff view loses its custom synced horizontal
+// scrollbars and the scrollbar minimap; wheel/keyboard scrolling still works.
+#ifndef TE_NO_IMGUI_INTERNAL
 #include "imgui_internal.h"
+#endif
 
 #include "dtl.h"
 #include "TextDiff.h"
@@ -252,7 +258,7 @@ void TextDiff::renderSideBySide(const char* title, const ImVec2& size, bool bord
 	ImGui::BeginChild(title, size, border, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoNavInputs);
 
 	auto cursorScreenPos = ImGui::GetCursorScreenPos();
-	auto visibleSize = ImGui::GetCurrentWindow()->Rect().GetSize();
+	auto visibleSize = ImGui::GetWindowSize(); // == GetCurrentWindow()->Rect().GetSize(), publicly
 
 	// determine view parameters
 	leftLineNumberWidth = glyphSize.x * (leftLineNumberDigits + 4);
@@ -458,6 +464,9 @@ void TextDiff::renderSideBySideTextScrollbars() {
 	auto visibleColumnsWidth = rightLineNumberPos - leftTextPos;
 
 	if (maxColumnsWidth > visibleColumnsWidth) {
+		// the drawn scrollbars need ImGui::ScrollbarEx (internal); on
+		// public-API-only builds they're skipped - wheel/keys below still scroll
+#ifndef TE_NO_IMGUI_INTERNAL
 		auto window = ImGui::GetCurrentWindow();
 		const ImRect outerRect = window->Rect();
 		auto borderSize = std::round(window->WindowBorderSize * 0.5f);
@@ -485,6 +494,7 @@ void TextDiff::renderSideBySideTextScrollbars() {
 			static_cast<ImS64>(visibleColumnsWidth),
 			static_cast<ImS64>(maxColumnsWidth),
 			ImDrawFlags_RoundCornersAll)) { textScroll = static_cast<float>(scroll); }
+#endif // TE_NO_IMGUI_INTERNAL
 
 		if (ImGui::IsWindowHovered()) {
 			// Horizontal wheel / shift-wheel: + so tilting right scrolls the text
@@ -565,6 +575,10 @@ void TextDiff::renderSideBySideTextScrollbars() {
 //
 
 void TextDiff::renderSideBySideMiniMap() {
+#ifdef TE_NO_IMGUI_INTERNAL
+	// needs the scrollbar rect from Dear ImGui internals; disabled on
+	// public-API-only builds
+#else
 	// based on https://github.com/ocornut/imgui/issues/3114
 	if (showScrollbarMiniMap) {
 		auto window = ImGui::GetCurrentWindow();
@@ -593,4 +607,5 @@ void TextDiff::renderSideBySideMiniMap() {
 			drawList->PopClipRect();
 		}
 	}
+#endif // TE_NO_IMGUI_INTERNAL
 }

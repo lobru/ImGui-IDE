@@ -19,7 +19,15 @@
 #endif
 
 #include "imgui.h"
+
+// TE_NO_IMGUI_INTERNAL: build against the PUBLIC Dear ImGui API only, for
+// hosts that expose ImGui through a function table covering just the public
+// surface (e.g. ReShade addons). Costs, all graceful: no IME positioning,
+// no scrollbar minimap, no autocomplete-popup z-order nudge. Each guarded
+// site below names its fallback.
+#ifndef TE_NO_IMGUI_INTERNAL
 #include "imgui_internal.h"
+#endif
 
 #include "TextEditor.h"
 #include <algorithm>
@@ -205,7 +213,13 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	// estimate visible size before BeginChild for scroll adjustment calculations below
 	// (uses last frame's scrollbar state which is close enough for one-frame adjustments)
 	auto region = ImGui::GetContentRegionAvail();
-	auto visibleSize = ImGui::CalcItemSize(size, region.x, region.y);
+	// public-API replica of ImGui::CalcItemSize(size, region.x, region.y)
+	// (imgui_internal): 0 = use default, negative = available minus |value|
+	auto visibleSize = size;
+	if (visibleSize.x == 0.0f) visibleSize.x = region.x;
+	else if (visibleSize.x < 0.0f) visibleSize.x = std::max(4.0f, region.x + visibleSize.x);
+	if (visibleSize.y == 0.0f) visibleSize.y = region.y;
+	else if (visibleSize.y < 0.0f) visibleSize.y = std::max(4.0f, region.y + visibleSize.y);
 	float scrollbarSize = ImGui::GetStyle().ScrollbarSize;
 	verticalScrollBarSize = (totalSize.y > visibleSize.y) ? scrollbarSize : 0.0f;
 	horizontalScrollBarSize = (totalSize.x > visibleSize.x) ? scrollbarSize : 0.0f;
@@ -580,6 +594,9 @@ void TextEditor::renderCursors()
 	}
 
 	// IME setup unchanged...
+	// (needs ImGuiContext internals; without them the OS IME composition
+	// window may appear at a default position - typing is unaffected)
+#ifndef TE_NO_IMGUI_INTERNAL
 	if (!readOnly)
 	{
 		auto context = ImGui::GetCurrentContext();
@@ -589,6 +606,7 @@ void TextEditor::renderCursors()
 		context->PlatformImeData.InputLineHeight = context->FontSize;
 		context->PlatformImeData.ViewportId = ImGui::GetCurrentWindow()->Viewport->ID;
 	}
+#endif
 }
 
 //
@@ -1328,6 +1346,10 @@ void TextEditor::renderDecorations()
 
 void TextEditor::renderScrollbarMiniMap()
 {
+#ifdef TE_NO_IMGUI_INTERNAL
+	// needs the scrollbar rect from Dear ImGui internals; the minimap is
+	// simply disabled on public-API-only builds
+#else
 	// based on https://github.com/ocornut/imgui/issues/3114
 	// messing with Dear ImGui internals
 	if (showScrollbarMiniMap)
@@ -1380,6 +1402,7 @@ void TextEditor::renderScrollbarMiniMap()
 			drawList->PopClipRect();
 		}
 	}
+#endif // TE_NO_IMGUI_INTERNAL
 }
 
 
@@ -8151,10 +8174,14 @@ bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, cons
 
 	if (ImGui::BeginPopup("AutoCompleteContextMenu", flags))
 	{
+		// z-order nudge needs internals; without it the popup still shows,
+		// it just isn't forced above sibling floating windows on first frame
+#ifndef TE_NO_IMGUI_INTERNAL
 		if (ImGui::IsWindowAppearing())
 		{
 			ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
 		}
+#endif
 
 		// deactivate popup (if requested)
 		if (requestDeactivation)
