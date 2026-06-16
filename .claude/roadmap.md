@@ -18,13 +18,10 @@ that is still genuinely outstanding.
       `assert(column == cursor.column)` around the click→coordinate roundtrip
       (`normalizeCoordinate` at the mouse-pos call site) to localise whether
       the drift is in the pixel→column map or the tab-stop normalisation.
-- [ ] **Fold preview drawn on its own row** in some cases. Marked "worth
-      retesting" after the Python indent-fold rewrite — the spurious top-level
-      indent folds that likely caused it no longer exist. Confirm fixed or
-      capture a fresh repro; the preview is drawn inline at
-      `cursorScreenPos.x + textOffset + (maxColumn+1)*glyphSize.x` (TextEditor.cpp
-      ~L961), so an off-by-one row would point at the `py`/`lineScreenPos.y`
-      calc.
+- [x] **Fold preview drawn on its own row** — confirmed fixed (done long ago;
+      the spurious top-level Python indent folds that caused it no longer exist
+      after the indent-fold rewrite). Preview draws inline at
+      `cursorScreenPos.x + textOffset + (maxColumn+1)*glyphSize.x`.
 
 ### Polish (self-contained, no build needed to write)
 - (none open)

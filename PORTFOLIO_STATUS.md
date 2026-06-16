@@ -1,9 +1,9 @@
 # ImGuiColorTextEdit → "IDE-lite" — Status Update
 
-**Date:** 2026-06-05
+**Date:** 2026-06-11 (updated; previous update 2026-06-05)
 **Repo:** github.com/lobotomy-x/ImGuiColorTextEdit (branch `lobotomy/main`)
 **Stack:** C++17 · Dear ImGui 1.92 (docking + multi-viewport) · SDL3 + SDLGPU3 · MSVC `/W4 /WX`
-**Scale:** ~26k LOC across the core files · 678 commits on the fork
+**Scale:** ~37k LOC across core + app files · 748 commits on the fork (+69 this cycle)
 
 ## What it is
 
@@ -16,7 +16,50 @@ The long game is an embeddable editor core (the portable `TextEditor.cpp/.h` wid
 drop into other host apps — eventual ReShade / UEVR overlay builds — with the app shell
 (`example/`) as the full desktop IDE.
 
-## What I built this cycle
+## New this cycle (2026-06-05 → 2026-06-11, 69 commits)
+
+### Intellisense engine — tree-sitter project index (`tsindex`, new module)
+- **Background symbol index** for the whole project (C++, C#, Lua, Go, Rust grammars),
+  persisted to disk for instant load + incremental rebuild on project open; powers outline,
+  go-to-definition, and completion without a language server.
+- **Member-aware autocomplete** — triggers on `.` / `->` / `::` and lists the receiver type's
+  members. Resolves chained access: `a.b.c`, through method calls (`a.get().member`), STL
+  element types (`v.front().x`, `v[i].member`, `m[k].`, `opt.value().x`), and element access
+  through fields/methods (`o.vec.front().x`) — including **cross-file** chains via the index.
+  Curated STL member table covers `std::vector`, `std::string`, etc.
+- Perf hardened from an adversarial review: cached compiled queries, O(1) dedup, no duplicate
+  buffers; headless self-test gates the chain composition end-to-end.
+
+### LSP / clangd integration (new modules: `lsp_client`, `lsp_protocol`)
+- Hand-rolled **clangd transport + JSON-RPC protocol**, proven by a dedicated headless gate
+  (`lsptest`, a CTest target that skips cleanly when clangd is absent).
+- **Async completion** wired into the editor with tree-sitter as instant fallback and a status
+  indicator; **go-to-definition** routed through clangd (cross-file accurate, ts fallback);
+  **hover** tooltips (type/signature/docs); **diagnostics** error/warning count in the status bar.
+
+### Productization — "ImGui-IDE"
+- Rebranded binary (`ImGui-IDE.exe`), app icon (Explorer + taskbar), themed UI + window title,
+  Help → About dialog, attribution headers in every source file.
+- **Inno Setup installer** with Windows Explorer integration and a license-acceptance page;
+  README rewritten with a product section (features, build, install).
+
+### Navigation & UX
+- **Navigation history** — back/forward across go-to-definition and all jump types, with nav
+  arrows hidden until there's history.
+- Nav panel Ctrl-click multi-select for batch actions; exclude-from-view now also excludes from
+  the symbol index; Ctrl+L selects the line for every cursor (multi-cursor aware).
+- Fixes: tab right-click flicker (open on release), markdown-preview crash + dock-beside-file,
+  gutter line-number highlight off-by-one, status-bar right-align/dirty-dot overlap,
+  middle-click pan on all scrollable panels, multi-line `#define` bodies highlighted as code.
+
+### Reliability & cross-platform
+- Crash handler now writes a **minidump + RVA** on SEH exceptions.
+- **Linux + macOS CI fixed and green** alongside Windows (guarded Windows-only code, missing
+  std headers, GCC/Clang warning differences) — the editor core builds on all three.
+- C# go-to-def: decompile passes the runtime dir so dependent types resolve; parsed symbols
+  cached by mtime; backup folders excluded from grep/index.
+
+## Previous cycle (to 2026-06-05)
 
 ### Editor & language tooling
 - **Project navigation** tree with filters (dotfiles / code-only / excluded / flat), collapse &
@@ -77,14 +120,17 @@ them open — without losing work or losing track of who changed what:
   prompt.
 
 ## Current state
-Core IDE features ship and the build is green (`/W4 /WX`); a headless self-test guards the
-non-UI logic (colorizer, folding, language mapping). Verification of visual/cursor features is
-runtime-owned — they're confirmed in the running app, not just by "it compiles."
+The project has crossed from "extended widget demo" to **installable product**: branded
+ImGui-IDE build, Windows installer, and three-platform CI. Build is green (`/W4 /WX`); headless
+gates cover the non-UI logic (colorizer, folding, language mapping, member-completion chain
+resolution) plus a dedicated LSP transport test (`lsptest`). Verification of visual/cursor
+features remains runtime-owned — confirmed in the running app, not just by "it compiles."
 
-**Open / in progress:** ImGui Test Engine for headless GUI testing; deeper agent integration
-tied to a live session.
+The entire 2026-05 roadmap has shipped (see `.claude/roadmap.md`). Remaining open items are
+one bug awaiting a Windows repro (cursor X drift on tabbed long lines) and one polish item
+(distinct `///` docstring-fold preview). The fold-preview-row bug is fixed.
 
 ## Roadmap
 1. Tighter live-agent integration (attribution beyond on-disk diffing).
 2. Emscripten + embeddable-DLL builds toward the ReShade / UEVR overlay targets.
-3. Headless GUI test coverage.
+3. Headless GUI test coverage (ImGui Test Engine); LSP transport is already gated headless.
