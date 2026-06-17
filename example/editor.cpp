@@ -1433,9 +1433,11 @@ void Editor::openProjectFolderPicker()
 
 bool Editor::navIsExcluded(const std::filesystem::path &p) const
 {
-    std::error_code ec;
-    auto key = std::filesystem::weakly_canonical(p, ec);
-    auto it = navExcluded.find((ec ? p : key).string());
+    if (navExcluded.empty())
+        return false;   // hot path: called per visible row per frame
+    // lexically_normal (pure string), NOT weakly_canonical (a filesystem syscall):
+    // canonicalizing every row every frame dropped the nav to ~1 fps on big dirs.
+    auto it = navExcluded.find(p.lexically_normal().string());
     return it != navExcluded.end() && it->second;
 }
 

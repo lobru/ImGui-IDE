@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ImGui-IDE — feedback-loop roadmap</title>
+<style>
+  :root{
+    --bg:#faf9f5; --card:#ffffff; --bd:#e6e3da; --bd2:#d3d1c7;
+    --tx:#2c2c2a; --tx2:#5f5e5a; --tx3:#8a8980;
+    --ok-bg:#e1f5ee; --ok-tx:#0f6e56; --ok-bd:#5dcaa5;
+    --p1-bg:#fcebeb; --p1-tx:#a32d2d; --p2-bg:#faeeda; --p2-tx:#854f0b; --p3-bg:#e6f1fb; --p3-tx:#185fa5;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#26231f; --card:#2f2c28; --bd:#403c37; --bd2:#4a4640;
+      --tx:#ece9e3; --tx2:#b8b5ad; --tx3:#86837b;
+      --ok-bg:#085041; --ok-tx:#9fe1cb; --ok-bd:#0f6e56;
+      --p1-bg:#501313; --p1-tx:#f7c1c1; --p2-bg:#633806; --p2-tx:#fac775; --p3-bg:#0c447c; --p3-tx:#b5d4f4; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 system-ui,-apple-system,Segoe UI,sans-serif;}
+  .wrap{max-width:720px;margin:0 auto;padding:28px 20px;}
+  .head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px;}
+  h1{font-size:19px;font-weight:600;margin:0;}
+  .sub{color:var(--tx2);font-size:13px;margin:0 0 18px;}
+  .prog{font-size:13px;font-weight:600;color:var(--tx2);white-space:nowrap;}
+  .row{display:flex;align-items:center;gap:12px;padding:11px 13px;background:var(--card);
+       border:1px solid var(--bd);border-radius:12px;margin-bottom:8px;}
+  .row.core{border-color:#85b7eb;}
+  .box{flex:0 0 auto;width:22px;height:22px;border:1px solid var(--bd2);border-radius:6px;background:transparent;
+       cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--ok-tx);}
+  .box.on{background:var(--ok-bg);border-color:var(--ok-bd);}
+  .pill{flex:0 0 auto;font-size:11px;font-weight:600;padding:2px 7px;border-radius:7px;}
+  .mid{flex:1 1 auto;min-width:0;}
+  .t{font-size:13px;font-weight:600;}
+  .t.done{text-decoration:line-through;color:var(--tx3);}
+  .s{font-size:11px;color:var(--tx3);}
+  button.act{flex:0 0 auto;font-size:12px;padding:6px 12px;border:1px solid var(--bd2);border-radius:8px;
+       background:transparent;color:var(--tx);cursor:pointer;}
+  button.act:hover{background:var(--bd);}
+  .foot{display:flex;gap:8px;margin-top:16px;}
+  .foot button{flex:1;font-size:13px;padding:9px;border:1px solid var(--bd2);border-radius:8px;background:transparent;color:var(--tx);cursor:pointer;}
+  .foot button:hover{background:var(--bd);}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--tx);color:var(--bg);
+       padding:8px 16px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><h1>ImGui-IDE — feedback-loop roadmap</h1><span class="prog" id="prog">0 / 8</span></div>
+  <p class="sub">Goal: develop the editor without leaving it. Click <b>Copy prompt</b> on a row, paste into Claude to start it.</p>
+  <div id="rows"></div>
+  <div class="foot">
+    <button id="planAll">Copy "plan all" prompt</button>
+    <button id="reset">Reset checks</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const items=[
+ {id:"pan",p:"OK",t:"Pan honors invert setting everywhere",s:"audited + locked as a rule",done:true},
+ {id:"mcp",p:"P1",t:"MCP plugin to script the editor",s:"drive + inspect over MCP"},
+ {id:"overlay",p:"P1",t:"Dev-mode annotation overlay",s:"mark + comment features live"},
+ {id:"bridge",p:"P1",t:"Feedback bridge to Claude",s:"JS ext and/or embeddable dll",core:true},
+ {id:"toast",p:"P2",t:"Toast hook for important alerts",s:"reuse existing toasts"},
+ {id:"extdiff",p:"P2",t:"External-changes + diff integration",s:"route feedback through diff"},
+ {id:"revs",p:"P2",t:"Local + git revision history",s:"snapshots, surfaced in diff"},
+ {id:"mdpopup",p:"P3",t:"Markdown preview as inline popup",s:"quick, not just docked"},
+ {id:"dispatch",p:"P3",t:"Auto-dispatch Claude cowork / CLI",s:"spin up instances in-editor"}
+];
+const KEY="imgui_ide_checklist_v1";
+let state={}; try{state=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
+const pc={OK:["var(--ok-bg)","var(--ok-tx)"],P1:["var(--p1-bg)","var(--p1-tx)"],P2:["var(--p2-bg)","var(--p2-tx)"],P3:["var(--p3-bg)","var(--p3-tx)"]};
+const rows=document.getElementById("rows");
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+function prog(){const pl=items.filter(i=>!i.done);document.getElementById("prog").textContent=pl.filter(i=>state[i.id]).length+" / "+pl.length;}
+let toastT;
+function toast(m){const e=document.getElementById("toast");e.textContent=m;e.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>e.classList.remove("show"),1400);}
+function copy(text){navigator.clipboard&&navigator.clipboard.writeText(text).then(()=>toast("Prompt copied"),()=>toast("Copy failed"));}
+items.forEach(it=>{
+  const done=it.done||!!state[it.id];
+  const row=document.createElement("div"); row.className="row"+(it.core?" core":"");
+  const box=document.createElement("div"); box.className="box"+(done?" on":""); box.innerHTML=done?"✓":"";
+  if(!it.done) box.onclick=()=>{state[it.id]=!state[it.id];save();box.classList.toggle("on",!!state[it.id]);box.innerHTML=state[it.id]?"✓":"";title.classList.toggle("done",!!state[it.id]);prog();};
+  const pill=document.createElement("span"); pill.className="pill"; pill.textContent=it.p; pill.style.background=pc[it.p][0]; pill.style.color=pc[it.p][1];
+  const mid=document.createElement("div"); mid.className="mid";
+  const title=document.createElement("div"); title.className="t"+(done?" done":""); title.textContent=it.t;
+  const sub=document.createElement("div"); sub.className="s"; sub.textContent=it.s+(it.core?"  ·  core pain point":"");
+  mid.appendChild(title); mid.appendChild(sub);
+  row.appendChild(box); row.appendChild(pill); row.appendChild(mid);
+  if(!it.done){const b=document.createElement("button");b.className="act";b.textContent="Copy prompt";
+    b.onclick=()=>copy('Let\'s build this editor feature next: "'+it.t+'" ('+it.s+'). Scope it as a focused session: dump a context plan (files, design, build steps), then start. Keep replies terse.');
+    row.appendChild(b);}
+  rows.appendChild(row);
+});
+prog();
+document.getElementById("planAll").onclick=()=>copy('Draft a sequenced build plan for the in-editor feedback-loop roadmap (MCP scripting, dev-mode annotation overlay, feedback bridge JS-ext/DLL, toast hook, external-changes+diff, local+git revision history, markdown inline popup, auto-dispatch). For each: dependencies, rough size, which can share a session. Order them. Terse.');
+document.getElementById("reset").onclick=()=>{state={};save();document.querySelectorAll(".box").forEach((b,i)=>{if(!items[i].done){b.classList.remove("on");b.innerHTML="";}});document.querySelectorAll(".t").forEach((t,i)=>{if(!items[i].done)t.classList.remove("done");});prog();toast("Reset");};
+</script>
+</body>
+</html>

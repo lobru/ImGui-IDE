@@ -100,24 +100,27 @@ for the embed DLL - bind the *plugin's* context instead of some host app's:
 A skeleton lives in `hosts/uevr/`. It is a template against the
 ExamplePlugin layout, not a drop-in build - check the TODO markers.
 
-### ReShade (shader editor add-on) - known constraint, planned work
+### ReShade (shader editor add-on) - core unblocked, add-on next
 
 ReShade add-ons do not get the host's `ImGuiContext*`. Overlay drawing goes
 through ReShade's **imgui function table** (`reshade_overlay.hpp`), which
 covers the *public* ImGui API for one specific `IMGUI_VERSION_NUM` per ReShade
-release. The TextEditor core currently calls three things from
-`imgui_internal.h`:
+release.
 
-- `ImGui::CalcItemSize` (size resolution at render start)
-- `ImGui::GetCurrentWindow()` (IME viewport id + scroll state)
-- `ImGui::BringWindowToDisplayFront` (autocomplete popup z-order)
+The core's `imgui_internal.h` dependency is now behind a guard: configure with
+`-DTE_EMBED_NO_IMGUI_INTERNAL=ON` (`TE_NO_IMGUI_INTERNAL` for raw compiles)
+and the whole editor builds against the public API only - verified by
+compiling with `imgui_internal.h` absent from the include path, and the
+cross-binary contract test passes against the shim-built DLL. Graceful cost:
+IME positioning, the scrollbar minimap, the diff view's custom synced
+horizontal scrollbars, and the autocomplete popup z-order nudge
+(`CalcItemSize` was replaced with a public-API replica outright).
 
-Until those are shimmed behind a `TE_NO_IMGUI_INTERNAL` guard in the core (so
-the whole editor compiles against the function table), the embed DLL **cannot
-draw inside a ReShade overlay**. That guard is the planned next step on this
-track; the C API here will not change for it. ReShade's effect-runtime API
-(enumerate techniques, get effect source paths, force reload after save) is
-otherwise a clean fit for `te_*` + file IO on the add-on side.
+Remaining for a working add-on: compile the core against ReShade's
+`reshade_overlay.hpp` at the imgui version that ReShade release pins (any
+signature deltas surface at compile time), then the add-on itself -
+`register_overlay` "Shader Editor", enumerate the active preset's effect files
+via the `effect_runtime` API, save + force effect reload. Windows build.
 
 ### Web (Emscripten)
 
@@ -136,4 +139,17 @@ Two hosts live in `hosts/web/`, both built to a single self-contained .html
   into Settings, persisted in localStorage. The transport-free parsing layer
   (`gh_parse.h`) is unit-tested natively by `tests/gh_parse_test.cpp`.
 
-## API
+## API stability
+
+`TE_EMBED_VERSION` is semver; the C surface in `texteditor_embed.h` only grows
+within a major version. The C++ classes inside the DLL are deliberately **not**
+exported - the C API is the only contract.
+
+## Verified
+
+- Linux: builds clean with `-Werror -Wall -Wpedantic -Wextra` (GCC 11),
+  exports exactly the `te_*` surface (`nm -D`), and passes a `dlopen` smoke
+  test: text roundtrip + two-call sizing + truncation, line count, dirty
+  tracking, markers, safe `te_render` no-op without a bound context.
+- Windows/MSVC: built by the same CMake project; add it to CI alongside the
+  desktop IDE build (planned).

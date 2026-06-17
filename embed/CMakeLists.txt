@@ -129,4 +129,17 @@ if(TE_EMBED_BUILD_TESTS)
 		GIT_TAG "v3.11.3")
 	FetchContent_MakeAvailable(nlohmann_json)
 
-	add_executable(gh_parse_test tests/gh_parse_test.cpp
+	add_executable(gh_parse_test tests/gh_parse_test.cpp)
+	target_include_directories(gh_parse_test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR} hosts/web)
+	target_link_libraries(gh_parse_test PRIVATE nlohmann_json::nlohmann_json)
+	add_test(NAME gh_parse_test COMMAND gh_parse_test)
+
+	#	the test loads the DLL at runtime; keep it next to the executable on
+	#	Windows so no PATH fiddling is needed
+	if(WIN32)
+		add_custom_command(TARGET te_render_test POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				$<TARGET_FILE:texteditor_embed> $<TARGET_FILE_DIR:te_render_test>)
+	endif()
+endif()
