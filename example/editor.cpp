@@ -1444,13 +1444,16 @@ bool Editor::navIsExcluded(const std::filesystem::path &p) const
 // ── Nav multi-select (canonical-path keyed, same as exclusion) ──
 static std::string navCanonKey(const std::filesystem::path &p)
 {
-    std::error_code ec;
-    auto k = std::filesystem::weakly_canonical(p, ec);
-    return (ec ? p : k).string();
+    // lexically_normal (pure string) not weakly_canonical (filesystem syscall):
+    // this is called per visible row per frame (selection + render-order tracking),
+    // and canonicalizing thousands of rows every frame tanked the nav to ~1 fps.
+    return p.lexically_normal().string();
 }
 
 bool Editor::navIsSelected(const std::filesystem::path &p) const
 {
+    if (navSelected.empty())
+        return false;   // hot path: called per visible row per frame
     return navSelected.count(navCanonKey(p)) != 0;
 }
 
@@ -2443,9 +2446,8 @@ void Editor::renderNavigationPanel()
                 ImGui::OpenPopup("##navConfirmDel");
             }
             ImGui::Separator();
-            std::error_code wec;
-            auto canon = std::filesystem::weakly_canonical(ctxPath, wec);
-            std::string canonKey = (wec ? std::filesystem::path(ctxPath) : canon).string();
+            // Same key scheme as navCanonKey / navIsExcluded (lexically_normal).
+            std::string canonKey = std::filesystem::path(ctxPath).lexically_normal().string();
             bool excluded = navExcluded.count(canonKey) && navExcluded[canonKey];
             // The action targets the whole multi-selection (navSelected always
             // includes the right-clicked item). The right-clicked item's state
