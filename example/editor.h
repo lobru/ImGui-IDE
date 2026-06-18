@@ -664,10 +664,12 @@ private:
 	std::string                     symbolsCacheFile;              // doc-mode cache key (filename)
 	size_t                          symbolsCacheUndo = (size_t) -1;// doc-mode cache key (edit count)
 	std::vector<ts::Symbol>         symbolsCacheSyms;              // parsed outline of the active doc
-	struct SymRow { std::string name; std::string file; int line; ts::Kind kind; };
+	struct SymRow { std::string name; std::string file; int line; ts::Kind kind; std::string lname; };
 	std::vector<SymRow>             symbolsProjectRows;            // flattened project index (filtered flat view)
 	std::vector<std::string>        symbolsFiles;                  // sorted file paths (project tree view)
 	int                             symbolsProjectGen = -1;        // index gen the two caches above are from
+	std::string                     symbolsFilterCache = std::string(1, '\x01'); // filter the matched-index cache is for (sentinel forces first build)
+	std::vector<int>                symbolsFilteredIdx;            // indices into symbolsProjectRows matching symbolsFilterCache
 
 	// Find in Files — project-wide text search with a query box + options.
 	bool                            findInFilesVisible = false;

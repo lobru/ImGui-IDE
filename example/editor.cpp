@@ -5219,9 +5219,15 @@ void Editor::renderSymbolsPanel()
         std::sort(symbolsFiles.begin(), symbolsFiles.end());
         for (auto &kv : idx->tsDefs)
             for (auto &d : kv.second)
-                symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind});
+                symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind, {}});
         std::sort(symbolsProjectRows.begin(), symbolsProjectRows.end(),
                   [](const SymRow &a, const SymRow &b) { return a.name < b.name; });
+        for (auto &r : symbolsProjectRows)   // precompute lowercase once per gen (filter is case-insensitive)
+        {
+            r.lname = r.name;
+            std::transform(r.lname.begin(), r.lname.end(), r.lname.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        }
+        symbolsFilterCache = std::string(1, '\x01');   // force a refilter against the new rows
         symbolsProjectGen = gen;
     }
 
@@ -5241,17 +5247,23 @@ void Editor::renderSymbolsPanel()
     {
         if (!filter.empty())
         {
-            // Flat filtered list across the whole project (clipped, capped).
-            auto match = [&](const std::string &n) {
-                std::string l = n;
-                std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char) std::tolower(c); });
-                return l.find(filter) != std::string::npos;
-            };
-            int shown = 0;
-            for (auto &row : symbolsProjectRows)
+            // Flat filtered list across the whole project. Matching scans every
+            // project row, so cache the matched indices and only recompute when the
+            // filter text (or index gen) changes — otherwise this ran over thousands
+            // of rows (allocating a lowercased string each) every frame.
+            if (filter != symbolsFilterCache)
             {
-                if (!match(row.name)) continue;
+                symbolsFilteredIdx.clear();
+                for (int i = 0; i < (int) symbolsProjectRows.size(); ++i)
+                    if (symbolsProjectRows[i].lname.find(filter) != std::string::npos)
+                        symbolsFilteredIdx.push_back(i);
+                symbolsFilterCache = filter;
+            }
+            int shown = 0;
+            for (int ri : symbolsFilteredIdx)
+            {
                 if (shown >= 2000) break;
+                const auto &row = symbolsProjectRows[ri];
                 ImGui::PushID(shown++);
                 std::string lbl = std::string(symKindTag(row.kind)) + "  " + row.name;
                 if (ImGui::Selectable(lbl.c_str()))
@@ -5260,7 +5272,9 @@ void Editor::renderSymbolsPanel()
                     ImGui::SetTooltip("%s:%d", row.file.c_str(), row.line + 1);
                 ImGui::PopID();
             }
-            ImGui::TextDisabled("%d shown%s", shown, shown >= 2000 ? " (capped — refine filter)" : "");
+            ImGui::TextDisabled("%zu match%s%s", symbolsFilteredIdx.size(),
+                                symbolsFilteredIdx.size() == 1 ? "" : "es",
+                                symbolsFilteredIdx.size() > 2000 ? " (showing first 2000)" : "");
         }
         else
         {
