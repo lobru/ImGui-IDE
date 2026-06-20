@@ -139,6 +139,10 @@ class Editor {
 	std::vector<Toast> toasts;
 	void pushToast(const std::string& text, ImU32 accent);
 	void renderToasts();
+	// External toast API: any process drops a text file in <configDir>/toasts/ and
+	// it shows as a toast here (optional "info|warn|error|success" severity prefix,
+	// then the message). Polled (throttled) once per frame; files are consumed.
+	void pollToastInbox();
 
 	// index = -1  → append at end
 	// split = true → request the new doc be docked next to the active one

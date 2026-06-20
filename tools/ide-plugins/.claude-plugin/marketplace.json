@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "local-imgui-ide",
+  "description": "Local marketplace for the ImGui-IDE bridge plugin.",
+  "owner": { "name": "Logan Brunet" },
+  "plugins": [
+    {
+      "name": "imgui-ide-bridge",
+      "description": "Open the current project in ImGui-IDE and send toasts to the running editor.",
+      "category": "productivity",
+      "source": { "source": "local", "path": "./imgui-ide-bridge" }
+    }
+  ]
+}

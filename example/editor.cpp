@@ -8195,6 +8195,78 @@ void Editor::pushToast(const std::string &text, ImU32 accent)
         toasts.erase(toasts.begin());
 }
 
+// External toast API. Any process can show a toast in the running editor by
+// writing a small text file into <configDir>/toasts/. File contents:
+//   optional "<severity>|<message>"  (severity = info|warn|error|success|ok),
+//   or just the raw message. The file is deleted once shown. Polled at ~5 Hz so
+// it costs nothing per frame; this is the bridge other tools (e.g. a Claude Code
+// plugin) use to surface notifications in the IDE.
+void Editor::pollToastInbox()
+{
+    static double nextPoll = 0.0;
+    double now = ImGui::GetTime();
+    if (now < nextPoll)
+        return;
+    nextPoll = now + 0.2;
+
+    std::error_code ec;
+    auto dir = userConfigDir() / "toasts";
+    if (!std::filesystem::exists(dir, ec))
+        return;
+
+    std::vector<std::filesystem::path> files;
+    for (auto &e : std::filesystem::directory_iterator(dir, ec))
+    {
+        if (ec)
+            break;
+        if (e.is_regular_file(ec))
+            files.push_back(e.path());
+        if (files.size() >= 64)
+            break;   // flood guard
+    }
+    std::sort(files.begin(), files.end());   // timestamped names → in-order display
+
+    int shown = 0;
+    for (auto &f : files)
+    {
+        if (shown++ >= 16)
+            break;   // cap per poll
+        std::ifstream in(f, std::ios::binary);
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        in.close();
+        std::filesystem::remove(f, ec);   // consume regardless of parse outcome
+        while (!content.empty() && (content.back() == '\n' || content.back() == '\r' ||
+                                    content.back() == ' ' || content.back() == '\t'))
+            content.pop_back();
+        if (content.empty())
+            continue;
+
+        ImU32 color = IM_COL32(150, 160, 255, 255);   // info (default, blue-violet)
+        std::string msg = content;
+        size_t sep = content.find_first_of("|\t");
+        if (sep != std::string::npos && sep <= 8)   // short leading severity tag only
+        {
+            std::string sev = content.substr(0, sep);
+            std::transform(sev.begin(), sev.end(), sev.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            bool known = true;
+            if (sev == "warn" || sev == "warning")
+                color = IM_COL32(240, 200, 90, 255);
+            else if (sev == "error" || sev == "err")
+                color = IM_COL32(224, 96, 96, 255);
+            else if (sev == "success" || sev == "ok")
+                color = IM_COL32(120, 200, 120, 255);
+            else if (sev == "info")
+                color = IM_COL32(150, 160, 255, 255);
+            else
+                known = false;
+            if (known)
+                msg = content.substr(sep + 1);
+        }
+        if (!msg.empty())
+            pushToast(msg, color);
+    }
+}
+
 //	Draw queued toasts stacked at the top-right of the work area, fading out in
 //	their final second. NoInputs so they never eat clicks.
 void Editor::renderToasts()
@@ -8389,6 +8461,7 @@ void Editor::render()
     ImGui::DockSpace(dockId, dockArea, ImGuiDockNodeFlags_PassthruCentralNode);
 
     checkExternalChanges(); // reload clean docs / flag conflicts when disk changes under us
+    pollToastInbox();       // external toast API: <configDir>/toasts/* → on-screen toasts
 
     renderDockedDocuments();
     renderNavigationPanel();

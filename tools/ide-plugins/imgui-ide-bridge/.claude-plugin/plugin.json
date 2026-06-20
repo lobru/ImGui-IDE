@@ -1,0 +1,7 @@
+{
+  "name": "imgui-ide-bridge",
+  "version": "0.1.0",
+  "description": "Open the current Claude Code project in ImGui-IDE (like `code .`) and send toast notifications to the running editor.",
+  "author": { "name": "Logan Brunet" },
+  "keywords": ["imgui-ide", "editor", "toast", "notifications"]
+}
