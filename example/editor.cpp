@@ -8598,6 +8598,48 @@ void Editor::renderUpdateDialog()
     }
 }
 
+void Editor::toggleFocusMode() { setFocusMode(!focusMode); }
+
+void Editor::setFocusMode(bool on)
+{
+    if (on == focusMode)
+        return;
+    if (on)
+    {
+        // Snapshot the current panel layout, then hide everything but the docs.
+        focusSnap.nav = navPanelVisible;
+        focusSnap.sym = symbolsPanelVisible;
+        focusSnap.refs = referencesVisible;
+        focusSnap.fif = findInFilesVisible;
+        focusSnap.output = script ? script->visible : false;
+        focusSnap.dev = devToolsVisible;
+        focusSnap.ext = externalChangesVisible;
+        focusSnap.md = mdPreviewVisible;
+        navPanelVisible = symbolsPanelVisible = referencesVisible = findInFilesVisible = false;
+        devToolsVisible = externalChangesVisible = mdPreviewVisible = false;
+        if (script)
+            script->visible = false;
+        for (auto &up : tabs)
+            up->editor.SetShowScrollbarMiniMapEnabled(false);
+        focusMode = true;
+    }
+    else
+    {
+        navPanelVisible = focusSnap.nav;
+        symbolsPanelVisible = focusSnap.sym;
+        referencesVisible = focusSnap.refs;
+        findInFilesVisible = focusSnap.fif;
+        devToolsVisible = focusSnap.dev;
+        externalChangesVisible = focusSnap.ext;
+        mdPreviewVisible = focusSnap.md;
+        if (script)
+            script->visible = focusSnap.output;
+        for (auto &up : tabs)
+            up->editor.SetShowScrollbarMiniMapEnabled(true);
+        focusMode = false;
+    }
+}
+
 //  Draw queued toasts stacked at the top-right of the work area, fading out in
 //  their final second. NoInputs so they never eat clicks.
 void Editor::renderToasts()
@@ -10193,6 +10235,9 @@ void Editor::renderMenuBar()
                 decreaseFontSIze();
             }
             ImGui::Separator();
+            if (ImGui::MenuItem("Focus Mode", "F11", focusMode))
+                toggleFocusMode();
+            ImGui::Separator();
             if (ImGui::BeginMenu("Theme"))
             {
                 for (int i = 0; i < themeCount(); ++i)
@@ -10520,6 +10565,10 @@ void Editor::renderMenuBar()
 
     // global keyboard shortcuts (work whenever no input wants the keys)
     ImGuiIO &io = ImGui::GetIO();
+    // F11 toggles focus mode unconditionally — it's not a text key, so it should
+    // fire even while a document or input box has keyboard focus.
+    if (ImGui::IsKeyPressed(ImGuiKey_F11, false))
+        toggleFocusMode();
     if (!io.WantCaptureKeyboard || ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow))
     {
 

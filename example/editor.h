@@ -165,6 +165,18 @@ class Editor {
 	void   pollUpdates();
 	void   renderUpdateDialog();
 
+	// ── Focus mode ────────────────────────────────────────────────────────────
+	// Distraction-free + cheaper-to-render: hides every side panel (nav, symbols,
+	// references, find-in-files, output, dev tools, external changes, md preview)
+	// and the editor minimaps, leaving just the document panes. Toggling restores
+	// the previous panel layout. F11 / View menu, or --focus at launch.
+	bool focusMode = false;
+	struct FocusSnapshot { bool nav, sym, refs, fif, output, dev, ext, md; } focusSnap{};
+public:
+	void toggleFocusMode();
+	void setFocusMode(bool on);   // public so main.cpp can honor --focus at launch
+private:
+
 	// index = -1  → append at end
 	// split = true → request the new doc be docked next to the active one
 	TabDocument& newTab(const std::string& path, bool split = false, int index = -1);

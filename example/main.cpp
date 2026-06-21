@@ -173,6 +173,7 @@ int main(int argc, char** argv) {
 	// and (b) plain files to open as documents.
 	std::string projectArg;
 	std::vector<std::string> filesArg;
+	bool focusArg = false;   // --focus: start in distraction-free focus mode
 	auto isProjectFile = [](const std::string& p) {
 		auto ext = std::filesystem::path(p).extension().string();
 		std::transform(ext.begin(), ext.end(), ext.begin(),
@@ -187,6 +188,7 @@ int main(int argc, char** argv) {
 			projectArg = argv[++i];
 			continue;
 		}
+		if (a == "--focus") { focusArg = true; continue; }
 		if (a.rfind("--", 0) == 0) continue;   // unknown flag
 		std::error_code ec;
 		auto absPath = std::filesystem::absolute(a, ec);
@@ -294,6 +296,7 @@ int main(int argc, char** argv) {
 	Editor editor;
 	if (!projectArg.empty()) editor.setProjectRoot(projectArg);
 	for (auto& p : filesArg) editor.openFile(p);
+	if (focusArg) editor.setFocusMode(true);
 	SDL_Event event;
 
 	while (!editor.isDone()) {
