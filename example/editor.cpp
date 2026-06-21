@@ -1,12 +1,12 @@
-//	TextEditor - A syntax highlighting text editor for ImGui
-//	Copyright (c) 2024-2026 Johan A. Goossens. All rights reserved.
-//	Copyright (c) 2026 Logan Brunet (ImGui-IDE). All rights reserved.
+//  TextEditor - A syntax highlighting text editor for ImGui
+//  Copyright (c) 2024-2026 Johan A. Goossens. All rights reserved.
+//  Copyright (c) 2026 Logan Brunet (ImGui-IDE). All rights reserved.
 //
-//	This work is licensed under the terms of the MIT license.
-//	For a copy, see <https://opensource.org/licenses/MIT>.
+//  This work is licensed under the terms of the MIT license.
+//  For a copy, see <https://opensource.org/licenses/MIT>.
 
 //
-//	Include files
+//  Include files
 //
 #define _CRT_SECURE_NO_WARNINGS // for std::getenv used in #include resolution
 #ifndef _WIN32
@@ -114,7 +114,7 @@ static void populateFileDialogPlaces();
 static std::filesystem::path resolveOutermostRoot(std::filesystem::path start);
 
 //
-//	Constants
+//  Constants
 //
 
 #if __APPLE__
@@ -131,24 +131,24 @@ static const char *demo =
     "#include <vector>\n"
     "\n"
     "int main(int, char**) {\n"
-    "	std::random_device rd;\n"
-    "	std::mt19937 gen(rd());\n"
-    "	std::uniform_int_distribution<> distrib(0, 1000);\n"
-    "	std::vector<int> numbers;\n"
+    "   std::random_device rd;\n"
+    "   std::mt19937 gen(rd());\n"
+    "   std::uniform_int_distribution<> distrib(0, 1000);\n"
+    "   std::vector<int> numbers;\n"
     "\n"
-    "	for (auto i = 0; i < 100; i++) {\n"
-    "		numbers.emplace_back(distrib(gen));\n"
-    "	}\n"
+    "   for (auto i = 0; i < 100; i++) {\n"
+    "       numbers.emplace_back(distrib(gen));\n"
+    "   }\n"
     "\n"
-    "	for (auto n : numbers) {\n"
-    "		std::cout << n << std::endl;\n"
-    "	}\n"
+    "   for (auto n : numbers) {\n"
+    "       std::cout << n << std::endl;\n"
+    "   }\n"
     "\n"
-    "	return 0;\n"
+    "   return 0;\n"
     "}\n";
 
 //
-//	Editor::languageForPath
+//  Editor::languageForPath
 //
 
 std::unordered_map<std::string, const TextEditor::Language *> &Editor::runtimeLanguagesByExt()
@@ -208,7 +208,8 @@ void Editor::loadRuntimeLanguages()
                 continue;
             auto ext = entry.path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                           [](unsigned char c)
+                           { return static_cast<char>(std::tolower(c)); });
             if (ext != ".lang")
                 continue;
             if (auto *lang = TextEditor::Language::FromFile(entry.path().string()))
@@ -226,13 +227,15 @@ const TextEditor::Language *Editor::languageForPath(const std::string &path)
 {
     auto ext = std::filesystem::path(path).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c)
+                   { return static_cast<char>(std::tolower(c)); });
 
     // Filename-based matches (extensionless files: CMakeLists.txt, Dockerfile, …)
     auto fname = std::filesystem::path(path).filename().string();
     std::string fnameLower = fname;
     std::transform(fnameLower.begin(), fnameLower.end(), fnameLower.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c)
+                   { return static_cast<char>(std::tolower(c)); });
     if (fnameLower == "cmakelists.txt")
     {
         auto &byExt = runtimeLanguagesByExt();
@@ -281,7 +284,7 @@ const TextEditor::Language *Editor::languageForPath(const std::string &path)
 }
 
 //
-//	Editor::Editor
+//  Editor::Editor
 //
 
 bool Editor::sSkipDemo = false;
@@ -292,7 +295,7 @@ Editor::Editor()
     loadRuntimeLanguages();
     // Load editor-wide preferences (interpreter overrides, build commands, etc.)
     loadSettings();
-    applyTheme(prefTheme);   // restore the saved theme over main.cpp's default
+    applyTheme(prefTheme); // restore the saved theme over main.cpp's default
     // If the user picked a custom font in a previous session, load it now into
     // the atlas so the first render uses it. Empty path = stick with bundled.
     if (!fontPath.empty())
@@ -322,7 +325,7 @@ Editor::Editor()
 }
 
 //
-//	Editor::newTab
+//  Editor::newTab
 //
 
 Editor::TabDocument &Editor::newTab()
@@ -338,7 +341,7 @@ Editor::TabDocument &Editor::newTab()
     t->editor.SetCompletePairedGlyphs(prefCompletePairs);
     t->editor.SetPanInverted(prefInvertPan);
     t->editor.SetPanScrollAccel(prefPanScrollAccel);
-    t->diff.SetPanInverted(prefInvertPan);          // the diff view honors the same scroll prefs
+    t->diff.SetPanInverted(prefInvertPan); // the diff view honors the same scroll prefs
     t->diff.SetPanScrollAccel(prefPanScrollAccel);
     t->editor.SetWordWrap(prefWordWrap);
     t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
@@ -384,7 +387,7 @@ Editor::TabDocument &Editor::newTab(const std::string &path, bool split, int ind
 }
 
 //
-//	Editor::closeTab
+//  Editor::closeTab
 //
 
 void Editor::closeTab(size_t idx)
@@ -399,7 +402,7 @@ void Editor::closeTab(size_t idx)
         if (!uri.empty())
         {
             lspClient.didClose(uri);
-            lspDiagnostics.erase(lsp::uriToPath(uri));   // don't leak this file's diagnostics
+            lspDiagnostics.erase(lsp::uriToPath(uri)); // don't leak this file's diagnostics
         }
         lspDocHash.erase(tabs[idx]->id);
     }
@@ -513,7 +516,7 @@ void Editor::renderScriptOutputWindow()
         {
             ImGui::SetScrollHereY(1.0f);
         }
-        middleMousePanScroll(3);   // output log
+        middleMousePanScroll(3); // output log
         ImGui::EndChild();
     }
     ImGui::End();
@@ -570,7 +573,8 @@ static std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std
                 continue;
             auto ext = entry.path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
-                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                           [](unsigned char ch)
+                           { return static_cast<char>(std::tolower(ch)); });
             if (ext == ".sln" && sln.empty())
                 sln = entry.path();
             else if (ext == ".csproj" && csproj.empty())
@@ -632,7 +636,8 @@ void Editor::runCommandInOutputPanel(const std::string &cmd, const std::filesyst
     script->running = true;
 
     auto scriptCtx = script;
-    std::thread([scriptCtx, cmd, rd, gen]() {
+    std::thread([scriptCtx, cmd, rd, gen]()
+                {
         std::string full;
 #ifdef _WIN32
         full = rd.empty()
@@ -677,8 +682,8 @@ void Editor::runCommandInOutputPanel(const std::string &cmd, const std::filesyst
         std::lock_guard<std::mutex> lock(scriptCtx->mutex);
         if (gen == scriptCtx->gen.load() && !truncated)
             scriptCtx->output += "\n[exit " + std::to_string(rc) + "]\n";
-        scriptCtx->running = false;
-    }).detach();
+        scriptCtx->running = false; })
+        .detach();
 }
 
 void Editor::runProjectBuild()
@@ -769,7 +774,8 @@ std::filesystem::path Editor::findBuiltExe() const
                 continue;
             auto ext = it->path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
-                           [](unsigned char c) { return (char)std::tolower(c); });
+                           [](unsigned char c)
+                           { return (char)std::tolower(c); });
 #ifdef _WIN32
             if (ext != ".exe")
                 continue;
@@ -804,7 +810,8 @@ std::filesystem::path Editor::findBuiltExe() const
 std::string Editor::venvPythonFor(const std::filesystem::path &scriptPath) const
 {
     std::error_code ec;
-    auto check = [&](const std::filesystem::path &venvDir) -> std::string {
+    auto check = [&](const std::filesystem::path &venvDir) -> std::string
+    {
 #ifdef _WIN32
         auto py = venvDir / "Scripts" / "python.exe";
 #else
@@ -854,7 +861,8 @@ std::pair<std::string, std::filesystem::path> Editor::docScriptCommand()
 
     auto ext = std::filesystem::path(t.filename).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c)
+                   { return static_cast<char>(std::tolower(c)); });
 
     // Settings interpreter override takes precedence over the built-in
     // per-extension defaults so the user can swap python -> python3, etc.
@@ -935,7 +943,8 @@ bool Editor::navIsRunnable(const std::string &p) const
 {
     auto ext = std::filesystem::path(p).extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c)
+                   { return static_cast<char>(std::tolower(c)); });
 #ifdef _WIN32
     if (ext == ".exe" || ext == ".com" || ext == ".bat" || ext == ".cmd")
         return true;
@@ -950,7 +959,8 @@ std::pair<std::string, std::filesystem::path> Editor::runCommandForPath(const st
     std::filesystem::path path(p);
     auto ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c)
+                   { return static_cast<char>(std::tolower(c)); });
     std::string interp;
     auto over = interpreterOverrides.find(ext);
     if (over != interpreterOverrides.end())
@@ -1044,22 +1054,54 @@ void Editor::formatActiveDocument()
     {
         ext = std::filesystem::path(t.filename).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(),
-                       [](unsigned char c) { return (char)std::tolower(c); });
+                       [](unsigned char c)
+                       { return (char)std::tolower(c); });
     }
     // Per-language formatter dispatch. clang-format handles the C-family + JS/TS/
     // proto; other languages delegate to their canonical CLI formatter (each
     // optional — a clear error if it isn't on PATH).
-    enum class Tool { ClangFormat, Stylua, Black, Rustfmt, Gofmt, None };
+    enum class Tool
+    {
+        ClangFormat,
+        Stylua,
+        Black,
+        Rustfmt,
+        Gofmt,
+        None
+    };
     static const std::unordered_set<std::string> clangExt = {
-        ".c", ".h", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh", ".inl",
-        ".m", ".mm", ".cs", ".java", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".proto",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cxx",
+        ".hxx",
+        ".cc",
+        ".hh",
+        ".inl",
+        ".m",
+        ".mm",
+        ".cs",
+        ".java",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        ".proto",
     };
     Tool tool = Tool::None;
-    if (clangExt.count(ext))           tool = Tool::ClangFormat;
-    else if (ext == ".lua")            tool = Tool::Stylua;
-    else if (ext == ".py" || ext == ".pyw") tool = Tool::Black;
-    else if (ext == ".rs")             tool = Tool::Rustfmt;
-    else if (ext == ".go")             tool = Tool::Gofmt;
+    if (clangExt.count(ext))
+        tool = Tool::ClangFormat;
+    else if (ext == ".lua")
+        tool = Tool::Stylua;
+    else if (ext == ".py" || ext == ".pyw")
+        tool = Tool::Black;
+    else if (ext == ".rs")
+        tool = Tool::Rustfmt;
+    else if (ext == ".go")
+        tool = Tool::Gofmt;
     if (tool == Tool::None)
     {
         showError("Format: no formatter configured for '" + ext + "' files.");
@@ -1077,15 +1119,17 @@ void Editor::formatActiveDocument()
 
     // Run a command, capturing stdout + the shell exit code.
     std::string out;
-    auto run = [&out](const std::string& cmd) -> int {
+    auto run = [&out](const std::string &cmd) -> int
+    {
         out.clear();
-        FILE* p = _popen(cmd.c_str(), "r");
-        if (!p) return -1;
+        FILE *p = _popen(cmd.c_str(), "r");
+        if (!p)
+            return -1;
         char buf[8192];
         size_t n;
         while ((n = fread(buf, 1, sizeof(buf), p)) > 0)
             out.append(buf, n);
-        return _pclose(p);   // shell/tool exit code (non-zero = tool missing or failed)
+        return _pclose(p); // shell/tool exit code (non-zero = tool missing or failed)
     };
 
     std::string q = "\"" + src.string() + "\"";
@@ -1094,7 +1138,7 @@ void Editor::formatActiveDocument()
         std::ofstream cf(dir / ".clang-format", std::ios::trunc);
         cf << "BasedOnStyle: Microsoft\n"
            << "BreakBeforeBraces: " << (formatBraceNewLineForExt(ext) ? "Allman" : "Attach") << "\n"
-           << "ColumnLimit: 0\n";   // fix structure/spacing without reflowing to a width
+           << "ColumnLimit: 0\n"; // fix structure/spacing without reflowing to a width
         cf.close();
         int rc = run("clang-format " + q + " 2>nul");
         std::filesystem::remove(src, ec);
@@ -1106,7 +1150,7 @@ void Editor::formatActiveDocument()
     }
     else if (tool == Tool::Gofmt)
     {
-        int rc = run("gofmt " + q + " 2>nul");   // gofmt writes to stdout
+        int rc = run("gofmt " + q + " 2>nul"); // gofmt writes to stdout
         std::filesystem::remove(src, ec);
         if (rc != 0 || out.empty())
         {
@@ -1117,9 +1161,10 @@ void Editor::formatActiveDocument()
     else
     {
         // stylua / black / rustfmt format the file IN PLACE; read it back after.
-        const char* name = (tool == Tool::Stylua) ? "stylua" : (tool == Tool::Black) ? "black" : "rustfmt";
+        const char *name = (tool == Tool::Stylua) ? "stylua" : (tool == Tool::Black) ? "black"
+                                                                                     : "rustfmt";
         std::string cmd = (tool == Tool::Stylua)  ? "stylua " + q + " 2>nul"
-                        : (tool == Tool::Black)   ? "black -q " + q + " 2>nul"
+                          : (tool == Tool::Black) ? "black -q " + q + " 2>nul"
                                                   : "rustfmt " + q + " 2>nul";
         int rc = run(cmd);
         if (rc != 0)
@@ -1173,7 +1218,8 @@ void Editor::toggleHeaderSource()
         return;
     std::string ext = p.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                   [](unsigned char c)
+                   { return static_cast<char>(std::tolower(c)); });
 
     // Candidate extensions for the "other side"
     std::vector<std::string> candidates;
@@ -1434,7 +1480,7 @@ void Editor::openProjectFolderPicker()
 bool Editor::navIsExcluded(const std::filesystem::path &p) const
 {
     if (navExcluded.empty())
-        return false;   // hot path: called per visible row per frame
+        return false; // hot path: called per visible row per frame
     // lexically_normal (pure string), NOT weakly_canonical (a filesystem syscall):
     // canonicalizing every row every frame dropped the nav to ~1 fps on big dirs.
     auto it = navExcluded.find(p.lexically_normal().string());
@@ -1453,7 +1499,7 @@ static std::string navCanonKey(const std::filesystem::path &p)
 bool Editor::navIsSelected(const std::filesystem::path &p) const
 {
     if (navSelected.empty())
-        return false;   // hot path: called per visible row per frame
+        return false; // hot path: called per visible row per frame
     return navSelected.count(navCanonKey(p)) != 0;
 }
 
@@ -1474,9 +1520,18 @@ void Editor::navSetOnlySelected(const std::filesystem::path &p)
 // navVisibleOrder is filled in render order each frame; a shift-click records a
 // target, and navApplyRangeSelect() (called after the tree renders) selects every
 // entry between the anchor and the target inclusive.
-void Editor::navTrackVisible(const std::filesystem::path &p) { navVisibleOrder.push_back(navCanonKey(p)); }
-void Editor::navSetAnchor(const std::filesystem::path &p)    { navSelAnchor = navCanonKey(p); }
-void Editor::navRangeRequestTo(const std::filesystem::path &p) { navRangeTarget = navCanonKey(p); }
+void Editor::navTrackVisible(const std::filesystem::path &p)
+{
+    navVisibleOrder.push_back(navCanonKey(p));
+}
+void Editor::navSetAnchor(const std::filesystem::path &p)
+{
+    navSelAnchor = navCanonKey(p);
+}
+void Editor::navRangeRequestTo(const std::filesystem::path &p)
+{
+    navRangeTarget = navCanonKey(p);
+}
 
 void Editor::navApplyRangeSelect()
 {
@@ -1491,17 +1546,20 @@ void Editor::navApplyRangeSelect()
         return;
     }
     int ai = -1, ti = -1;
-    for (int i = 0; i < (int) navVisibleOrder.size(); ++i)
+    for (int i = 0; i < (int)navVisibleOrder.size(); ++i)
     {
-        if (navVisibleOrder[i] == navSelAnchor) ai = i;
-        if (navVisibleOrder[i] == target)       ti = i;
+        if (navVisibleOrder[i] == navSelAnchor)
+            ai = i;
+        if (navVisibleOrder[i] == target)
+            ti = i;
     }
     if (ai < 0 || ti < 0)
     {
-        navSelected.insert(target);   // anchor/target not both visible — just add it
+        navSelected.insert(target); // anchor/target not both visible — just add it
         return;
     }
-    if (ai > ti) std::swap(ai, ti);
+    if (ai > ti)
+        std::swap(ai, ti);
     for (int i = ai; i <= ti; ++i)
         navSelected.insert(navVisibleOrder[i]);
 }
@@ -1511,8 +1569,10 @@ bool Editor::navNameMatches(const std::string &name) const
 {
     if (navFilterBuf[0] == 0)
         return true;
-    auto lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    auto lower = [](std::string s)
+    {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
         return s;
     };
     return lower(name).find(lower(navFilterBuf)) != std::string::npos;
@@ -1536,11 +1596,15 @@ bool Editor::navDirHasMatch(const std::filesystem::path &dir) const
                  root, std::filesystem::directory_options::skip_permission_denied, ec);
              it != std::filesystem::recursive_directory_iterator() && budget-- > 0; it.increment(ec))
         {
-            if (ec) { ec.clear(); continue; }
+            if (ec)
+            {
+                ec.clear();
+                continue;
+            }
             if (!navNameMatches(it->path().filename().string()))
                 continue;
             // Mark every ancestor dir up to the project root.
-            for (auto a = it->path().parent_path(); ; a = a.parent_path())
+            for (auto a = it->path().parent_path();; a = a.parent_path())
             {
                 navMatchDirs.insert(navCanonKey(a));
                 if (a == root || !a.has_parent_path())
@@ -1557,7 +1621,8 @@ bool Editor::navIsCodeFile(const std::filesystem::path &p) const
     // few project-file extensions so .sln / .csproj show up in the tree.
     auto ext = p.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c) { return (char)std::tolower(c); });
+                   [](unsigned char c)
+                   { return (char)std::tolower(c); });
     static const std::unordered_set<std::string> ok = {
         ".c",
         ".h",
@@ -1682,15 +1747,15 @@ Editor::navCachedDir(const std::filesystem::path &dir)
             break;
         slot.entries.push_back(e);
     }
-    std::sort(slot.entries.begin(), slot.entries.end(), [](const auto &a, const auto &b) {
+    std::sort(slot.entries.begin(), slot.entries.end(), [](const auto &a, const auto &b)
+              {
         bool aDir = a.is_directory(), bDir = b.is_directory();
         if (aDir != bDir)
             return aDir;
         auto an = a.path().filename().string(), bn = b.path().filename().string();
         std::transform(an.begin(), an.end(), an.begin(), [](unsigned char c) { return (char)std::tolower(c); });
         std::transform(bn.begin(), bn.end(), bn.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-        return an < bn;
-    });
+        return an < bn; });
     slot.scanned = now;
     return slot.entries;
 }
@@ -1717,7 +1782,8 @@ Editor::navCachedFlatList(const std::filesystem::path &root, bool showDot)
     std::error_code ec;
     std::unordered_set<std::string> seen;
     int budget = 20000;
-    auto isBuildDir = [](const std::string &n) {
+    auto isBuildDir = [](const std::string &n)
+    {
         return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
                n == "bin" || n == "obj" || n == "out" || n == "build" ||
                n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
@@ -1755,12 +1821,12 @@ Editor::navCachedFlatList(const std::filesystem::path &root, bool showDot)
             continue;
         navFlatCache.push_back({it->path(), name});
     }
-    std::sort(navFlatCache.begin(), navFlatCache.end(), [](const NavFlatItem &a, const NavFlatItem &b) {
+    std::sort(navFlatCache.begin(), navFlatCache.end(), [](const NavFlatItem &a, const NavFlatItem &b)
+              {
         std::string an = a.name, bn = b.name;
         std::transform(an.begin(), an.end(), an.begin(), [](unsigned char c) { return (char)std::tolower(c); });
         std::transform(bn.begin(), bn.end(), bn.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-        return an < bn;
-    });
+        return an < bn; });
     return navFlatCache;
 }
 
@@ -1854,10 +1920,15 @@ static void navRenderEntry(Editor *self,
     // descendant. Surviving folders auto-expand below so the matches show.
     if (self->navFilterActive())
     {
-        if (isDir) { if (!self->navDirHasMatch(e.path())) return; }
-        else if (!self->navNameMatches(name))             return;
+        if (isDir)
+        {
+            if (!self->navDirHasMatch(e.path()))
+                return;
+        }
+        else if (!self->navNameMatches(name))
+            return;
     }
-    self->navTrackVisible(e.path());   // render order, for shift-click range select
+    self->navTrackVisible(e.path()); // render order, for shift-click range select
 
     // In-place rename: replace the row with an InputText.
     if (renameTarget == absPath)
@@ -1890,7 +1961,8 @@ static void navRenderEntry(Editor *self,
 
     // Helper — hover tooltip with file type + timestamps. Cheap: only fires
     // when the user dwells on the row.
-    auto navTooltip = [&](const std::filesystem::directory_entry &ent, bool dir) {
+    auto navTooltip = [&](const std::filesystem::directory_entry &ent, bool dir)
+    {
         if (!ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
             return;
         ImGui::BeginTooltip();
@@ -1924,7 +1996,8 @@ static void navRenderEntry(Editor *self,
         WIN32_FILE_ATTRIBUTE_DATA fad;
         if (GetFileAttributesExA(ent.path().string().c_str(), GetFileExInfoStandard, &fad))
         {
-            auto fmt = [](FILETIME ft) -> std::string {
+            auto fmt = [](FILETIME ft) -> std::string
+            {
                 SYSTEMTIME st;
                 FileTimeToSystemTime(&ft, &st);
                 char buf[64];
@@ -1952,7 +2025,8 @@ static void navRenderEntry(Editor *self,
         if (!dir)
         {
             auto ext = ent.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                           { return (char)std::tolower(c); });
             if (Editor::isImageExt(ext))
             {
                 ImGui::Separator();
@@ -1964,7 +2038,8 @@ static void navRenderEntry(Editor *self,
 
     // Helper — drag source + drag target. Folders accept drops as
     // move/copy targets; files act as drag sources.
-    auto navDnD = [&](bool dir) {
+    auto navDnD = [&](bool dir)
+    {
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
         {
             self->navDragSourceSet(absPath);
@@ -1994,7 +2069,7 @@ static void navRenderEntry(Editor *self,
         if (self->navBulkOpenRequest() >= 0)
             ImGui::SetNextItemOpen(self->navBulkOpenRequest() == 1, ImGuiCond_Always);
         else if (self->navFilterActive())
-            ImGui::SetNextItemOpen(true, ImGuiCond_Always);   // reveal filtered matches
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always); // reveal filtered matches
         bool open = ImGui::TreeNodeEx(name.c_str(), flags);
         navTooltip(e, true);
         navDnD(true);
@@ -2041,10 +2116,10 @@ static void navRenderEntry(Editor *self,
         {
             ImGuiIO &cio = ImGui::GetIO();
             if (cio.KeyShift)
-                self->navRangeRequestTo(e.path());   // shift-click → select anchor..here
+                self->navRangeRequestTo(e.path()); // shift-click → select anchor..here
             else if (cio.KeyCtrl)
             {
-                self->navToggleSelected(absPath);    // ctrl-click → add/remove from selection
+                self->navToggleSelected(absPath); // ctrl-click → add/remove from selection
                 self->navSetAnchor(e.path());
             }
             else
@@ -2123,7 +2198,8 @@ static void navRenderFlat(Editor *self, const std::filesystem::path &root,
             std::error_code rec;
             auto rel = std::filesystem::relative(item.path, root, rec);
             auto ext = item.path.extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                           { return (char)std::tolower(c); });
             ImGui::BeginTooltip();
             ImGui::TextUnformatted((rec ? item.path : rel).string().c_str());
             if (Editor::isImageExt(ext))
@@ -2232,7 +2308,7 @@ void Editor::renderNavigationPanel()
         // the path to edit the root in place (type a folder + Enter); focus loss
         // without committing reverts to the display.
         static bool navEditingPath = false;
-        static bool navPathFocus = false;     // one-shot: focus the input on entry
+        static bool navPathFocus = false; // one-shot: focus the input on entry
         static char navPathBuf[1024] = {0};
         if (ImGui::SmallButton("..."))
             openProjectFolderPicker();
@@ -2243,7 +2319,11 @@ void Editor::renderNavigationPanel()
         if (navEditingPath)
         {
             ImGui::SetNextItemWidth(-FLT_MIN);
-            if (navPathFocus) { ImGui::SetKeyboardFocusHere(); navPathFocus = false; }
+            if (navPathFocus)
+            {
+                ImGui::SetKeyboardFocusHere();
+                navPathFocus = false;
+            }
             bool commit = ImGui::InputText("##navPathEdit", navPathBuf, sizeof(navPathBuf),
                                            ImGuiInputTextFlags_EnterReturnsTrue);
             if (commit)
@@ -2255,7 +2335,7 @@ void Editor::renderNavigationPanel()
                 navEditingPath = false;
             }
             else if (ImGui::IsItemDeactivated())
-                navEditingPath = false;   // focus loss without Enter reverts to display
+                navEditingPath = false; // focus loss without Enter reverts to display
         }
         else
         {
@@ -2325,7 +2405,7 @@ void Editor::renderNavigationPanel()
         ImGui::InputTextWithHint("##navFilter", "filter by name...", navFilterBuf, sizeof(navFilterBuf));
 
         navContextPath.clear();
-        navVisibleOrder.clear();   // rebuilt this frame in render order (shift-range select)
+        navVisibleOrder.clear(); // rebuilt this frame in render order (shift-range select)
         std::error_code ec;
         if (std::filesystem::is_directory(root, ec))
         {
@@ -2339,8 +2419,8 @@ void Editor::renderNavigationPanel()
         {
             ImGui::TextDisabled("(no project root set)");
         }
-        navApplyRangeSelect();   // resolve a pending shift-click range now that order is known
-        navSetAllOpen = -1; // bulk open/close request consumed this frame
+        navApplyRangeSelect(); // resolve a pending shift-click range now that order is known
+        navSetAllOpen = -1;    // bulk open/close request consumed this frame
 
         // Context-menu popup. BeginPopupContextItem above sets contextPath when
         // the user right-clicks a tree row; we open the popup here with that
@@ -2374,7 +2454,8 @@ void Editor::renderNavigationPanel()
             }
             {
                 auto mext = std::filesystem::path(ctxPath).extension().string();
-                std::transform(mext.begin(), mext.end(), mext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                std::transform(mext.begin(), mext.end(), mext.begin(), [](unsigned char c)
+                               { return (char)std::tolower(c); });
                 if (!isDir && isMarkdownExt(mext) && ImGui::MenuItem("Preview Markdown"))
                 {
                     openFile(ctxPath);       // make it the active doc
@@ -2460,8 +2541,8 @@ void Editor::renderNavigationPanel()
                 {
                     for (auto &k : navSelected)
                         navExcluded[k] = true;
-                    rebuildProjectIndex();   // drop the now-hidden paths' symbols
-                    navMarkListDirty();      // flat view filters on the cached list
+                    rebuildProjectIndex(); // drop the now-hidden paths' symbols
+                    navMarkListDirty();    // flat view filters on the cached list
                 }
             }
             else
@@ -2470,8 +2551,8 @@ void Editor::renderNavigationPanel()
                 {
                     for (auto &k : navSelected)
                         navExcluded.erase(k);
-                    rebuildProjectIndex();   // re-index the now-visible paths
-                    navMarkListDirty();      // flat view filters on the cached list
+                    rebuildProjectIndex(); // re-index the now-visible paths
+                    navMarkListDirty();    // flat view filters on the cached list
                 }
             }
             ImGui::EndPopup();
@@ -2598,7 +2679,7 @@ void Editor::remergeActiveWindow()
     auto label = windowLabelFor(*tabs[activeTab]);
     // Reuse the captured root id (this runs from a menu/keybind, a different ID
     // stack than the dockspace submission — GetID here would return a phantom id).
-    ImGuiID rootId = mainDockId ? (ImGuiID) mainDockId : ImGui::GetID("MainDockSpace");
+    ImGuiID rootId = mainDockId ? (ImGuiID)mainDockId : ImGui::GetID("MainDockSpace");
     ImGuiDockNode *central = ImGui::DockBuilderGetCentralNode(rootId);
     ImGuiID target = central ? central->ID
                              : (centralDockId ? (ImGuiID)centralDockId : rootId);
@@ -2616,7 +2697,7 @@ void Editor::remergeAllWindows()
     // Reuse the captured root id — recomputing GetID from this menu/keybind
     // context yields a different (phantom) id, which is what left windows adrift
     // after Reset Layout.
-    ImGuiID root = mainDockId ? (ImGuiID) mainDockId : ImGui::GetID("MainDockSpace");
+    ImGuiID root = mainDockId ? (ImGuiID)mainDockId : ImGui::GetID("MainDockSpace");
     ImGui::DockBuilderRemoveNode(root);
     ImGui::DockBuilderAddNode(root, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(root, ImGui::GetMainViewport()->WorkSize);
@@ -2680,7 +2761,7 @@ std::string Editor::indexCachePath() const
         return {};
     size_t h = std::hash<std::string>{}(projectRoot.string());
     char name[32];
-    std::snprintf(name, sizeof(name), "%016zx.idx", (size_t) h);
+    std::snprintf(name, sizeof(name), "%016zx.idx", (size_t)h);
     std::error_code ec;
     auto dir = userConfigDir() / "index";
     std::filesystem::create_directories(dir, ec);
@@ -2735,7 +2816,7 @@ void Editor::loadIndexCache()
 
 Editor::~Editor()
 {
-    lspClient.stop();   // graceful shutdown + join the reader thread (no std::terminate)
+    lspClient.stop(); // graceful shutdown + join the reader thread (no std::terminate)
 }
 
 // ── LSP (clangd) integration ─────────────────────────────────────────────────
@@ -2745,7 +2826,7 @@ Editor::~Editor()
 
 void Editor::detectClangd()
 {
-    const char* candidates[] = {
+    const char *candidates[] = {
         "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin/clangd.exe",
         "C:/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/Llvm/x64/bin/clangd.exe",
         "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/Llvm/x64/bin/clangd.exe",
@@ -2753,9 +2834,13 @@ void Editor::detectClangd()
         "C:/Program Files/LLVM/bin/clangd.exe",
     };
     std::error_code ec;
-    for (const char* c : candidates)
-        if (std::filesystem::exists(c, ec)) { clangdPath = c; return; }
-    clangdPath = "clangd";   // last resort: rely on PATH (start() fails cleanly if absent)
+    for (const char *c : candidates)
+        if (std::filesystem::exists(c, ec))
+        {
+            clangdPath = c;
+            return;
+        }
+    clangdPath = "clangd"; // last resort: rely on PATH (start() fails cleanly if absent)
 }
 
 void Editor::startLspForProject()
@@ -2769,14 +2854,14 @@ void Editor::startLspForProject()
     lspClient.start(clangdPath, lsp::pathToUri(projectRoot.string()));
 }
 
-std::string Editor::lspUriForTab(const TabDocument& t) const
+std::string Editor::lspUriForTab(const TabDocument &t) const
 {
     if (t.filename.empty() || t.filename == "untitled")
         return {};
     return lsp::pathToUri(t.filename);
 }
 
-bool Editor::lspActiveForExt(const std::string& extLower) const
+bool Editor::lspActiveForExt(const std::string &extLower) const
 {
     if (!lspEnabled || !lspClient.ready())
         return false;
@@ -2784,7 +2869,7 @@ bool Editor::lspActiveForExt(const std::string& extLower) const
            extLower == ".h" || extLower == ".hpp" || extLower == ".hxx" || extLower == ".hh" || extLower == ".inl";
 }
 
-void Editor::lspSyncDoc(TabDocument& t)
+void Editor::lspSyncDoc(TabDocument &t)
 {
     std::string uri = lspUriForTab(t);
     if (uri.empty())
@@ -2807,7 +2892,7 @@ void Editor::pollLsp()
 {
     if (!lspClient.spawned())
         return;
-    for (auto& r : lspClient.poll())
+    for (auto &r : lspClient.poll())
     {
         if (r.serverGone)
         {
@@ -2824,9 +2909,9 @@ void Editor::pollLsp()
             {
                 std::vector<std::string> items;
                 std::unordered_set<std::string> seen;
-                for (auto& it : r.completionItems)
+                for (auto &it : r.completionItems)
                 {
-                    const std::string& s = it.insertText.empty() ? it.label : it.insertText;
+                    const std::string &s = it.insertText.empty() ? it.label : it.insertText;
                     if (!s.empty() && seen.insert(s).second)
                         items.push_back(s);
                     if (items.size() >= 50)
@@ -2841,7 +2926,7 @@ void Editor::pollLsp()
         // this navigates to clangd's location if it differs.
         else if (r.kind == lsp::ResultKind::Definition && r.id == lspDefinitionId && !r.locations.empty())
         {
-            const auto& loc = r.locations[0];
+            const auto &loc = r.locations[0];
             std::string p = lsp::uriToPath(loc.uri);
             if (!p.empty())
             {
@@ -2857,13 +2942,13 @@ void Editor::pollLsp()
                 openFile(p);
                 if (!tabs.empty())
                 {
-                    auto& e = doc().editor;
+                    auto &e = doc().editor;
                     e.SetCursor(loc.line, 0);
                     e.SelectLine(loc.line);
                     e.ScrollToLine(loc.line, TextEditor::Scroll::alignMiddle);
                 }
             }
-            lspDefinitionId = 0;   // consume; ignore stale duplicates
+            lspDefinitionId = 0; // consume; ignore stale duplicates
         }
         // Hover: clangd's type/signature for the word under the mouse. The tooltip
         // renders lspHoverText next frame while the hover persists.
@@ -2877,7 +2962,8 @@ void Editor::pollLsp()
         else if (r.kind == lsp::ResultKind::Diagnostics)
         {
             std::string key = lsp::uriToPath(r.uri);
-            if (key.empty()) continue;
+            if (key.empty())
+                continue;
             if (r.diagnostics.empty())
                 lspDiagnostics.erase(key);
             else
@@ -2911,7 +2997,8 @@ void Editor::rebuildProjectIndex()
     // go-to-def and autocomplete too.
     auto excludedSnap = navExcluded;
 
-    std::thread([st, gen, root, cachePath, excludedSnap]() {
+    std::thread([st, gen, root, cachePath, excludedSnap]()
+                {
         // Snapshot the previous build's per-file cache once; reused across passes
         // to skip re-parsing files whose mtime+size are unchanged.
         std::unordered_map<std::string, ts::FileSyms> oldCache;
@@ -3250,8 +3337,8 @@ void Editor::rebuildProjectIndex()
             break;                     // no save landed during this pass → done
         curGen = ++st->gen;            // a save did → one more pass, fresh gen
         }                              // end for
-        st->building = false;
-    }).detach();
+        st->building = false; })
+        .detach();
 }
 
 // ── Hover hints + Find References (imgui-bundle style) ──────────────
@@ -3279,7 +3366,8 @@ void Editor::renderHoverTooltip(TabDocument &t)
         return;
 
     std::string hext = std::filesystem::path(t.filename).extension().string();
-    std::transform(hext.begin(), hext.end(), hext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    std::transform(hext.begin(), hext.end(), hext.begin(), [](unsigned char c)
+                   { return (char)std::tolower(c); });
     bool lspOn = lspActiveForExt(hext);
 
     if (hoverWord.empty())
@@ -3304,7 +3392,8 @@ void Editor::renderHoverTooltip(TabDocument &t)
                 if (!uri.empty())
                 {
                     int id = lspClient.requestHover(uri, hl, hb);
-                    if (id) lspHoverId = id;
+                    if (id)
+                        lspHoverId = id;
                 }
             }
         }
@@ -3386,7 +3475,8 @@ void Editor::openCSharpLearn(const std::string &rawSymbol)
     if (sym.empty())
         return;
 
-    auto urlEncode = [](const std::string &s) {
+    auto urlEncode = [](const std::string &s)
+    {
         static const char *hex = "0123456789ABCDEF";
         std::string out;
         for (unsigned char c : s)
@@ -3403,7 +3493,8 @@ void Editor::openCSharpLearn(const std::string &rawSymbol)
         return out;
     };
 
-    auto rootIsBcl = [&]() {
+    auto rootIsBcl = [&]()
+    {
         auto dot = sym.find('.');
         if (dot == std::string::npos)
             return false; // unqualified -> search
@@ -3415,11 +3506,15 @@ void Editor::openCSharpLearn(const std::string &rawSymbol)
     // actually targets. Priority: (1) the project's <TargetFramework> from a
     // nearby .csproj — the version their code references; (2) the highest .NET
     // runtime installed locally; (3) nothing (Learn then shows its latest).
-    auto dotnetView = [this]() -> std::string {
-        auto tfmToView = [](std::string tfm) -> std::string {
+    auto dotnetView = [this]() -> std::string
+    {
+        auto tfmToView = [](std::string tfm) -> std::string
+        {
             std::transform(tfm.begin(), tfm.end(), tfm.begin(),
-                           [](unsigned char c) { return (char)std::tolower(c); });
-            auto majMinAt = [](const std::string &s, size_t at) -> std::string {
+                           [](unsigned char c)
+                           { return (char)std::tolower(c); });
+            auto majMinAt = [](const std::string &s, size_t at) -> std::string
+            {
                 size_t i = at;
                 std::string maj, min;
                 while (i < s.size() && std::isdigit((unsigned char)s[i]))
@@ -3472,14 +3567,16 @@ void Editor::openCSharpLearn(const std::string &rawSymbol)
                 if (!e.is_regular_file(ec))
                     continue;
                 auto ext = e.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                               { return (char)std::tolower(c); });
                 if (ext != ".csproj")
                     continue;
                 std::ifstream f(e.path());
                 std::stringstream ss;
                 ss << f.rdbuf();
                 std::string text = ss.str();
-                auto tag = [&](const std::string &t) -> std::string {
+                auto tag = [&](const std::string &t) -> std::string
+                {
                     auto a = text.find("<" + t + ">");
                     if (a == std::string::npos)
                         return "";
@@ -3548,7 +3645,8 @@ void Editor::openCSharpLearn(const std::string &rawSymbol)
     {
         std::string lower = sym;
         std::transform(lower.begin(), lower.end(), lower.begin(),
-                       [](unsigned char c) { return (char)std::tolower(c); });
+                       [](unsigned char c)
+                       { return (char)std::tolower(c); });
         url = "https://learn.microsoft.com/en-us/dotnet/api/" + urlEncode(lower);
         std::string view = dotnetView();
         if (!view.empty())
@@ -3634,7 +3732,8 @@ void Editor::openCSharpDecompiled(const std::string &rawSymbol)
     }
     std::filesystem::path cacheDir = userConfigDir() / "decompiled";
 
-    std::thread([st, full, cacheDir]() {
+    std::thread([st, full, cacheDir]()
+                {
         auto fail = [&](const std::string &msg) {
             std::lock_guard<std::mutex> lk(st->mutex);
             st->error = msg;
@@ -3779,8 +3878,8 @@ void Editor::openCSharpDecompiled(const std::string &rawSymbol)
         st->resultPath = outPath.string();
         st->done = true;
         st->published = false;
-        st->running = false;
-    }).detach();
+        st->running = false; })
+        .detach();
 #else
     (void)rawSymbol;
 #endif
@@ -3859,7 +3958,8 @@ bool Editor::keyChordPressed(const std::string &chord) const
     // Single-combo matcher ("Ctrl+Shift+U"): exact modifier set + named key
     // pressed this frame. Used directly for one-stroke binds and as each half of
     // a two-stroke chord.
-    auto matchCombo = [](const std::string &combo) -> bool {
+    auto matchCombo = [](const std::string &combo) -> bool
+    {
         if (combo.empty())
             return false;
         bool needCtrl = false, needShift = false, needAlt = false, needSuper = false;
@@ -4031,7 +4131,8 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
         return sysIncludeDirs_;
     sysIncludeComputed_ = true;
     std::error_code ec;
-    auto add = [&](std::filesystem::path p) {
+    auto add = [&](std::filesystem::path p)
+    {
         if (p.empty())
             return;
         if (!std::filesystem::is_directory(p, ec))
@@ -4041,7 +4142,8 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
                 return; // dedupe
         sysIncludeDirs_.push_back(std::move(p));
     };
-    auto newestSubdir = [&](const std::filesystem::path &base, const char *mustHave) -> std::filesystem::path {
+    auto newestSubdir = [&](const std::filesystem::path &base, const char *mustHave) -> std::filesystem::path
+    {
         std::filesystem::path best;
         for (auto it = std::filesystem::directory_iterator(base, ec);
              !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
@@ -4077,7 +4179,8 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
     if (const char *vct = std::getenv("VCToolsInstallDir"))
         add(std::filesystem::path(vct) / "include");
 
-    auto haveMsvc = [&] {
+    auto haveMsvc = [&]
+    {
         for (auto &d : sysIncludeDirs_)
             if (d.string().find("\\VC\\Tools\\MSVC\\") != std::string::npos)
                 return true;
@@ -4180,18 +4283,25 @@ const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
 
 static int rankKind(ts::Kind k)
 {
-    switch (k) {
-        case ts::Kind::Class:
-        case ts::Kind::Struct:
-        case ts::Kind::Enum:
-        case ts::Kind::Type:     return 5;   // types win (the usual go-to-def target)
-        case ts::Kind::Method:
-        case ts::Kind::Function: return 4;
-        case ts::Kind::Field:
-        case ts::Kind::Constant: return 3;
-        case ts::Kind::Variable: return 2;
-        case ts::Kind::Module:   return 1;
-        default:                 return 0;
+    switch (k)
+    {
+    case ts::Kind::Class:
+    case ts::Kind::Struct:
+    case ts::Kind::Enum:
+    case ts::Kind::Type:
+        return 5; // types win (the usual go-to-def target)
+    case ts::Kind::Method:
+    case ts::Kind::Function:
+        return 4;
+    case ts::Kind::Field:
+    case ts::Kind::Constant:
+        return 3;
+    case ts::Kind::Variable:
+        return 2;
+    case ts::Kind::Module:
+        return 1;
+    default:
+        return 0;
     }
 }
 
@@ -4214,7 +4324,12 @@ bool Editor::tsGoToDefinition(const std::string &symbol)
     for (auto &d : it->second)
     {
         int r = rankKind(d.kind);
-        if (r > bestRank) { bestRank = r; bestFile = d.file; bestLine = d.line; }
+        if (r > bestRank)
+        {
+            bestRank = r;
+            bestFile = d.file;
+            bestLine = d.line;
+        }
     }
 
     if (bestLine < 0)
@@ -4240,7 +4355,8 @@ bool Editor::tsGoToDefinitionInDoc(const std::string &symbol)
     if (symbol.empty() || tabs.empty())
         return false;
     std::string ext = std::filesystem::path(doc().filename).extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                   { return (char)std::tolower(c); });
     ts::Lang lang = ts::langForExtension(ext);
     if (lang == ts::Lang::None)
         return false;
@@ -4250,7 +4366,11 @@ bool Editor::tsGoToDefinitionInDoc(const std::string &symbol)
         if (s.isDefinition && s.name == symbol)
         {
             int r = rankKind(s.kind);
-            if (r > bestRank) { bestRank = r; bestLine = s.line; }
+            if (r > bestRank)
+            {
+                bestRank = r;
+                bestLine = s.line;
+            }
         }
     if (bestLine < 0)
         return false;
@@ -4333,7 +4453,8 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     if (!declaration && !tabs.empty())
     {
         std::string aext = std::filesystem::path(doc().filename).extension().string();
-        std::transform(aext.begin(), aext.end(), aext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        std::transform(aext.begin(), aext.end(), aext.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
         if (lspActiveForExt(aext))
         {
             std::string uri = lspUriForTab(doc());
@@ -4343,7 +4464,12 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
                 int line = 0, byteCol = 0;
                 doc().editor.GetCursorBytePosition(line, byteCol, 0);
                 int id = lspClient.requestDefinition(uri, line, byteCol);
-                if (id) { lspDefinitionId = id; lspDefLine = line; lspDefCol = byteCol; }
+                if (id)
+                {
+                    lspDefinitionId = id;
+                    lspDefLine = line;
+                    lspDefCol = byteCol;
+                }
             }
         }
     }
@@ -4409,7 +4535,8 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
         if (!tabs.empty())
         {
             std::string aext = std::filesystem::path(doc().filename).extension().string();
-            std::transform(aext.begin(), aext.end(), aext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            std::transform(aext.begin(), aext.end(), aext.begin(), [](unsigned char c)
+                           { return (char)std::tolower(c); });
             if (aext == ".cs")
             {
                 pushToast("No project definition for '" + word + "' (external/NuGet type?)", IM_COL32(240, 200, 90, 255));
@@ -4470,11 +4597,12 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
 
     // File extensions worth scanning — source-y, excludes binaries and
     // build / vcs / cache dirs.
-    auto extOk = [](const std::string &e) {
+    auto extOk = [](const std::string &e)
+    {
         static const std::unordered_set<std::string> ok = {
             ".c", ".h", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh",
             ".m", ".mm", ".inl",
-            ".cs", ".vb", ".fs", ".fsx",".fxh",".fx",".hlsl",".glsl",
+            ".cs", ".vb", ".fs", ".fsx", ".fxh", ".fx", ".hlsl", ".glsl",
             ".java", ".kt", ".kts", ".scala", ".groovy",
             ".py", ".pyw", ".rb", ".php", ".pl",
             ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
@@ -4491,13 +4619,15 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     // (two-pass call below), so a symbol that lives only in a bundled dependency
     // — e.g. ImVector in deps/imgui/imgui.h — is still reachable.
     bool includeDeps = false;
-    auto skipDir = [&includeDeps](const std::string &name) {
+    auto skipDir = [&includeDeps](const std::string &name)
+    {
         if (!includeDeps && (name == "deps" || name == "vendor"))
             return true;
         return name == ".git" || name == ".svn" || name == ".hg" || name == "node_modules" || name == "bin" || name == "obj" || name == "out" || name == "build" || name == "target" || name == ".vs" || name == ".vscode" || name == ".idea" || name == "__pycache__" || name == "Backup" || name == "backup" || name == "Backups" || name == "backups";
     };
 
-    auto isWordBoundary = [](char c) {
+    auto isWordBoundary = [](char c)
+    {
         return !(std::isalnum((unsigned char)c) || c == '_');
     };
 
@@ -4515,7 +4645,8 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     // One full directory walk + scan. Wrapped in a lambda so we can run it twice:
     // once with deps excluded (fast, project-only) and, if that finds nothing,
     // again with deps included (reaches symbols defined only in bundled libs).
-    auto runScan = [&]() {
+    auto runScan = [&]()
+    {
         int budget = 8000; // file budget — keep walks bounded on huge projects
 
         for (auto it = std::filesystem::recursive_directory_iterator(
@@ -4537,7 +4668,8 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
                 break;
             auto ext = it->path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
-                           [](unsigned char c) { return (char)std::tolower(c); });
+                           [](unsigned char c)
+                           { return (char)std::tolower(c); });
             if (!extOk(ext))
                 continue;
             if (navIsExcluded(it->path()))
@@ -4797,7 +4929,8 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     }
     // Best score wins; ties broken by first file encountered.
     std::stable_sort(hits.begin(), hits.end(),
-                     [](const Hit &a, const Hit &b) { return a.score > b.score; });
+                     [](const Hit &a, const Hit &b)
+                     { return a.score > b.score; });
     auto &best = hits.front();
     commitPendingNavJump();
     openFile(best.path.string());
@@ -4822,11 +4955,13 @@ void Editor::findReferencesOf(TabDocument &t, const std::string &word)
         return;
     }
 
-    auto isBoundary = [](char c) {
+    auto isBoundary = [](char c)
+    {
         return !(std::isalnum(static_cast<unsigned char>(c)) || c == '_');
     };
     // Whole-word scan of one text blob → append every matching line.
-    auto scanText = [&](const std::string &file, std::istream &in) {
+    auto scanText = [&](const std::string &file, std::istream &in)
+    {
         std::string line;
         int ln = 0;
         bool counted = false;
@@ -4987,7 +5122,7 @@ void Editor::renderReferencesPanel()
             std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
             if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
             {
-                navHistory.record(currentNavLocation());   // so Back returns here
+                navHistory.record(currentNavLocation()); // so Back returns here
                 openFile(hit.file);
                 if (!tabs.empty())
                 {
@@ -5001,7 +5136,7 @@ void Editor::renderReferencesPanel()
             ImGui::TextDisabled("%s", hit.text.c_str());
             ImGui::PopID();
         }
-        middleMousePanScroll(4);   // references panel
+        middleMousePanScroll(4); // references panel
     }
     ImGui::End();
 }
@@ -5017,18 +5152,30 @@ static const char *symKindTag(ts::Kind k)
 {
     switch (k)
     {
-        case ts::Kind::Function: return "fn";
-        case ts::Kind::Method:   return "fn";
-        case ts::Kind::Class:    return "class";
-        case ts::Kind::Struct:   return "struct";
-        case ts::Kind::Enum:     return "enum";
-        case ts::Kind::Type:     return "type";
-        case ts::Kind::Field:    return "field";
-        case ts::Kind::Variable: return "var";
-        case ts::Kind::Constant: return "const";
-        case ts::Kind::Module:   return "ns";
-        case ts::Kind::Macro:    return "macro";
-        default:                 return "sym";
+    case ts::Kind::Function:
+        return "fn";
+    case ts::Kind::Method:
+        return "fn";
+    case ts::Kind::Class:
+        return "class";
+    case ts::Kind::Struct:
+        return "struct";
+    case ts::Kind::Enum:
+        return "enum";
+    case ts::Kind::Type:
+        return "type";
+    case ts::Kind::Field:
+        return "field";
+    case ts::Kind::Variable:
+        return "var";
+    case ts::Kind::Constant:
+        return "const";
+    case ts::Kind::Module:
+        return "ns";
+    case ts::Kind::Macro:
+        return "macro";
+    default:
+        return "sym";
     }
 }
 
@@ -5036,16 +5183,21 @@ static const char *symKindTag(ts::Kind k)
 // definition. Shared by the Symbols panel's Document and Project (per-file) views.
 template <class JumpFn>
 static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::string &filter,
-                             JumpFn jump, int &uid)
+                              JumpFn jump, int &uid)
 {
-    auto match = [&](const std::string &n) {
-        if (filter.empty()) return true;
+    auto match = [&](const std::string &n)
+    {
+        if (filter.empty())
+            return true;
         std::string l = n;
-        std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
         return l.find(filter) != std::string::npos;
     };
-    auto label = [](const ts::Symbol &s) { return std::string(symKindTag(s.kind)) + "  " + s.name; };
-    auto isTypeKind = [](ts::Kind k) {
+    auto label = [](const ts::Symbol &s)
+    { return std::string(symKindTag(s.kind)) + "  " + s.name; };
+    auto isTypeKind = [](ts::Kind k)
+    {
         return k == ts::Kind::Class || k == ts::Kind::Struct || k == ts::Kind::Enum ||
                k == ts::Kind::Type || k == ts::Kind::Module;
     };
@@ -5054,9 +5206,11 @@ static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::st
     {
         for (auto &s : syms)
         {
-            if (!s.isDefinition || !match(s.name)) continue;
+            if (!s.isDefinition || !match(s.name))
+                continue;
             ImGui::PushID(uid++);
-            if (ImGui::Selectable(label(s).c_str())) jump(s.line);
+            if (ImGui::Selectable(label(s).c_str()))
+                jump(s.line);
             ImGui::PopID();
         }
         return;
@@ -5066,9 +5220,12 @@ static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::st
     std::vector<const ts::Symbol *> topLevel;
     for (auto &s : syms)
     {
-        if (!s.isDefinition) continue;
-        if (s.enclosingType.empty()) topLevel.push_back(&s);
-        else membersByType[s.enclosingType].push_back(&s);
+        if (!s.isDefinition)
+            continue;
+        if (s.enclosingType.empty())
+            topLevel.push_back(&s);
+        else
+            membersByType[s.enclosingType].push_back(&s);
     }
     std::unordered_set<std::string> shownTypes;
     for (auto *s : topLevel)
@@ -5080,13 +5237,15 @@ static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::st
         {
             shownTypes.insert(s->name);
             bool open = ImGui::TreeNodeEx(label(*s).c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
-            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) jump(s->line);
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+                jump(s->line);
             if (open)
             {
                 for (auto *m : mit->second)
                 {
                     ImGui::PushID(uid++);
-                    if (ImGui::Selectable(label(*m).c_str())) jump(m->line);
+                    if (ImGui::Selectable(label(*m).c_str()))
+                        jump(m->line);
                     ImGui::PopID();
                 }
                 ImGui::TreePop();
@@ -5094,13 +5253,15 @@ static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::st
         }
         else
         {
-            if (ImGui::Selectable(label(*s).c_str())) jump(s->line);
+            if (ImGui::Selectable(label(*s).c_str()))
+                jump(s->line);
         }
         ImGui::PopID();
     }
     for (auto &kv : membersByType)
     {
-        if (shownTypes.count(kv.first)) continue;
+        if (shownTypes.count(kv.first))
+            continue;
         ImGui::PushID(uid++);
         std::string header = kv.first + "  (members)";
         if (ImGui::TreeNodeEx(header.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
@@ -5108,7 +5269,8 @@ static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::st
             for (auto *m : kv.second)
             {
                 ImGui::PushID(uid++);
-                if (ImGui::Selectable(label(*m).c_str())) jump(m->line);
+                if (ImGui::Selectable(label(*m).c_str()))
+                    jump(m->line);
                 ImGui::PopID();
             }
             ImGui::TreePop();
@@ -5128,14 +5290,17 @@ void Editor::renderSymbolsPanel()
         return;
     }
 
-    if (ImGui::RadioButton("Document", !symbolsProjectMode)) symbolsProjectMode = false;
+    if (ImGui::RadioButton("Document", !symbolsProjectMode))
+        symbolsProjectMode = false;
     ImGui::SameLine();
-    if (ImGui::RadioButton("Project", symbolsProjectMode)) symbolsProjectMode = true;
+    if (ImGui::RadioButton("Project", symbolsProjectMode))
+        symbolsProjectMode = true;
 
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##symFilter", "filter…", symbolsFilter, sizeof(symbolsFilter));
     std::string filter = symbolsFilter;
-    std::transform(filter.begin(), filter.end(), filter.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    std::transform(filter.begin(), filter.end(), filter.begin(), [](unsigned char c)
+                   { return (char)std::tolower(c); });
 
     if (!symbolsProjectMode)
     {
@@ -5149,7 +5314,8 @@ void Editor::renderSymbolsPanel()
         auto &ed = doc().editor;
         std::string fname = doc().filename;
         std::string ext = std::filesystem::path(fname).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
         ts::Lang lang = ts::langForExtension(ext);
         if (lang == ts::Lang::None)
         {
@@ -5172,8 +5338,9 @@ void Editor::renderSymbolsPanel()
             ImGui::End();
             return;
         }
-        auto jump = [&](int line) {
-            navHistory.record(currentNavLocation());   // so Back returns here
+        auto jump = [&](int line)
+        {
+            navHistory.record(currentNavLocation()); // so Back returns here
             auto &e = doc().editor;
             e.SetCursor(line, 0);
             e.SelectLine(line);
@@ -5183,7 +5350,7 @@ void Editor::renderSymbolsPanel()
         {
             int uid = 0;
             renderSymbolGroup(symbolsCacheSyms, filter, jump, uid);
-            middleMousePanScroll(5);   // symbols (document)
+            middleMousePanScroll(5); // symbols (document)
         }
         ImGui::EndChild();
         ImGui::End();
@@ -5221,18 +5388,21 @@ void Editor::renderSymbolsPanel()
             for (auto &d : kv.second)
                 symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind, {}});
         std::sort(symbolsProjectRows.begin(), symbolsProjectRows.end(),
-                  [](const SymRow &a, const SymRow &b) { return a.name < b.name; });
-        for (auto &r : symbolsProjectRows)   // precompute lowercase once per gen (filter is case-insensitive)
+                  [](const SymRow &a, const SymRow &b)
+                  { return a.name < b.name; });
+        for (auto &r : symbolsProjectRows) // precompute lowercase once per gen (filter is case-insensitive)
         {
             r.lname = r.name;
-            std::transform(r.lname.begin(), r.lname.end(), r.lname.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            std::transform(r.lname.begin(), r.lname.end(), r.lname.begin(), [](unsigned char c)
+                           { return (char)std::tolower(c); });
         }
-        symbolsFilterCache = std::string(1, '\x01');   // force a refilter against the new rows
+        symbolsFilterCache = std::string(1, '\x01'); // force a refilter against the new rows
         symbolsProjectGen = gen;
     }
 
-    auto projectJump = [&](const std::string &file, int line) {
-        navHistory.record(currentNavLocation());   // so Back returns here
+    auto projectJump = [&](const std::string &file, int line)
+    {
+        navHistory.record(currentNavLocation()); // so Back returns here
         openFile(file);
         if (!tabs.empty())
         {
@@ -5254,7 +5424,7 @@ void Editor::renderSymbolsPanel()
             if (filter != symbolsFilterCache)
             {
                 symbolsFilteredIdx.clear();
-                for (int i = 0; i < (int) symbolsProjectRows.size(); ++i)
+                for (int i = 0; i < (int)symbolsProjectRows.size(); ++i)
                     if (symbolsProjectRows[i].lname.find(filter) != std::string::npos)
                         symbolsFilteredIdx.push_back(i);
                 symbolsFilterCache = filter;
@@ -5262,7 +5432,8 @@ void Editor::renderSymbolsPanel()
             int shown = 0;
             for (int ri : symbolsFilteredIdx)
             {
-                if (shown >= 2000) break;
+                if (shown >= 2000)
+                    break;
                 const auto &row = symbolsProjectRows[ri];
                 ImGui::PushID(shown++);
                 std::string lbl = std::string(symKindTag(row.kind)) + "  " + row.name;
@@ -5283,7 +5454,8 @@ void Editor::renderSymbolsPanel()
             for (auto &file : symbolsFiles)
             {
                 auto it = idx->fileSymbols.find(file);
-                if (it == idx->fileSymbols.end() || it->second.empty()) continue;
+                if (it == idx->fileSymbols.end() || it->second.empty())
+                    continue;
                 std::string leaf = std::filesystem::path(file).filename().string();
                 ImGui::PushID(uid++);
                 bool open = ImGui::TreeNodeEx(leaf.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
@@ -5291,14 +5463,15 @@ void Editor::renderSymbolsPanel()
                     ImGui::SetTooltip("%s", file.c_str());
                 if (open)
                 {
-                    auto jump = [&](int line) { projectJump(file, line); };
+                    auto jump = [&](int line)
+                    { projectJump(file, line); };
                     renderSymbolGroup(it->second, filter, jump, uid);
                     ImGui::TreePop();
                 }
                 ImGui::PopID();
             }
         }
-        middleMousePanScroll(6);   // symbols (project)
+        middleMousePanScroll(6); // symbols (project)
     }
     ImGui::EndChild();
     ImGui::End();
@@ -5333,13 +5506,16 @@ void Editor::runFindInFiles()
 
     const bool cs = findInFilesCase;
     const bool ww = findInFilesWholeWord;
-    auto lower = [](std::string s) { for (auto& c : s) c = (char) std::tolower((unsigned char) c); return s; };
+    auto lower = [](std::string s)
+    { for (auto& c : s) c = (char) std::tolower((unsigned char) c); return s; };
     if (!cs)
         needle = lower(needle);
-    auto isBoundary = [](char c) { return !(std::isalnum((unsigned char)c) || c == '_'); };
+    auto isBoundary = [](char c)
+    { return !(std::isalnum((unsigned char)c) || c == '_'); };
 
     static constexpr size_t kMaxHits = 5000;
-    auto scanText = [&](const std::string &file, std::istream &in) {
+    auto scanText = [&](const std::string &file, std::istream &in)
+    {
         std::string line;
         int ln = 0;
         bool counted = false;
@@ -5488,7 +5664,7 @@ void Editor::renderFindInFilesPanel()
             std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
             if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
             {
-                navHistory.record(currentNavLocation());   // so Back returns here
+                navHistory.record(currentNavLocation()); // so Back returns here
                 openFile(hit.file);
                 if (!tabs.empty())
                 {
@@ -5502,7 +5678,7 @@ void Editor::renderFindInFilesPanel()
             ImGui::TextDisabled("%s", hit.text.c_str());
             ImGui::PopID();
         }
-        middleMousePanScroll(7);   // find-in-files results
+        middleMousePanScroll(7); // find-in-files results
         ImGui::EndChild();
     }
     ImGui::End();
@@ -5528,11 +5704,15 @@ void Editor::renderDevTools()
     ImGui::SetNextWindowSize(ImVec2(520.0f, 480.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Developer Tools###devTools", &devToolsVisible))
     {
-        ImGui::SeparatorText("Dear ImGui inspectors");
-        ImGui::Checkbox("Metrics / Debugger", &devShowMetrics);
-        ImGui::Checkbox("ID Stack Tool (inspect widget IDs)", &devShowStackTool);
-        ImGui::Checkbox("Debug Log", &devShowDebugLog);
-        ImGui::Checkbox("Dear ImGui Demo", &devShowDemo);
+        ImGui::Separator();
+        if (ImGui::TreeNode("Dear ImGui Tools"))
+        {
+            ImGui::Checkbox("Metrics / Debugger", &devShowMetrics);
+            ImGui::Checkbox("ID Stack Tool (inspect widget IDs)", &devShowStackTool);
+            ImGui::Checkbox("Debug Log", &devShowDebugLog);
+            ImGui::Checkbox("Dear ImGui Demo", &devShowDemo);
+            ImGui::TreePop();
+        }
 
         // ── Live external-edit watch state ───────────────────────────────
         ImGui::SeparatorText("External edit watch");
@@ -5680,7 +5860,7 @@ void Editor::renderDevTools()
             }
             ImGui::EndTable();
         }
-        middleMousePanScroll(8);   // developer tools
+        middleMousePanScroll(8); // developer tools
     }
     ImGui::End();
 }
@@ -5712,7 +5892,8 @@ void Editor::renderMarkdownInline(const std::string &text, float wrapWidth)
     std::vector<Word> words;
     std::string cur;
     int style = 0;
-    auto flush = [&] { if (!cur.empty()) { words.push_back({ cur, style, std::string() }); cur.clear(); } };
+    auto flush = [&]
+    { if (!cur.empty()) { words.push_back({ cur, style, std::string() }); cur.clear(); } };
 
     for (size_t i = 0; i < text.size();)
     {
@@ -5862,7 +6043,8 @@ void Editor::renderMarkdownPreview()
         }
         auto &t = doc();
         std::string ext = std::filesystem::path(t.filename).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
         if (ext != ".md" && ext != ".markdown")
         {
             ImGui::TextDisabled("Open a Markdown (.md) file to preview it here.");
@@ -5955,7 +6137,7 @@ void Editor::renderMarkdownPreview()
             }
             renderMarkdownInline(body, avail);
         }
-        middleMousePanScroll(9);   // markdown preview
+        middleMousePanScroll(9); // markdown preview
     }
     ImGui::End();
 }
@@ -6163,7 +6345,7 @@ void Editor::renderImageWindows()
             {
                 ImGui::TextDisabled("loading…");
             }
-            middleMousePanScroll(10);   // image viewport
+            middleMousePanScroll(10); // image viewport
             ImGui::EndChild();
         }
         ImGui::End();
@@ -6208,7 +6390,8 @@ void Editor::discoverFonts()
                 continue;
             auto ext = it->path().extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
-                           [](unsigned char c) { return (char)std::tolower(c); });
+                           [](unsigned char c)
+                           { return (char)std::tolower(c); });
             if (ext == ".ttf" || ext == ".otf")
                 availableFonts.push_back(it->path().string());
         }
@@ -6218,10 +6401,13 @@ void Editor::discoverFonts()
     // authoritative non-monospace warning on the active font (advance-based)
     // still fires if a mis-sorted font is selected. Within each group: A→Z.
     std::sort(availableFonts.begin(), availableFonts.end(),
-              [](const std::string &a, const std::string &b) {
-                  auto lower = [](std::string s) {
+              [](const std::string &a, const std::string &b)
+              {
+                  auto lower = [](std::string s)
+                  {
                       std::transform(s.begin(), s.end(), s.begin(),
-                                     [](unsigned char c) { return (char)std::tolower(c); });
+                                     [](unsigned char c)
+                                     { return (char)std::tolower(c); });
                       return s;
                   };
                   std::string fa = lower(std::filesystem::path(a).filename().string());
@@ -6355,7 +6541,8 @@ void Editor::loadSettings()
             else if (k == "theme")
             {
                 prefTheme = std::atoi(v.c_str());
-                if (prefTheme < 0 || prefTheme >= themeCount()) prefTheme = 0;
+                if (prefTheme < 0 || prefTheme >= themeCount())
+                    prefTheme = 0;
             }
             else if (k == "ctrl_scroll_zoom")
                 prefCtrlScrollZoom = (v == "1" || v == "true");
@@ -6363,6 +6550,10 @@ void Editor::loadSettings()
                 autocomplete = (v == "1" || v == "true");
             else if (k == "invert_pan")
                 prefInvertPan = (v == "1" || v == "true");
+            else if (k == "auto_update")
+                prefAutoUpdate = (v == "1" || v == "true");
+            else if (k == "last_update_check")
+                lastUpdateCheckEpoch = std::strtoll(v.c_str(), nullptr, 10);
             else if (k == "pan_scroll_accel")
                 prefPanScrollAccel = std::strtof(v.c_str(), nullptr);
             else if (k == "word_wrap")
@@ -6490,6 +6681,8 @@ void Editor::saveSettings()
     f << "autocomplete=" << (autocomplete ? "1" : "0") << "\n";
     f << "invert_pan=" << (prefInvertPan ? "1" : "0") << "\n";
     f << "pan_scroll_accel=" << prefPanScrollAccel << "\n";
+    f << "auto_update=" << (prefAutoUpdate ? "1" : "0") << "\n";
+    f << "last_update_check=" << lastUpdateCheckEpoch << "\n";
     f << "word_wrap=" << (prefWordWrap ? "1" : "0") << "\n";
     f << "wrap_width=" << prefWrapWidthPx << "\n";
     f << "fps_limit=" << prefFpsLimit << "\n";
@@ -6553,7 +6746,7 @@ void Editor::detectToolchains()
 
 #ifdef _WIN32
     // Enumerate MSVC installations under each VS edition.
-    for (const char *edition : {"2022", "2019"})
+    for (const char *edition : {"18", "2022", "2019"})
     {
         for (const char *flavour : {"Community", "Professional", "Enterprise", "BuildTools", "Preview"})
         {
@@ -6594,7 +6787,8 @@ void Editor::detectToolchains()
     // main thread. Captures `dotnetState` by value so it survives Editor
     // destruction (script-runner pattern).
     auto ds = dotnetState;
-    std::thread([ds]() {
+    std::thread([ds]()
+                {
 #ifdef _WIN32
         FILE *p = _popen("dotnet --list-sdks 2>NUL", "r");
 #else
@@ -6628,8 +6822,8 @@ void Editor::detectToolchains()
         }
         std::lock_guard<std::mutex> lock(ds->mutex);
         ds->sdks = std::move(found);
-        ds->done = true;
-    }).detach();
+        ds->done = true; })
+        .detach();
 }
 
 // Publish background `dotnet --list-sdks` results into detectedDotnetSdks once
@@ -6760,7 +6954,8 @@ void Editor::renderSettings()
                         std::string name = std::filesystem::path(p).filename().string();
                         std::string lname = name;
                         std::transform(lname.begin(), lname.end(), lname.begin(),
-                                       [](unsigned char c) { return (char)std::tolower(c); });
+                                       [](unsigned char c)
+                                       { return (char)std::tolower(c); });
                         if (!emittedNonMonoHeader && !fontNameLooksMonospace(lname))
                         {
                             emittedNonMonoHeader = true;
@@ -7084,14 +7279,16 @@ void Editor::renderSettings()
                         groupOrder.push_back(b.group);
                 }
 
-                auto chordFor = [&](const Bind &b) -> std::string {
+                auto chordFor = [&](const Bind &b) -> std::string
+                {
                     auto it = keybindOverrides.find(b.id);
                     return it != keybindOverrides.end() ? it->second : b.defaultCombo;
                 };
 
                 // Capture-next-chord logic. We watch IsKeyPressed across the
                 // modifier-aware keys and assemble a "Mod+Key" string.
-                auto tryCaptureChord = [&](const std::string &targetId) {
+                auto tryCaptureChord = [&](const std::string &targetId)
+                {
                     if (capturingId != targetId)
                         return;
                     if (curFrame == capturingFrame)
@@ -7130,7 +7327,8 @@ void Editor::renderSettings()
                     // NamedKey range too, and IsKeyPressed fires on them when a
                     // modifier goes down, which previously captured garbage like
                     // "Ctrl+" with no real key (the "polls mods twice" bug).
-                    auto isModifierKey = [](ImGuiKey k) {
+                    auto isModifierKey = [](ImGuiKey k)
+                    {
                         return k == ImGuiKey_LeftCtrl || k == ImGuiKey_RightCtrl ||
                                k == ImGuiKey_LeftShift || k == ImGuiKey_RightShift ||
                                k == ImGuiKey_LeftAlt || k == ImGuiKey_RightAlt ||
@@ -7356,7 +7554,7 @@ void Editor::reopenLastClosedTab()
 }
 
 //
-//	Editor::windowLabelFor
+//  Editor::windowLabelFor
 //
 
 std::string Editor::windowLabelFor(const TabDocument &t) const
@@ -7373,7 +7571,7 @@ std::string Editor::windowLabelFor(const TabDocument &t) const
 }
 
 //
-//	Editor::newFile
+//  Editor::newFile
 //
 
 void Editor::newFile()
@@ -7390,7 +7588,7 @@ void Editor::newFile(std::string &path)
 }
 
 //
-//	Editor::openFile
+//  Editor::openFile
 //
 
 // ── .editorconfig — per-project / per-language settings cascade ────────
@@ -7478,13 +7676,15 @@ static bool ecFileIsRoot(const std::filesystem::path &cfg)
         std::string k = line.substr(a, eq - a);
         while (!k.empty() && (k.back() == ' ' || k.back() == '\t'))
             k.pop_back();
-        std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        std::transform(k.begin(), k.end(), k.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
         if (k == "root")
         {
             std::string v = line.substr(eq + 1);
             size_t b = v.find_first_not_of(" \t");
             v = (b == std::string::npos) ? std::string() : v.substr(b);
-            std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c)
+                           { return (char)std::tolower(c); });
             return v.rfind("true", 0) == 0;
         }
     }
@@ -7516,13 +7716,16 @@ void Editor::applyEditorConfig(TabDocument &t)
     if (configs.empty())
         return;
 
-    auto trim = [](std::string s) {
+    auto trim = [](std::string s)
+    {
         size_t a = s.find_first_not_of(" \t");
         size_t b = s.find_last_not_of(" \t");
         return (a == std::string::npos) ? std::string() : s.substr(a, b - a + 1);
     };
-    auto lower = [](std::string s) {
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    auto lower = [](std::string s)
+    {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
         return s;
     };
 
@@ -7596,7 +7799,8 @@ void Editor::openFile(const std::string &path)
     {
         auto ext = std::filesystem::path(path).extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(),
-                       [](unsigned char c) { return (char)std::tolower(c); });
+                       [](unsigned char c)
+                       { return (char)std::tolower(c); });
         if (isImageExt(ext))
         {
             openImageFile(path);
@@ -7713,7 +7917,7 @@ void Editor::openFile(const std::string &path)
 }
 
 //
-//	Editor::saveFile
+//  Editor::saveFile
 //
 
 void Editor::saveFile()
@@ -7765,11 +7969,11 @@ void Editor::saveFile(std::string &path)
 }
 
 //
-//	External-change watch — safe co-editing with Claude / other tools
+//  External-change watch — safe co-editing with Claude / other tools
 //
 
-//	Re-baseline the on-disk write time we've reconciled with. Called after our
-//	own load/save so the watch never mistakes our write for someone else's.
+//  Re-baseline the on-disk write time we've reconciled with. Called after our
+//  own load/save so the watch never mistakes our write for someone else's.
 void Editor::recordDiskMtime(TabDocument &t)
 {
     if (t.filename == "untitled")
@@ -7780,9 +7984,9 @@ void Editor::recordDiskMtime(TabDocument &t)
         t.diskMtime = mt;
 }
 
-//	Re-read the file from disk into a clean buffer, preserving the cursor —
-//	CLAMPED into the reloaded document because an external edit may have shrunk
-//	the file (a stale out-of-range cursor is the classic assert source here).
+//  Re-read the file from disk into a clean buffer, preserving the cursor —
+//  CLAMPED into the reloaded document because an external edit may have shrunk
+//  the file (a stale out-of-range cursor is the classic assert source here).
 void Editor::reloadFromDisk(TabDocument &t)
 {
     std::ifstream stream(t.filename.c_str());
@@ -7816,8 +8020,8 @@ void Editor::reloadFromDisk(TabDocument &t)
         rebuildProjectIndex();
 }
 
-//	Poll open files' mtime (throttled). Real change: clean buffer reloads, dirty
-//	buffer flags a conflict. Content backstop ignores benign/own touches.
+//  Poll open files' mtime (throttled). Real change: clean buffer reloads, dirty
+//  buffer flags a conflict. Content backstop ignores benign/own touches.
 void Editor::checkExternalChanges()
 {
     double now = ImGui::GetTime();
@@ -7873,14 +8077,15 @@ void Editor::checkExternalChanges()
     }
 }
 
-//	Gutter-highlight the lines a reload changed. Prefix/suffix trim keeps the LCS
-//	bounded so a localized edit in a huge file is cheap.
+//  Gutter-highlight the lines a reload changed. Prefix/suffix trim keeps the LCS
+//  bounded so a localized edit in a huge file is cheap.
 void Editor::markChangedLines(TabDocument &t, const std::string &oldText, const std::string &newText)
 {
     t.editor.ClearMarkers();
     t.externalMarkers = false;
 
-    auto split = [](const std::string &s) {
+    auto split = [](const std::string &s)
+    {
         std::vector<std::string> v;
         std::string cur;
         for (char c : s)
@@ -8078,8 +8283,10 @@ static std::string merge3Text(const std::string &baseS, const std::string &mineS
             sync.push_back(p.first);
 
     std::vector<std::string> out;
-    auto pushRange = [&](const std::vector<std::string> &X, int lo, int hi) { for (int k = lo; k < hi; ++k) out.push_back(X[k]); };
-    auto sameAsBase = [&](const std::vector<std::string> &X, int xLo, int xHi, int oLo, int oHi) {
+    auto pushRange = [&](const std::vector<std::string> &X, int lo, int hi)
+    { for (int k = lo; k < hi; ++k) out.push_back(X[k]); };
+    auto sameAsBase = [&](const std::vector<std::string> &X, int xLo, int xHi, int oLo, int oHi)
+    {
         if (xHi - xLo != oHi - oLo)
             return false;
         for (int k = 0; k < xHi - xLo; ++k)
@@ -8087,7 +8294,8 @@ static std::string merge3Text(const std::string &baseS, const std::string &mineS
                 return false;
         return true;
     };
-    auto emitChunk = [&](int oLo, int oHi, int aLo, int aHi, int bLo, int bHi) {
+    auto emitChunk = [&](int oLo, int oHi, int aLo, int aHi, int bLo, int bHi)
+    {
         bool aSame = sameAsBase(A, aLo, aHi, oLo, oHi);
         bool bSame = sameAsBase(B, bLo, bHi, oLo, oHi);
         if (aSame && bSame)
@@ -8140,9 +8348,9 @@ static std::string merge3Text(const std::string &baseS, const std::string &mineS
     return mergeJoinLines(out);
 }
 
-//	Merge the on-disk (external) version into the dirty buffer over the last
-//	reconciled base. Non-overlapping changes auto-merge; overlaps get git-style
-//	<<<<<<< / ======= / >>>>>>> markers. Result is left DIRTY so the user saves.
+//  Merge the on-disk (external) version into the dirty buffer over the last
+//  reconciled base. Non-overlapping changes auto-merge; overlaps get git-style
+//  <<<<<<< / ======= / >>>>>>> markers. Result is left DIRTY so the user saves.
 void Editor::mergeExternalChange(TabDocument &t)
 {
     std::ifstream f(t.filename.c_str());
@@ -8187,7 +8395,7 @@ void Editor::mergeExternalChange(TabDocument &t)
     }
 }
 
-//	Queue a transient corner notification.
+//  Queue a transient corner notification.
 void Editor::pushToast(const std::string &text, ImU32 accent)
 {
     toasts.push_back({text, ImGui::GetTime() + 5.0, accent});
@@ -8222,32 +8430,33 @@ void Editor::pollToastInbox()
         if (e.is_regular_file(ec))
             files.push_back(e.path());
         if (files.size() >= 64)
-            break;   // flood guard
+            break; // flood guard
     }
-    std::sort(files.begin(), files.end());   // timestamped names → in-order display
+    std::sort(files.begin(), files.end()); // timestamped names → in-order display
 
     int shown = 0;
     for (auto &f : files)
     {
         if (shown++ >= 16)
-            break;   // cap per poll
+            break; // cap per poll
         std::ifstream in(f, std::ios::binary);
         std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         in.close();
-        std::filesystem::remove(f, ec);   // consume regardless of parse outcome
+        std::filesystem::remove(f, ec); // consume regardless of parse outcome
         while (!content.empty() && (content.back() == '\n' || content.back() == '\r' ||
                                     content.back() == ' ' || content.back() == '\t'))
             content.pop_back();
         if (content.empty())
             continue;
 
-        ImU32 color = IM_COL32(150, 160, 255, 255);   // info (default, blue-violet)
+        ImU32 color = IM_COL32(150, 160, 255, 255); // info (default, blue-violet)
         std::string msg = content;
         size_t sep = content.find_first_of("|\t");
-        if (sep != std::string::npos && sep <= 8)   // short leading severity tag only
+        if (sep != std::string::npos && sep <= 8) // short leading severity tag only
         {
             std::string sev = content.substr(0, sep);
-            std::transform(sev.begin(), sev.end(), sev.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            std::transform(sev.begin(), sev.end(), sev.begin(), [](unsigned char c)
+                           { return (char)std::tolower(c); });
             bool known = true;
             if (sev == "warn" || sev == "warning")
                 color = IM_COL32(240, 200, 90, 255);
@@ -8267,15 +8476,138 @@ void Editor::pollToastInbox()
     }
 }
 
-//	Draw queued toasts stacked at the top-right of the work area, fading out in
-//	their final second. NoInputs so they never eat clicks.
+// ── In-app updater ───────────────────────────────────────────────────────────
+// Point these at the repo that hosts the published releases + installer assets.
+static const char *kUpdateOwner = "lobru";
+static const char *kUpdateRepo = "ImGui-IDE";
+
+void Editor::checkForUpdates(bool manual)
+{
+    if (updateFuture.valid())
+        return; // a check is already in flight
+    updateCheckManual = manual;
+    lastUpdateCheckEpoch = (long long)std::time(nullptr);
+    std::string owner = kUpdateOwner, repo = kUpdateRepo;
+    updateFuture = std::async(std::launch::async,
+                              [owner, repo]
+                              { return updater::fetchLatest(owner, repo); });
+}
+
+void Editor::pollUpdates()
+{
+    // Background 12 h check (skipped while one runs or an update is already known).
+    if (prefAutoUpdate && !updateFuture.valid() && !updateAvailable)
+    {
+        long long now = (long long)std::time(nullptr);
+        if (lastUpdateCheckEpoch == 0 || now - lastUpdateCheckEpoch > 12 * 3600)
+            checkForUpdates(false);
+    }
+
+    // Drain a finished check.
+    if (updateFuture.valid() &&
+        updateFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        updateInfo = updateFuture.get();
+        bool newer = updateInfo.ok && !updateInfo.notFound &&
+                     updater::isNewer(updateInfo.tag, kAppVersion);
+        updateAvailable = newer;
+        if (newer)
+        {
+            pushToast("\xe2\x86\x91 Update available: " + updateInfo.tag, IM_COL32(120, 200, 120, 255));
+            showUpdateDialog = true;
+        }
+        else if (updateCheckManual)
+        {
+            if (!updateInfo.ok)
+                pushToast("Update check failed: " + updateInfo.error, IM_COL32(224, 96, 96, 255));
+            else
+                pushToast("ImGui-IDE is up to date (" + std::string(kAppVersion) + ")",
+                          IM_COL32(150, 160, 255, 255));
+        }
+        updateCheckManual = false;
+    }
+
+    // Drain a finished download → launch the installer.
+    if (updateDownloadFuture.valid() &&
+        updateDownloadFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        bool ok = updateDownloadFuture.get();
+        updateDownloadState = ok ? 2 : 3;
+        if (ok)
+        {
+            pushToast("Downloaded " + updateInfo.assetName + " \xe2\x80\x94 launching installer",
+                      IM_COL32(120, 200, 120, 255));
+            updater::runInstaller(updateDownloadPath);
+        }
+        else
+            pushToast("Download failed", IM_COL32(224, 96, 96, 255));
+    }
+}
+
+void Editor::renderUpdateDialog()
+{
+    if (showUpdateDialog)
+    {
+        ImGui::OpenPopup("Update available##upd");
+        showUpdateDialog = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Update available##upd", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("ImGui-IDE %s is available.", updateInfo.tag.c_str());
+        ImGui::TextDisabled("You have %s.", kAppVersion);
+        ImGui::Separator();
+        if (!updateInfo.notes.empty())
+        {
+            ImGui::TextDisabled("Release notes:");
+            ImGui::BeginChild("##notes", ImVec2(440.0f, 160.0f), ImGuiChildFlags_Borders);
+            ImGui::TextWrapped("%s", updateInfo.notes.c_str());
+            ImGui::EndChild();
+        }
+        if (updateDownloadState == 1)
+            ImGui::TextDisabled("Downloading %s\xe2\x80\xa6", updateInfo.assetName.c_str());
+        else if (updateDownloadState == 3)
+            ImGui::TextColored(ImVec4(0.9f, 0.45f, 0.45f, 1.0f), "Download failed \xe2\x80\x94 try GitHub.");
+        ImGui::Spacing();
+
+        bool busy = (updateDownloadState == 1);
+        ImGui::BeginDisabled(busy);
+        if (!updateInfo.assetUrl.empty())
+        {
+            if (ImGui::Button("Download & Install", ImVec2(160.0f, 0.0f)))
+            {
+                std::string name = updateInfo.assetName.empty() ? "ImGui-IDE-update.exe" : updateInfo.assetName;
+                updateDownloadPath = (userConfigDir() / name).string();
+                std::string url = updateInfo.assetUrl, path = updateDownloadPath;
+                updateDownloadFuture = std::async(std::launch::async,
+                                                  [url, path]
+                                                  { return updater::download(url, path); });
+                updateDownloadState = 1;
+            }
+            ImGui::SameLine();
+        }
+        if (ImGui::Button("View on GitHub", ImVec2(140.0f, 0.0f)))
+            updater::openUrl(updateInfo.htmlUrl.empty()
+                                 ? ("https://github.com/" + std::string(kUpdateOwner) + "/" + kUpdateRepo + "/releases")
+                                 : updateInfo.htmlUrl);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Later", ImVec2(80.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+//  Draw queued toasts stacked at the top-right of the work area, fading out in
+//  their final second. NoInputs so they never eat clicks.
 void Editor::renderToasts()
 {
     if (toasts.empty())
         return;
     double now = ImGui::GetTime();
     toasts.erase(std::remove_if(toasts.begin(), toasts.end(),
-                                [now](const Toast &t) { return now >= t.expiry; }),
+                                [now](const Toast &t)
+                                { return now >= t.expiry; }),
                  toasts.end());
     if (toasts.empty())
         return;
@@ -8318,7 +8650,7 @@ void Editor::renderToasts()
     }
 }
 
-//	Append an external-change event to the persistent activity feed.
+//  Append an external-change event to the persistent activity feed.
 void Editor::logExternalChange(const std::string &path, const std::string &kind)
 {
     ExtChange e;
@@ -8331,8 +8663,8 @@ void Editor::logExternalChange(const std::string &path, const std::string &kind)
         extChangeLog.erase(extChangeLog.begin());
 }
 
-//	Dockable, persistent log of Claude / external edits to open files — toasts
-//	fade after 5s, this keeps the history. Click a file to (re)open it.
+//  Dockable, persistent log of Claude / external edits to open files — toasts
+//  fade after 5s, this keeps the history. Click a file to (re)open it.
 void Editor::renderExternalChanges()
 {
     if (!externalChangesVisible)
@@ -8396,13 +8728,13 @@ void Editor::renderExternalChanges()
             }
             ImGui::EndTable();
         }
-        middleMousePanScroll(11);   // external changes
+        middleMousePanScroll(11); // external changes
     }
     ImGui::End();
 }
 
 //
-//	Editor::render — host viewport, dockspace, per-document windows
+//  Editor::render — host viewport, dockspace, per-document windows
 //
 
 void Editor::render()
@@ -8412,7 +8744,7 @@ void Editor::render()
     // Publish a finished background decompile (opens the cached .cs read-only,
     // or falls back to the Learn page on failure). Cheap atomic check per frame.
     pollDecompile();
-    pollLsp();   // drain clangd results → refine completion popup
+    pollLsp(); // drain clangd results → refine completion popup
 
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -8462,6 +8794,7 @@ void Editor::render()
 
     checkExternalChanges(); // reload clean docs / flag conflicts when disk changes under us
     pollToastInbox();       // external toast API: <configDir>/toasts/* → on-screen toasts
+    pollUpdates();          // GitHub release check (auto 12 h / manual) + download drain
 
     renderDockedDocuments();
     renderNavigationPanel();
@@ -8604,7 +8937,8 @@ void Editor::render()
                 size_t toClose = i;
                 tabs[i]->open = true; // prevent immediate disappearance
                 activeTab = i;
-                showConfirmClose([this, toClose]() { closeTab(toClose); });
+                showConfirmClose([this, toClose]()
+                                 { closeTab(toClose); });
                 ++i;
             }
             else
@@ -8626,8 +8960,8 @@ void Editor::render()
     updateFpsWatch(std::chrono::duration<double, std::milli>(perfT1 - perfT0).count());
 }
 
-//	Frame-time watchdog: rolling 3s worst UI-build time + count of frames over the
-//	30fps budget (shown in Dev Tools, slow frames logged to stderr).
+//  Frame-time watchdog: rolling 3s worst UI-build time + count of frames over the
+//  30fps budget (shown in Dev Tools, slow frames logged to stderr).
 void Editor::updateFpsWatch(double renderMs)
 {
     double now = ImGui::GetTime();
@@ -8652,7 +8986,7 @@ void Editor::updateFpsWatch(double renderMs)
 }
 
 //
-//	Editor::renderDockedDocuments
+//  Editor::renderDockedDocuments
 //
 
 void Editor::renderDockedDocuments()
@@ -8674,7 +9008,7 @@ void Editor::renderDockedDocuments()
         {
             pushToast("Split limit: only two side-by-side editor panes", IM_COL32(240, 200, 90, 255));
         }
-        else if (central && central->IsLeafNode())   // only split a real leaf node
+        else if (central && central->IsLeafNode()) // only split a real leaf node
         {
             ImGuiID newId = 0, otherId = 0;
             ImGui::DockBuilderSplitNode(centralId, wantSplitLeft ? ImGuiDir_Left : ImGuiDir_Right,
@@ -8724,7 +9058,7 @@ void Editor::renderDockedDocuments()
                         continue;
                     ImGui::DockBuilderDockWindow(windowLabelFor(*up).c_str(), target->ID);
                     ImGui::DockBuilderFinish(rootId);
-                    up->dockedOnce = true;   // keep the loop from re-docking it to centre
+                    up->dockedOnce = true; // keep the loop from re-docking it to centre
                     up->wantFocus = true;
                     break;
                 }
@@ -8778,7 +9112,7 @@ void Editor::renderDockedDocuments()
     }
     else if (mdPreviewWantDock && central)
     {
-        mdPreviewWantDock = false;   // central not splittable right now — leave preview floating
+        mdPreviewWantDock = false; // central not splittable right now — leave preview floating
     }
 
     for (size_t i = 0; i < tabs.size(); ++i)
@@ -8868,8 +9202,8 @@ void Editor::renderDockedDocuments()
     }
 }
 
-//	Count distinct dock nodes that currently host document tabs — used to cap
-//	the editor at two side-by-side document panes (plus nav / panels).
+//  Count distinct dock nodes that currently host document tabs — used to cap
+//  the editor at two side-by-side document panes (plus nav / panels).
 int Editor::countDocNodes() const
 {
     std::unordered_set<ImGuiID> nodes;
@@ -8882,8 +9216,8 @@ int Editor::countDocNodes() const
     return (int)nodes.size();
 }
 
-//	Right-click-a-tab context menu. Close actions just flag open=false and let
-//	the render() cleanup run the normal dirty-confirm path (no data loss).
+//  Right-click-a-tab context menu. Close actions just flag open=false and let
+//  the render() cleanup run the normal dirty-confirm path (no data loss).
 void Editor::renderTabContextMenu(int idx)
 {
     if (idx < 0 || idx >= (int)tabs.size())
@@ -8971,7 +9305,7 @@ void Editor::renderTabContextMenu(int idx)
 }
 
 //
-//	Editor::renderDocumentWindow
+//  Editor::renderDocumentWindow
 //
 
 void Editor::renderDocumentWindow(TabDocument &t)
@@ -9010,7 +9344,8 @@ void Editor::renderDocumentWindow(TabDocument &t)
     }
 
     ImGui::PushFont(activeFont, fontSize);
-    t.editor.SetTextContextMenuCallback([this, &t](int line, int column) {
+    t.editor.SetTextContextMenuCallback([this, &t](int line, int column)
+                                        {
         // (removed) per-open trie rebuild was dead work: nothing in this menu
         // reads the trie, and autocomplete maintains its own trie on tab open + edit.
 
@@ -9408,8 +9743,7 @@ void Editor::renderDocumentWindow(TabDocument &t)
             }
         }
         ImGui::Separator();
-        ImGui::Text("Line %d, column %d", line + 1, column + 1);
-    });
+        ImGui::Text("Line %d, column %d", line + 1, column + 1); });
 
     // Conflict bar: disk changed (Claude / another tool) while this buffer has
     // unsaved edits. The user picks who wins — take theirs, keep mine, or diff.
@@ -9472,7 +9806,7 @@ void Editor::renderDocumentWindow(TabDocument &t)
 }
 
 //
-//	Editor::tryToQuit
+//  Editor::tryToQuit
 //
 
 void Editor::tryToQuit()
@@ -9517,7 +9851,7 @@ void Editor::tryToQuit()
 }
 
 //
-//	Editor::renderMenuBar
+//  Editor::renderMenuBar
 //
 
 void Editor::renderMenuBar()
@@ -9548,7 +9882,8 @@ void Editor::renderMenuBar()
             // Recent lists: show the FILENAME as the menu label (full absolute
             // paths made the submenu hundreds of px wide, overflowing back over
             // the parent menu). The full path goes in a hover tooltip.
-            auto recentRow = [](const std::string &path) -> bool {
+            auto recentRow = [](const std::string &path) -> bool
+            {
                 std::string leaf = std::filesystem::path(path).filename().string();
                 if (leaf.empty())
                     leaf = path;
@@ -9612,7 +9947,8 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("Close Tab", SHORTCUT "W"))
             {
                 if (isDirty())
-                    showConfirmClose([this]() { closeTab(activeTab); });
+                    showConfirmClose([this]()
+                                     { closeTab(activeTab); });
                 else
                     closeTab(activeTab);
             }
@@ -9927,8 +10263,10 @@ void Editor::renderMenuBar()
             }
             if (ImGui::MenuItem("C/C++ IntelliSense (clangd)", nullptr, &lspEnabled))
             {
-                if (lspEnabled) startLspForProject();
-                else            lspClient.stop();
+                if (lspEnabled)
+                    startLspForProject();
+                else
+                    lspClient.stop();
             }
             if (ImGui::MenuItem("Output", "F5", &script->visible))
             {
@@ -9939,11 +10277,12 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("External Changes", nullptr, &externalChangesVisible))
             {
             }
-             // Markdown preview — context-sensitive: only when the active document
+            // Markdown preview — context-sensitive: only when the active document
             // is a markdown file (not an always-on global toggle).
             {
                 auto ext = std::filesystem::path(doc().filename).extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
+                               { return (char)std::tolower(c); });
                 if (isMarkdownExt(ext))
                 {
                     ImGui::Separator();
@@ -9973,7 +10312,7 @@ void Editor::renderMenuBar()
                 }
                 ImGui::Separator();
             }
- 			ImGui::Separator();
+            ImGui::Separator();
             if (ImGui::MenuItem("Split Right", SHORTCUT "\\"))
             {
                 splitActiveTabRight();
@@ -10018,7 +10357,7 @@ void Editor::renderMenuBar()
         // PROJECT — build / run / project tooling.
         if (ImGui::BeginMenu("Project"))
         {
-        	   if (ImGui::BeginMenu("Git"))
+            if (ImGui::BeginMenu("Git"))
             {
                 bool inRepo;
                 {
@@ -10083,11 +10422,17 @@ void Editor::renderMenuBar()
             {
                 openProjectFolderPicker();
             }
-       ImGui::EndMenu();
+            ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Help"))
         {
+            if (ImGui::MenuItem("Check for Updates", nullptr, false, !updateFuture.valid()))
+                checkForUpdates(true);
+            if (updateAvailable && ImGui::MenuItem("Download Update…"))
+                showUpdateDialog = true;
+            ImGui::MenuItem("Auto-check (every 12 h)", nullptr, &prefAutoUpdate);
+            ImGui::Separator();
             if (ImGui::MenuItem("About ImGui-IDE"))
                 showAboutDialog = true;
             ImGui::EndMenu();
@@ -10100,17 +10445,20 @@ void Editor::renderMenuBar()
         {
             if (navHistory.canBack())
             {
-                if (ImGui::ArrowButton("##navback", ImGuiDir_Left)) navigateBack();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back  (Alt+Left / mouse back)");
+                if (ImGui::ArrowButton("##navback", ImGuiDir_Left))
+                    navigateBack();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Back  (Alt+Left / mouse back)");
                 ImGui::SameLine(0.0f, 2.0f);
             }
             if (navHistory.canForward())
             {
-                if (ImGui::ArrowButton("##navfwd", ImGuiDir_Right)) navigateForward();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forward  (Alt+Right / mouse forward)");
+                if (ImGui::ArrowButton("##navfwd", ImGuiDir_Right))
+                    navigateForward();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Forward  (Alt+Right / mouse forward)");
             }
         }
-
 
         // Active project name — right-aligned so the workspace is always visible.
         // Folder (or project-file parent) name; full path on hover.
@@ -10157,6 +10505,8 @@ void Editor::renderMenuBar()
         ImGui::EndPopup();
     }
 
+    renderUpdateDialog(); // "Update available" modal (opened by the auto/manual check)
+
     // View > Style Editor — ImGui's built-in live style editor for fine-tuning the
     // current theme's colours/sizes. Changes are live (not persisted); pick a Theme
     // again to reset. Lets the user customize on top of the chosen palette.
@@ -10200,7 +10550,8 @@ void Editor::renderMenuBar()
         else if (keybindPressed("file.close", "Ctrl+W"))
         {
             if (isDirty())
-                showConfirmClose([this]() { closeTab(activeTab); });
+                showConfirmClose([this]()
+                                 { closeTab(activeTab); });
             else
                 closeTab(activeTab);
         }
@@ -10318,7 +10669,7 @@ void Editor::renderMenuBar()
 }
 
 //
-//	Editor::renderStatusBar
+//  Editor::renderStatusBar
 //
 
 // Refresh git branch/dirty/ahead-behind off the UI thread, throttled. Captures
@@ -10340,7 +10691,8 @@ void Editor::pollGitStatus()
     auto gi = gitInfo;
     if (gi->building.exchange(true))
         return; // a poll is already running
-    std::thread([gi, root]() {
+    std::thread([gi, root]()
+                {
         std::string branch;
         int dirty = 0, ahead = 0, behind = 0;
         std::string cmd = "git -C \"" + root + "\" status --porcelain=v2 --branch 2>nul";
@@ -10372,8 +10724,8 @@ void Editor::pollGitStatus()
             gi->ahead = ahead;
             gi->behind = behind;
         }
-        gi->building = false;
-    }).detach();
+        gi->building = false; })
+        .detach();
 }
 
 std::string Editor::gitRoot()
@@ -10467,24 +10819,40 @@ void Editor::renderGitDialogs()
 }
 
 // ── Themes ───────────────────────────────────────────────────────────────────
-static const char* kThemeNames[] = {
-    "ImGui-IDE Dark", "Midnight", "Light", "High Contrast", "Classic Dark",
+static const char *kThemeNames[] = {
+    "ImGui-IDE Dark",
+    "Midnight",
+    "Light",
+    "High Contrast",
+    "Classic Dark",
 };
-int Editor::themeCount() { return (int) (sizeof(kThemeNames) / sizeof(kThemeNames[0])); }
-const char* Editor::themeName(int i) { return (i >= 0 && i < themeCount()) ? kThemeNames[i] : "?"; }
+int Editor::themeCount()
+{
+    return (int)(sizeof(kThemeNames) / sizeof(kThemeNames[0]));
+}
+const char *Editor::themeName(int i)
+{
+    return (i >= 0 && i < themeCount()) ? kThemeNames[i] : "?";
+}
 
 // Apply a built-in theme: shared rounding/borders + a per-theme palette. Does NOT
 // touch structural prefs (window padding, scrollbar size) so those persist across
 // theme switches. The ImGui style editor (View > Style Editor) can override live.
 void Editor::applyTheme(int index)
 {
-    ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 6.0f; s.ChildRounding = 4.0f; s.FrameRounding = 4.0f;
-    s.PopupRounding = 4.0f;  s.GrabRounding = 3.0f;  s.TabRounding = 5.0f;
-    s.ScrollbarRounding = 4.0f; s.WindowBorderSize = 1.0f; s.FrameBorderSize = 0.0f;
+    ImGuiStyle &s = ImGui::GetStyle();
+    s.WindowRounding = 6.0f;
+    s.ChildRounding = 4.0f;
+    s.FrameRounding = 4.0f;
+    s.PopupRounding = 4.0f;
+    s.GrabRounding = 3.0f;
+    s.TabRounding = 5.0f;
+    s.ScrollbarRounding = 4.0f;
+    s.WindowBorderSize = 1.0f;
+    s.FrameBorderSize = 0.0f;
     s.TabBarBorderSize = 1.0f;
 
-    ImVec4* c = s.Colors;
+    ImVec4 *c = s.Colors;
     switch (index)
     {
     case 4: // Classic Dark — stock ImGui, no recolor.
@@ -10493,86 +10861,86 @@ void Editor::applyTheme(int index)
 
     case 3: // High Contrast — near-black with bright amber/cyan accents.
         ImGui::StyleColorsDark();
-        c[ImGuiCol_WindowBg]      = ImVec4(0.04f, 0.04f, 0.05f, 1.00f);
-        c[ImGuiCol_ChildBg]       = ImVec4(0.06f, 0.06f, 0.07f, 1.00f);
-        c[ImGuiCol_PopupBg]       = ImVec4(0.05f, 0.05f, 0.06f, 0.98f);
-        c[ImGuiCol_FrameBg]       = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
+        c[ImGuiCol_WindowBg] = ImVec4(0.04f, 0.04f, 0.05f, 1.00f);
+        c[ImGuiCol_ChildBg] = ImVec4(0.06f, 0.06f, 0.07f, 1.00f);
+        c[ImGuiCol_PopupBg] = ImVec4(0.05f, 0.05f, 0.06f, 0.98f);
+        c[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.14f, 1.00f);
         c[ImGuiCol_TitleBgActive] = ImVec4(0.16f, 0.14f, 0.06f, 1.00f);
-        c[ImGuiCol_Header]        = ImVec4(0.85f, 0.55f, 0.10f, 0.55f);
+        c[ImGuiCol_Header] = ImVec4(0.85f, 0.55f, 0.10f, 0.55f);
         c[ImGuiCol_HeaderHovered] = ImVec4(0.95f, 0.65f, 0.15f, 0.80f);
-        c[ImGuiCol_HeaderActive]  = ImVec4(1.00f, 0.72f, 0.20f, 1.00f);
-        c[ImGuiCol_Button]        = ImVec4(0.20f, 0.20f, 0.24f, 1.00f);
+        c[ImGuiCol_HeaderActive] = ImVec4(1.00f, 0.72f, 0.20f, 1.00f);
+        c[ImGuiCol_Button] = ImVec4(0.20f, 0.20f, 0.24f, 1.00f);
         c[ImGuiCol_ButtonHovered] = ImVec4(0.95f, 0.65f, 0.15f, 0.70f);
-        c[ImGuiCol_ButtonActive]  = ImVec4(1.00f, 0.72f, 0.20f, 1.00f);
-        c[ImGuiCol_CheckMark]     = ImVec4(0.30f, 0.95f, 0.95f, 1.00f);
-        c[ImGuiCol_TabSelected]   = ImVec4(0.30f, 0.24f, 0.06f, 1.00f);
-        c[ImGuiCol_Text]          = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
+        c[ImGuiCol_ButtonActive] = ImVec4(1.00f, 0.72f, 0.20f, 1.00f);
+        c[ImGuiCol_CheckMark] = ImVec4(0.30f, 0.95f, 0.95f, 1.00f);
+        c[ImGuiCol_TabSelected] = ImVec4(0.30f, 0.24f, 0.06f, 1.00f);
+        c[ImGuiCol_Text] = ImVec4(0.96f, 0.96f, 0.97f, 1.00f);
         return;
 
     case 2: // Light.
         ImGui::StyleColorsLight();
-        c[ImGuiCol_WindowBg]      = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
-        c[ImGuiCol_Header]        = ImVec4(0.40f, 0.55f, 0.85f, 0.55f);
+        c[ImGuiCol_WindowBg] = ImVec4(0.94f, 0.94f, 0.96f, 1.00f);
+        c[ImGuiCol_Header] = ImVec4(0.40f, 0.55f, 0.85f, 0.55f);
         c[ImGuiCol_HeaderHovered] = ImVec4(0.40f, 0.55f, 0.85f, 0.75f);
-        c[ImGuiCol_HeaderActive]  = ImVec4(0.36f, 0.50f, 0.80f, 1.00f);
-        c[ImGuiCol_TabSelected]   = ImVec4(0.62f, 0.72f, 0.92f, 1.00f);
-        c[ImGuiCol_TabHovered]    = ImVec4(0.55f, 0.66f, 0.90f, 1.00f);
+        c[ImGuiCol_HeaderActive] = ImVec4(0.36f, 0.50f, 0.80f, 1.00f);
+        c[ImGuiCol_TabSelected] = ImVec4(0.62f, 0.72f, 0.92f, 1.00f);
+        c[ImGuiCol_TabHovered] = ImVec4(0.55f, 0.66f, 0.90f, 1.00f);
         return;
 
     case 1: // Midnight — deep blue-black, cyan accents.
         ImGui::StyleColorsDark();
-        c[ImGuiCol_WindowBg]      = ImVec4(0.07f, 0.08f, 0.12f, 1.00f);
-        c[ImGuiCol_ChildBg]       = ImVec4(0.08f, 0.09f, 0.14f, 1.00f);
-        c[ImGuiCol_PopupBg]       = ImVec4(0.06f, 0.07f, 0.11f, 0.98f);
+        c[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.08f, 0.12f, 1.00f);
+        c[ImGuiCol_ChildBg] = ImVec4(0.08f, 0.09f, 0.14f, 1.00f);
+        c[ImGuiCol_PopupBg] = ImVec4(0.06f, 0.07f, 0.11f, 0.98f);
         c[ImGuiCol_TitleBgActive] = ImVec4(0.10f, 0.13f, 0.22f, 1.00f);
-        c[ImGuiCol_MenuBarBg]     = ImVec4(0.09f, 0.11f, 0.17f, 1.00f);
-        c[ImGuiCol_FrameBg]       = ImVec4(0.12f, 0.14f, 0.21f, 1.00f);
-        c[ImGuiCol_FrameBgHovered]= ImVec4(0.16f, 0.19f, 0.28f, 1.00f);
-        c[ImGuiCol_Header]        = ImVec4(0.16f, 0.30f, 0.45f, 1.00f);
+        c[ImGuiCol_MenuBarBg] = ImVec4(0.09f, 0.11f, 0.17f, 1.00f);
+        c[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.14f, 0.21f, 1.00f);
+        c[ImGuiCol_FrameBgHovered] = ImVec4(0.16f, 0.19f, 0.28f, 1.00f);
+        c[ImGuiCol_Header] = ImVec4(0.16f, 0.30f, 0.45f, 1.00f);
         c[ImGuiCol_HeaderHovered] = ImVec4(0.20f, 0.40f, 0.60f, 1.00f);
-        c[ImGuiCol_HeaderActive]  = ImVec4(0.24f, 0.48f, 0.72f, 1.00f);
-        c[ImGuiCol_Button]        = ImVec4(0.14f, 0.22f, 0.34f, 1.00f);
+        c[ImGuiCol_HeaderActive] = ImVec4(0.24f, 0.48f, 0.72f, 1.00f);
+        c[ImGuiCol_Button] = ImVec4(0.14f, 0.22f, 0.34f, 1.00f);
         c[ImGuiCol_ButtonHovered] = ImVec4(0.20f, 0.34f, 0.52f, 1.00f);
-        c[ImGuiCol_ButtonActive]  = ImVec4(0.26f, 0.46f, 0.70f, 1.00f);
-        c[ImGuiCol_CheckMark]     = ImVec4(0.35f, 0.80f, 0.95f, 1.00f);
-        c[ImGuiCol_SliderGrab]    = ImVec4(0.30f, 0.65f, 0.90f, 1.00f);
-        c[ImGuiCol_TabSelected]   = ImVec4(0.14f, 0.26f, 0.40f, 1.00f);
-        c[ImGuiCol_TabHovered]    = ImVec4(0.20f, 0.40f, 0.60f, 1.00f);
-        c[ImGuiCol_DockingPreview]= ImVec4(0.25f, 0.55f, 0.85f, 0.70f);
+        c[ImGuiCol_ButtonActive] = ImVec4(0.26f, 0.46f, 0.70f, 1.00f);
+        c[ImGuiCol_CheckMark] = ImVec4(0.35f, 0.80f, 0.95f, 1.00f);
+        c[ImGuiCol_SliderGrab] = ImVec4(0.30f, 0.65f, 0.90f, 1.00f);
+        c[ImGuiCol_TabSelected] = ImVec4(0.14f, 0.26f, 0.40f, 1.00f);
+        c[ImGuiCol_TabHovered] = ImVec4(0.20f, 0.40f, 0.60f, 1.00f);
+        c[ImGuiCol_DockingPreview] = ImVec4(0.25f, 0.55f, 0.85f, 0.70f);
         return;
 
     case 0: // ImGui-IDE Dark (default) — cool gray.
     default:
         ImGui::StyleColorsDark();
-        c[ImGuiCol_WindowBg]            = ImVec4(0.105f, 0.115f, 0.130f, 1.00f);
-        c[ImGuiCol_ChildBg]             = ImVec4(0.120f, 0.130f, 0.145f, 1.00f);
-        c[ImGuiCol_PopupBg]             = ImVec4(0.095f, 0.105f, 0.120f, 0.98f);
-        c[ImGuiCol_Border]              = ImVec4(0.220f, 0.240f, 0.275f, 0.55f);
-        c[ImGuiCol_FrameBg]             = ImVec4(0.160f, 0.175f, 0.200f, 1.00f);
-        c[ImGuiCol_FrameBgHovered]      = ImVec4(0.215f, 0.235f, 0.270f, 1.00f);
-        c[ImGuiCol_FrameBgActive]       = ImVec4(0.255f, 0.285f, 0.330f, 1.00f);
-        c[ImGuiCol_TitleBg]             = ImVec4(0.085f, 0.095f, 0.110f, 1.00f);
-        c[ImGuiCol_TitleBgActive]       = ImVec4(0.130f, 0.150f, 0.185f, 1.00f);
-        c[ImGuiCol_MenuBarBg]           = ImVec4(0.130f, 0.140f, 0.160f, 1.00f);
-        c[ImGuiCol_Header]              = ImVec4(0.200f, 0.245f, 0.310f, 1.00f);
-        c[ImGuiCol_HeaderHovered]       = ImVec4(0.255f, 0.315f, 0.400f, 1.00f);
-        c[ImGuiCol_HeaderActive]        = ImVec4(0.300f, 0.380f, 0.480f, 1.00f);
-        c[ImGuiCol_Button]              = ImVec4(0.200f, 0.230f, 0.285f, 1.00f);
-        c[ImGuiCol_ButtonHovered]       = ImVec4(0.280f, 0.340f, 0.425f, 1.00f);
-        c[ImGuiCol_ButtonActive]        = ImVec4(0.340f, 0.420f, 0.525f, 1.00f);
-        c[ImGuiCol_Separator]           = ImVec4(0.250f, 0.270f, 0.305f, 1.00f);
-        c[ImGuiCol_Tab]                 = ImVec4(0.130f, 0.150f, 0.180f, 1.00f);
-        c[ImGuiCol_TabHovered]          = ImVec4(0.260f, 0.320f, 0.400f, 1.00f);
-        c[ImGuiCol_TabSelected]         = ImVec4(0.205f, 0.260f, 0.340f, 1.00f);
-        c[ImGuiCol_TabDimmed]           = ImVec4(0.110f, 0.120f, 0.135f, 1.00f);
-        c[ImGuiCol_TabDimmedSelected]   = ImVec4(0.160f, 0.190f, 0.240f, 1.00f);
-        c[ImGuiCol_CheckMark]           = ImVec4(0.450f, 0.620f, 0.900f, 1.00f);
-        c[ImGuiCol_SliderGrab]          = ImVec4(0.400f, 0.550f, 0.800f, 1.00f);
-        c[ImGuiCol_SliderGrabActive]    = ImVec4(0.480f, 0.640f, 0.900f, 1.00f);
-        c[ImGuiCol_ScrollbarBg]         = ImVec4(0.090f, 0.100f, 0.115f, 0.60f);
-        c[ImGuiCol_ScrollbarGrab]       = ImVec4(0.275f, 0.300f, 0.340f, 1.00f);
-        c[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.340f, 0.370f, 0.420f, 1.00f);
-        c[ImGuiCol_DockingPreview]      = ImVec4(0.300f, 0.420f, 0.620f, 0.70f);
+        c[ImGuiCol_WindowBg] = ImVec4(0.105f, 0.115f, 0.130f, 1.00f);
+        c[ImGuiCol_ChildBg] = ImVec4(0.120f, 0.130f, 0.145f, 1.00f);
+        c[ImGuiCol_PopupBg] = ImVec4(0.095f, 0.105f, 0.120f, 0.98f);
+        c[ImGuiCol_Border] = ImVec4(0.220f, 0.240f, 0.275f, 0.55f);
+        c[ImGuiCol_FrameBg] = ImVec4(0.160f, 0.175f, 0.200f, 1.00f);
+        c[ImGuiCol_FrameBgHovered] = ImVec4(0.215f, 0.235f, 0.270f, 1.00f);
+        c[ImGuiCol_FrameBgActive] = ImVec4(0.255f, 0.285f, 0.330f, 1.00f);
+        c[ImGuiCol_TitleBg] = ImVec4(0.085f, 0.095f, 0.110f, 1.00f);
+        c[ImGuiCol_TitleBgActive] = ImVec4(0.130f, 0.150f, 0.185f, 1.00f);
+        c[ImGuiCol_MenuBarBg] = ImVec4(0.130f, 0.140f, 0.160f, 1.00f);
+        c[ImGuiCol_Header] = ImVec4(0.200f, 0.245f, 0.310f, 1.00f);
+        c[ImGuiCol_HeaderHovered] = ImVec4(0.255f, 0.315f, 0.400f, 1.00f);
+        c[ImGuiCol_HeaderActive] = ImVec4(0.300f, 0.380f, 0.480f, 1.00f);
+        c[ImGuiCol_Button] = ImVec4(0.200f, 0.230f, 0.285f, 1.00f);
+        c[ImGuiCol_ButtonHovered] = ImVec4(0.280f, 0.340f, 0.425f, 1.00f);
+        c[ImGuiCol_ButtonActive] = ImVec4(0.340f, 0.420f, 0.525f, 1.00f);
+        c[ImGuiCol_Separator] = ImVec4(0.250f, 0.270f, 0.305f, 1.00f);
+        c[ImGuiCol_Tab] = ImVec4(0.130f, 0.150f, 0.180f, 1.00f);
+        c[ImGuiCol_TabHovered] = ImVec4(0.260f, 0.320f, 0.400f, 1.00f);
+        c[ImGuiCol_TabSelected] = ImVec4(0.205f, 0.260f, 0.340f, 1.00f);
+        c[ImGuiCol_TabDimmed] = ImVec4(0.110f, 0.120f, 0.135f, 1.00f);
+        c[ImGuiCol_TabDimmedSelected] = ImVec4(0.160f, 0.190f, 0.240f, 1.00f);
+        c[ImGuiCol_CheckMark] = ImVec4(0.450f, 0.620f, 0.900f, 1.00f);
+        c[ImGuiCol_SliderGrab] = ImVec4(0.400f, 0.550f, 0.800f, 1.00f);
+        c[ImGuiCol_SliderGrabActive] = ImVec4(0.480f, 0.640f, 0.900f, 1.00f);
+        c[ImGuiCol_ScrollbarBg] = ImVec4(0.090f, 0.100f, 0.115f, 0.60f);
+        c[ImGuiCol_ScrollbarGrab] = ImVec4(0.275f, 0.300f, 0.340f, 1.00f);
+        c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.340f, 0.370f, 0.420f, 1.00f);
+        c[ImGuiCol_DockingPreview] = ImVec4(0.300f, 0.420f, 0.620f, 0.70f);
         return;
     }
 }
@@ -10624,7 +10992,7 @@ void Editor::renderStatusBar()
     // later — after the left cluster — yields a width short by the left cluster,
     // which is what made the trailing status sit mid-bar instead of flush right.)
     const float statusStartX = ImGui::GetCursorPosX();
-    const float statusFullW  = ImGui::GetContentRegionAvail().x;
+    const float statusFullW = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(120.0f);
 
     if (ImGui::BeginCombo("##LangSel", langName.c_str()))
@@ -10767,14 +11135,14 @@ void Editor::renderStatusBar()
     //    aligned AS A GROUP. The offset must reserve the WHOLE cluster's width or
     //    the trailing items clip off the edge; and the dirty dot gets a real item
     //    slot (Dummy) so the clangd label can't overlap it ("●langd" cramming).
-    const float frameH  = ImGui::GetFrameHeight();
+    const float frameH = ImGui::GetFrameHeight();
     const float statusW = ImGui::CalcTextSize(status).x;
-    const float dotW    = frameH;   // dirty-state dot slot
+    const float dotW = frameH; // dirty-state dot slot
 
     // Pre-resolve the active file's diagnostics once (for width AND render). Keyed
     // on the canonical path so it matches the store regardless of URI form.
     int errs = 0, warns = 0;
-    const std::vector<lsp::Diagnostic>* diags = nullptr;
+    const std::vector<lsp::Diagnostic> *diags = nullptr;
     const bool lspReady = lspClient.ready();
     if (lspEnabled && lspReady && !tabs.empty() && !lspDiagnostics.empty())
     {
@@ -10782,23 +11150,30 @@ void Editor::renderStatusBar()
         auto it = key.empty() ? lspDiagnostics.end() : lspDiagnostics.find(key);
         if (it != lspDiagnostics.end())
         {
-            for (const auto& d : it->second) (d.severity <= 1 ? errs : warns)++;
-            if (errs || warns) diags = &it->second;
+            for (const auto &d : it->second)
+                (d.severity <= 1 ? errs : warns)++;
+            if (errs || warns)
+                diags = &it->second;
         }
     }
-    const char* clangdLbl = lspReady ? "clangd \xE2\x97\x8F" : "clangd \xE2\x97\x8B";
+    const char *clangdLbl = lspReady ? "clangd \xE2\x97\x8F" : "clangd \xE2\x97\x8B";
     char ebuf[32] = {0}, wbuf[32] = {0};
-    if (errs)  std::snprintf(ebuf, sizeof(ebuf), "\xE2\x9C\x96 %d", errs);
-    if (warns) std::snprintf(wbuf, sizeof(wbuf), "\xE2\x9A\xA0 %d", warns);
+    if (errs)
+        std::snprintf(ebuf, sizeof(ebuf), "\xE2\x9C\x96 %d", errs);
+    if (warns)
+        std::snprintf(wbuf, sizeof(wbuf), "\xE2\x9A\xA0 %d", warns);
 
     // Measure the whole trailing cluster so it right-aligns without clipping.
     float trailing = statusW + glyphWidth + dotW;
-    if (lspEnabled) trailing += glyphWidth * 2.0f + ImGui::CalcTextSize(clangdLbl).x;
+    if (lspEnabled)
+        trailing += glyphWidth * 2.0f + ImGui::CalcTextSize(clangdLbl).x;
     if (diags)
     {
         trailing += glyphWidth * 1.5f;
-        if (errs)  trailing += ImGui::CalcTextSize(ebuf).x;
-        if (warns) trailing += ImGui::CalcTextSize(wbuf).x + (errs ? glyphWidth : 0.0f);
+        if (errs)
+            trailing += ImGui::CalcTextSize(ebuf).x;
+        if (warns)
+            trailing += ImGui::CalcTextSize(wbuf).x + (errs ? glyphWidth : 0.0f);
     }
     // Align the trailing cluster to the bar's true right edge, but never start it
     // left of the left cluster's right edge (lang/toolchain/git) — that overlap is
@@ -10825,7 +11200,8 @@ void Editor::renderStatusBar()
         ImGui::GetWindowDrawList()->AddCircleFilled(
             ImVec2(p.x + o, p.y + o), radius,
             isDirty() ? IM_COL32(164, 0, 0, 255) : IM_COL32(164, 164, 164, 255));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(isDirty() ? "Unsaved changes" : "Saved");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(isDirty() ? "Unsaved changes" : "Saved");
     }
 
     // clangd status: filled green dot once the handshake is done, hollow grey while
@@ -10841,17 +11217,27 @@ void Editor::renderStatusBar()
         {
             ImGui::SameLine(0.0f, glyphWidth * 1.5f);
             ImGui::AlignTextToFramePadding();
-            ImGui::BeginGroup();   // group so the tooltip covers BOTH counts
-            if (errs)  ImGui::TextColored(ImVec4(0.92f, 0.45f, 0.45f, 1.0f), "%s", ebuf);
-            if (warns) { if (errs) ImGui::SameLine(0.0f, glyphWidth); ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.40f, 1.0f), "%s", wbuf); }
+            ImGui::BeginGroup(); // group so the tooltip covers BOTH counts
+            if (errs)
+                ImGui::TextColored(ImVec4(0.92f, 0.45f, 0.45f, 1.0f), "%s", ebuf);
+            if (warns)
+            {
+                if (errs)
+                    ImGui::SameLine(0.0f, glyphWidth);
+                ImGui::TextColored(ImVec4(0.92f, 0.80f, 0.40f, 1.0f), "%s", wbuf);
+            }
             ImGui::EndGroup();
             if (ImGui::IsItemHovered())
             {
                 ImGui::BeginTooltip();
                 int shown = 0;
-                for (const auto& d : *diags)
+                for (const auto &d : *diags)
                 {
-                    if (shown++ >= 12) { ImGui::TextDisabled("…"); break; }
+                    if (shown++ >= 12)
+                    {
+                        ImGui::TextDisabled("…");
+                        break;
+                    }
                     ImVec4 cc = d.severity <= 1 ? ImVec4(0.92f, 0.45f, 0.45f, 1.0f)
                                                 : ImVec4(0.92f, 0.80f, 0.40f, 1.0f);
                     ImGui::TextColored(cc, "%d: %s", d.line + 1, d.message.c_str());
@@ -10866,7 +11252,7 @@ void Editor::renderStatusBar()
 }
 
 //
-//	Editor::showDiff
+//  Editor::showDiff
 //
 
 void Editor::showDiff()
@@ -10883,7 +11269,7 @@ void Editor::showDiff()
 }
 
 //
-//	Editor::showFileOpen
+//  Editor::showFileOpen
 //
 
 std::filesystem::path Editor::userConfigDir()
@@ -11048,7 +11434,7 @@ void Editor::showFileOpen()
 }
 
 //
-//	Editor::showSaveFileAs
+//  Editor::showSaveFileAs
 //
 
 void Editor::showSaveFileAs()
@@ -11070,7 +11456,7 @@ void Editor::showSaveFileAs()
 }
 
 //
-//	Editor::showConfirmClose
+//  Editor::showConfirmClose
 //
 
 void Editor::showConfirmClose(std::function<void()> callback)
@@ -11085,7 +11471,7 @@ void Editor::showConfirmClose(std::function<void()> callback)
 }
 
 //
-//	Editor::showConfirmQuit
+//  Editor::showConfirmQuit
 //
 
 void Editor::showConfirmQuit()
@@ -11099,7 +11485,7 @@ void Editor::showConfirmQuit()
 }
 
 //
-//	Editor::showError
+//  Editor::showError
 //
 
 void Editor::showError(const std::string &message)
@@ -11114,7 +11500,7 @@ void Editor::showError(const std::string &message)
 }
 
 //
-//	Editor::renderDiff
+//  Editor::renderDiff
 //
 
 void Editor::renderDiff()
@@ -11198,7 +11584,7 @@ void Editor::renderDiff()
 }
 
 //
-//	Editor::renderFileOpen
+//  Editor::renderFileOpen
 //
 
 void Editor::renderFileOpen()
@@ -11242,7 +11628,7 @@ void Editor::renderFileOpen()
 }
 
 //
-//	Editor::renderSaveAs
+//  Editor::renderSaveAs
 //
 
 void Editor::renderSaveAs()
@@ -11286,7 +11672,7 @@ void Editor::renderSaveAs()
 }
 
 //
-//	Editor::renderConfirmClose
+//  Editor::renderConfirmClose
 //
 
 void Editor::renderConfirmClose()
@@ -11322,7 +11708,7 @@ void Editor::renderConfirmClose()
 }
 
 //
-//	Editor::renderConfirmQuit
+//  Editor::renderConfirmQuit
 //
 
 void Editor::renderConfirmQuit()
@@ -11357,7 +11743,7 @@ void Editor::renderConfirmQuit()
 }
 
 //
-//	Editor::renderConfirmError
+//  Editor::renderConfirmError
 //
 
 void Editor::renderConfirmError()
@@ -11389,7 +11775,7 @@ void Editor::renderConfirmError()
 }
 
 //
-//	Editor::showGotoLine / renderGotoLine
+//  Editor::showGotoLine / renderGotoLine
 //
 
 void Editor::showGotoLine()
@@ -11424,7 +11810,8 @@ void Editor::renderGotoLine()
         bool enter = ImGui::InputText("##gotoLine", gotoLineBuf, sizeof(gotoLineBuf),
                                       ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsNoBlank);
 
-        auto commit = [&]() {
+        auto commit = [&]()
+        {
             // Parse "<line>" or "<line>:<col>" (1-based input, 0-based internal).
             int targetLine = 0, targetCol = 0;
             const char *p = gotoLineBuf;
@@ -11452,7 +11839,7 @@ void Editor::renderGotoLine()
                 int maxLine = (std::max)(lineCount - 1, 0);
                 int ln = (std::min)(targetLine - 1, maxLine);
                 int col = (std::max)(targetCol - 1, 0);
-                navHistory.record(currentNavLocation());   // so Back returns here
+                navHistory.record(currentNavLocation()); // so Back returns here
                 t.editor.SetCursor(ln, col);
                 t.editor.ScrollToLine(ln, TextEditor::Scroll::alignMiddle);
                 t.wantFocus = true;
@@ -11479,7 +11866,7 @@ void Editor::renderGotoLine()
 }
 
 //
-//	Editor::setAutocompleteMode
+//  Editor::setAutocompleteMode
 //
 
 // ── Member-aware autocomplete helpers ────────────────────────────────────
@@ -11491,8 +11878,10 @@ static bool tsIsIdentChar(char c)
 
 static std::string tsLastSeg(std::string t)
 {
-    if (auto p = t.rfind("::"); p != std::string::npos) t = t.substr(p + 2);
-    if (auto p = t.rfind('.'); p != std::string::npos) t = t.substr(p + 1);
+    if (auto p = t.rfind("::"); p != std::string::npos)
+        t = t.substr(p + 2);
+    if (auto p = t.rfind('.'); p != std::string::npos)
+        t = t.substr(p + 1);
     return t;
 }
 
@@ -11503,39 +11892,96 @@ static std::string tsLastSeg(std::string t)
 static std::string resolveReceiverType(const std::string &buf, const std::string &recv)
 {
     static const std::unordered_set<std::string> notType = {
-        "return", "new", "delete", "sizeof", "throw", "case", "if", "while", "for", "switch",
-        "do", "else", "auto", "var", "const", "static", "public", "private", "protected",
-        "internal", "virtual", "override", "readonly", "volatile", "mutable", "using",
-        "namespace", "class", "struct", "enum", "void", "and", "or", "not", "co_return",
-        "co_await", "ref", "out", "in", "unsafe", "async", "await", "this", "base",
-        "typename", "template", "return", "goto", "default",
+        "return",
+        "new",
+        "delete",
+        "sizeof",
+        "throw",
+        "case",
+        "if",
+        "while",
+        "for",
+        "switch",
+        "do",
+        "else",
+        "auto",
+        "var",
+        "const",
+        "static",
+        "public",
+        "private",
+        "protected",
+        "internal",
+        "virtual",
+        "override",
+        "readonly",
+        "volatile",
+        "mutable",
+        "using",
+        "namespace",
+        "class",
+        "struct",
+        "enum",
+        "void",
+        "and",
+        "or",
+        "not",
+        "co_return",
+        "co_await",
+        "ref",
+        "out",
+        "in",
+        "unsafe",
+        "async",
+        "await",
+        "this",
+        "base",
+        "typename",
+        "template",
+        "return",
+        "goto",
+        "default",
     };
     if (recv.empty())
         return {};
     size_t n = buf.size();
-    auto isSp = [](char c) { return c == ' ' || c == '\t'; };
+    auto isSp = [](char c)
+    { return c == ' ' || c == '\t'; };
     for (size_t i = 0; i + recv.size() <= n;)
     {
-        if (buf.compare(i, recv.size(), recv) != 0) { ++i; continue; }
+        if (buf.compare(i, recv.size(), recv) != 0)
+        {
+            ++i;
+            continue;
+        }
         size_t e = i + recv.size();
         bool wbL = (i == 0) || !tsIsIdentChar(buf[i - 1]);
         bool wbR = (e >= n) || !tsIsIdentChar(buf[e]);
-        if (!wbL || !wbR) { ++i; continue; }
+        if (!wbL || !wbR)
+        {
+            ++i;
+            continue;
+        }
 
         // Pattern A: recv = new Type(
         size_t p = e;
-        while (p < n && isSp(buf[p])) ++p;
+        while (p < n && isSp(buf[p]))
+            ++p;
         if (p < n && buf[p] == '=' && (p + 1 >= n || buf[p + 1] != '='))
         {
             ++p;
-            while (p < n && isSp(buf[p])) ++p;
+            while (p < n && isSp(buf[p]))
+                ++p;
             if (p + 4 <= n && buf.compare(p, 3, "new") == 0 && (isSp(buf[p + 3]) || buf[p + 3] == '\n'))
             {
                 p += 3;
-                while (p < n && (isSp(buf[p]) || buf[p] == '\n' || buf[p] == '\r')) ++p;
+                while (p < n && (isSp(buf[p]) || buf[p] == '\n' || buf[p] == '\r'))
+                    ++p;
                 size_t ts = p;
-                while (p < n && (tsIsIdentChar(buf[p]) || buf[p] == '.' || buf[p] == ':')) ++p;
-                if (p > ts) return tsLastSeg(buf.substr(ts, p - ts));
+                while (p < n && (tsIsIdentChar(buf[p]) || buf[p] == '.' || buf[p] == ':'))
+                    ++p;
+                if (p > ts)
+                    return tsLastSeg(buf.substr(ts, p - ts));
             }
         }
 
@@ -11543,7 +11989,8 @@ static std::string resolveReceiverType(const std::string &buf, const std::string
         // Allow '<' too so a templated type (std::vector<int> recv) is captured
         // whole rather than stopping inside the angle brackets.
         size_t q = i;
-        while (q > 0 && isSp(buf[q - 1])) --q;
+        while (q > 0 && isSp(buf[q - 1]))
+            --q;
         size_t te = q;
         while (q > 0 && (tsIsIdentChar(buf[q - 1]) || buf[q - 1] == '.' || buf[q - 1] == ':' ||
                          buf[q - 1] == '*' || buf[q - 1] == '&' || buf[q - 1] == '>' || buf[q - 1] == '<'))
@@ -11572,7 +12019,8 @@ void Editor::configureTabAutocomplete(TabDocument &t)
     // "+" press — the multi-second new-tab stall).
     TabDocument *tptr = &t;
     TextEditor::AutoCompleteConfig config;
-    config.callback = [this, tptr](TextEditor::AutoCompleteState &state) {
+    config.callback = [this, tptr](TextEditor::AutoCompleteState &state)
+    {
         // LSP completion (clangd): fire async at the cursor BEFORE the tree-sitter
         // paths below (which fill an instant baseline). pollLsp() refines the popup
         // when clangd replies. searchTermEndIndex is a CODEPOINT index → byte offset
@@ -11580,22 +12028,29 @@ void Editor::configureTabAutocomplete(TabDocument &t)
         // doesn't pre-empt it.
         {
             std::string lext = std::filesystem::path(tptr->filename).extension().string();
-            std::transform(lext.begin(), lext.end(), lext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            std::transform(lext.begin(), lext.end(), lext.begin(), [](unsigned char c)
+                           { return (char)std::tolower(c); });
             if (lspActiveForExt(lext))
             {
                 lspSyncDoc(*tptr);
                 std::string luri = lspUriForTab(*tptr);
                 if (!luri.empty())
                 {
-                    std::string lln = tptr->editor.GetLineText((int) state.line);
+                    std::string lln = tptr->editor.GetLineText((int)state.line);
                     size_t bcol = 0;
-                    for (size_t cp = 0; cp < (size_t) state.searchTermEndIndex && bcol < lln.size(); ++cp)
+                    for (size_t cp = 0; cp < (size_t)state.searchTermEndIndex && bcol < lln.size(); ++cp)
                     {
                         ++bcol;
-                        while (bcol < lln.size() && (((unsigned char) lln[bcol]) & 0xC0) == 0x80) ++bcol;
+                        while (bcol < lln.size() && (((unsigned char)lln[bcol]) & 0xC0) == 0x80)
+                            ++bcol;
                     }
-                    int rid = lspClient.requestCompletion(luri, (int) state.line, (int) bcol);
-                    if (rid) { lspCompletionId = rid; lspCompletionTab = tptr; state.suggestionsPromise = true; }
+                    int rid = lspClient.requestCompletion(luri, (int)state.line, (int)bcol);
+                    if (rid)
+                    {
+                        lspCompletionId = rid;
+                        lspCompletionTab = tptr;
+                        state.suggestionsPromise = true;
+                    }
                 }
             }
         }
@@ -11604,66 +12059,113 @@ void Editor::configureTabAutocomplete(TabDocument &t)
         // resolve, list ONLY that type's members. Precise-only: if anything is
         // unresolved we fall through to normal identifier completion.
         {
-            std::string ln = tptr->editor.GetLineText((int) state.line);
+            std::string ln = tptr->editor.GetLineText((int)state.line);
             // searchTermStartIndex is a CODEPOINT index; ln is UTF-8 BYTES. Walk
             // that many codepoints to get the byte offset, else any multibyte
             // char earlier on the line shifts every following byte test.
             size_t k = 0;
-            for (size_t cp = 0; cp < (size_t) state.searchTermStartIndex && k < ln.size(); ++cp)
+            for (size_t cp = 0; cp < (size_t)state.searchTermStartIndex && k < ln.size(); ++cp)
             {
                 ++k;
-                while (k < ln.size() && (((unsigned char) ln[k]) & 0xC0) == 0x80) ++k;
+                while (k < ln.size() && (((unsigned char)ln[k]) & 0xC0) == 0x80)
+                    ++k;
             }
-            auto isSp = [](char c) { return c == ' ' || c == '\t'; };
+            auto isSp = [](char c)
+            { return c == ' ' || c == '\t'; };
             size_t op = k;
-            while (op > 0 && isSp(ln[op - 1])) --op;
+            while (op > 0 && isSp(ln[op - 1]))
+                --op;
             std::string oper;
-            if (op >= 2 && ln[op - 1] == '>' && ln[op - 2] == '-') { oper = "->"; op -= 2; }
-            else if (op >= 2 && ln[op - 1] == ':' && ln[op - 2] == ':') { oper = "::"; op -= 2; }
-            else if (op >= 1 && ln[op - 1] == '.') { oper = "."; op -= 1; }
+            if (op >= 2 && ln[op - 1] == '>' && ln[op - 2] == '-')
+            {
+                oper = "->";
+                op -= 2;
+            }
+            else if (op >= 2 && ln[op - 1] == ':' && ln[op - 2] == ':')
+            {
+                oper = "::";
+                op -= 2;
+            }
+            else if (op >= 1 && ln[op - 1] == '.')
+            {
+                oper = ".";
+                op -= 1;
+            }
 
             if (!oper.empty())
             {
                 // Identifier byte: ASCII ident char OR any UTF-8 byte (>=0x80), so a
                 // non-ASCII identifier (café.member) isn't truncated mid-codepoint.
-                auto isIdentByte = [](char c) { return tsIsIdentChar(c) || ((unsigned char) c >= 0x80); };
+                auto isIdentByte = [](char c)
+                { return tsIsIdentChar(c) || ((unsigned char)c >= 0x80); };
                 bool badBase = false;
                 // If a balanced (...) ends just before `p`, skip it so a method call
                 // `get()` reads as the segment `get` (-> its return type). Returns
                 // false on an unbalanced/odd paren (caller bails). No-op if no ')'.
-                auto skipCall = [&](size_t &p) -> bool {
-                    if (p == 0 || ln[p - 1] != ')') return true;
-                    int depth = 0; size_t i = p;
+                auto skipCall = [&](size_t &p) -> bool
+                {
+                    if (p == 0 || ln[p - 1] != ')')
+                        return true;
+                    int depth = 0;
+                    size_t i = p;
                     while (i > 0)
                     {
-                        char c = ln[i - 1]; --i;
-                        if (c == ')') ++depth;
-                        else if (c == '(') { if (--depth == 0) { p = i; return true; } }
+                        char c = ln[i - 1];
+                        --i;
+                        if (c == ')')
+                            ++depth;
+                        else if (c == '(')
+                        {
+                            if (--depth == 0)
+                            {
+                                p = i;
+                                return true;
+                            }
+                        }
                     }
                     return false;
                 };
                 // If a balanced [...] ends just before `p`, skip it and set `sub`
                 // (subscript v[i] -> element type). false only on unbalanced.
-                auto skipBracket = [&](size_t &p, bool &sub) -> bool {
-                    if (p == 0 || ln[p - 1] != ']') return true;
-                    int depth = 0; size_t i = p;
+                auto skipBracket = [&](size_t &p, bool &sub) -> bool
+                {
+                    if (p == 0 || ln[p - 1] != ']')
+                        return true;
+                    int depth = 0;
+                    size_t i = p;
                     while (i > 0)
                     {
-                        char c = ln[i - 1]; --i;
-                        if (c == ']') ++depth;
-                        else if (c == '[') { if (--depth == 0) { p = i; sub = true; return true; } }
+                        char c = ln[i - 1];
+                        --i;
+                        if (c == ']')
+                            ++depth;
+                        else if (c == '[')
+                        {
+                            if (--depth == 0)
+                            {
+                                p = i;
+                                sub = true;
+                                return true;
+                            }
+                        }
                     }
                     return false;
                 };
                 size_t r = op;
-                while (r > 0 && isSp(ln[r - 1])) --r;
-                if (!skipCall(r)) badBase = true;                 // completing the result of a call: foo().|
-                while (r > 0 && isSp(ln[r - 1])) --r;
+                while (r > 0 && isSp(ln[r - 1]))
+                    --r;
+                if (!skipCall(r))
+                    badBase = true; // completing the result of a call: foo().|
+                while (r > 0 && isSp(ln[r - 1]))
+                    --r;
                 bool recvSub = false;
-                if (!skipBracket(r, recvSub)) badBase = true;     // completing an element: v[i].|
-                while (r > 0 && isSp(ln[r - 1])) --r;
+                if (!skipBracket(r, recvSub))
+                    badBase = true; // completing an element: v[i].|
+                while (r > 0 && isSp(ln[r - 1]))
+                    --r;
                 size_t rEnd = r;
-                while (r > 0 && isIdentByte(ln[r - 1])) --r;
+                while (r > 0 && isIdentByte(ln[r - 1]))
+                    --r;
                 std::string receiver = ln.substr(r, rEnd - r);
                 // Build the receiver CHAIN for member-of-member completion:
                 // a.b.c -> {a,b,c}, walking back over '.'/'->' segments, skipping a
@@ -11673,28 +12175,54 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                 // a qualified base bails.
                 std::vector<std::string> chain;
                 chain.push_back(receiver);
-                if (recvSub) chain.push_back("[]");               // v[i]. -> [v, "[]"]
+                if (recvSub)
+                    chain.push_back("[]"); // v[i]. -> [v, "[]"]
                 if (oper != "::" && !badBase)
                 {
                     size_t seg = r;
                     for (;;)
                     {
                         size_t q = seg;
-                        while (q > 0 && isSp(ln[q - 1])) --q;
-                        if (q >= 2 && ln[q - 1] == '>' && ln[q - 2] == '-') q -= 2;
-                        else if (q >= 1 && ln[q - 1] == '.') q -= 1;
-                        else break;                                   // no further member op
-                        while (q > 0 && isSp(ln[q - 1])) --q;
-                        if (!skipCall(q)) { badBase = true; break; }  // unbalanced parens
-                        while (q > 0 && isSp(ln[q - 1])) --q;
+                        while (q > 0 && isSp(ln[q - 1]))
+                            --q;
+                        if (q >= 2 && ln[q - 1] == '>' && ln[q - 2] == '-')
+                            q -= 2;
+                        else if (q >= 1 && ln[q - 1] == '.')
+                            q -= 1;
+                        else
+                            break; // no further member op
+                        while (q > 0 && isSp(ln[q - 1]))
+                            --q;
+                        if (!skipCall(q))
+                        {
+                            badBase = true;
+                            break;
+                        } // unbalanced parens
+                        while (q > 0 && isSp(ln[q - 1]))
+                            --q;
                         bool sub = false;
-                        if (!skipBracket(q, sub)) { badBase = true; break; }   // unbalanced bracket
-                        while (q > 0 && isSp(ln[q - 1])) --q;
+                        if (!skipBracket(q, sub))
+                        {
+                            badBase = true;
+                            break;
+                        } // unbalanced bracket
+                        while (q > 0 && isSp(ln[q - 1]))
+                            --q;
                         size_t e = q;
-                        while (q > 0 && isIdentByte(ln[q - 1])) --q;
-                        if (q == e) { badBase = true; break; }        // op w/ no ident receiver
-                        if (q >= 2 && ln[q - 1] == ':' && ln[q - 2] == ':') { badBase = true; break; } // qualified base
-                        if (sub) chain.insert(chain.begin(), "[]");   // subscript on this segment (after its ident)
+                        while (q > 0 && isIdentByte(ln[q - 1]))
+                            --q;
+                        if (q == e)
+                        {
+                            badBase = true;
+                            break;
+                        } // op w/ no ident receiver
+                        if (q >= 2 && ln[q - 1] == ':' && ln[q - 2] == ':')
+                        {
+                            badBase = true;
+                            break;
+                        } // qualified base
+                        if (sub)
+                            chain.insert(chain.begin(), "[]"); // subscript on this segment (after its ident)
                         chain.insert(chain.begin(), ln.substr(q, e - q));
                         seg = q;
                     }
@@ -11721,7 +12249,7 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                             // other files (o.inner.items where Inner is in a header).
                             auto idxSnap = indexSnapshot();
                             type = ts::resolveMemberChain(lang, tptr->editor.GetText(),
-                                                          (int) state.line, (int) k, chain,
+                                                          (int)state.line, (int)k, chain,
                                                           idxSnap ? &idxSnap->memberTypes : nullptr);
                         }
                         if (type.empty() && chain.size() == 1)
@@ -11752,7 +12280,7 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                             if (!hits.empty())
                             {
                                 state.suggestions = std::move(hits);
-                                return;   // members only
+                                return; // members only
                             }
                             // Members exist but none match the search term — fall
                             // through to identifier completion (never an empty popup).
@@ -11789,7 +12317,8 @@ void Editor::configureTabAutocomplete(TabDocument &t)
         }
     };
     t.editor.SetAutoCompleteConfig(&config);
-    t.editor.SetChangeCallback([this, tptr]() { buildAutocompleteTrie(*tptr); }, 3000);
+    t.editor.SetChangeCallback([this, tptr]()
+                               { buildAutocompleteTrie(*tptr); }, 3000);
     buildAutocompleteTrie(t);
 }
 
@@ -11815,7 +12344,7 @@ void Editor::setAutocompleteMode(bool flag)
 }
 
 //
-//	Editor::buildProjectTrie
+//  Editor::buildProjectTrie
 //
 
 // One shared project-wide identifier trie for the whole editor, rebuilt once
@@ -11837,7 +12366,7 @@ void Editor::buildProjectTrie()
 }
 
 //
-//	Editor::buildAutocompleteTrie
+//  Editor::buildAutocompleteTrie
 //
 
 void Editor::buildAutocompleteTrie(TabDocument &t)
@@ -11854,5 +12383,6 @@ void Editor::buildAutocompleteTrie(TabDocument &t)
         for (auto &word : language->identifiers)
             t.trie.insert(word);
     }
-    t.editor.IterateIdentifiers([&](const std::string &id) { t.trie.insert(id); });
+    t.editor.IterateIdentifiers([&](const std::string &id)
+                                { t.trie.insert(id); });
 }

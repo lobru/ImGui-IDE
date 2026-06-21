@@ -79,10 +79,16 @@ target_compile_options(lspclient PRIVATE
 # ── Example executable ───────────────────────────────────────────────────
 add_executable(example
 	editor.cpp
+	updater.cpp
 	dejavu.cpp
 	main.cpp)
 
 target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
+
+# In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only).
+if(WIN32)
+	target_link_libraries(example PRIVATE winhttp)
+endif()
 
 # Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
 # build scripts / object paths are unchanged) — only the produced file is renamed.

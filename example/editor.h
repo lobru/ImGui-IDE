@@ -19,6 +19,7 @@
 #include <string>
 #include <atomic>
 #include <filesystem>
+#include <future>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -29,6 +30,7 @@
 #include "tsindex.h"
 #include "lsp_client.h"
 #include "nav_history.h"
+#include "updater.h"
 
 
 //
@@ -143,6 +145,25 @@ class Editor {
 	// it shows as a toast here (optional "info|warn|error|success" severity prefix,
 	// then the message). Polled (throttled) once per frame; files are consumed.
 	void pollToastInbox();
+
+	// ── In-app updater (GitHub Releases via WinHTTP) ──────────────────────────
+	// Checks <owner>/<repo>'s latest release against kAppVersion. Auto every 12 h
+	// (when prefAutoUpdate), or on demand from Help > Check for Updates. The check
+	// + download run on a worker (std::async); pollUpdates() drains them each frame.
+	static constexpr const char* kAppVersion = "0.1.0";
+	bool   prefAutoUpdate        = true;   // background 12 h check
+	long long lastUpdateCheckEpoch = 0;    // wall-clock (time_t) of last check; persisted
+	std::future<updater::Release> updateFuture;
+	bool   updateCheckManual     = false;  // the in-flight check was user-initiated
+	updater::Release updateInfo;           // last result
+	bool   updateAvailable       = false;  // updateInfo.tag is newer than kAppVersion
+	bool   showUpdateDialog      = false;
+	std::future<bool> updateDownloadFuture;
+	std::string updateDownloadPath;
+	int    updateDownloadState   = 0;      // 0 idle, 1 downloading, 2 done, 3 failed
+	void   checkForUpdates(bool manual);
+	void   pollUpdates();
+	void   renderUpdateDialog();
 
 	// index = -1  → append at end
 	// split = true → request the new doc be docked next to the active one
