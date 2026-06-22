@@ -24,8 +24,19 @@ Release fetchLatest(const std::string& owner, const std::string& repo);
 // Blocking download of url -> destPath (follows redirects). True on success.
 bool download(const std::string& url, const std::string& destPath);
 
-// Launch a downloaded installer (ShellExecute). True if the shell accepted it.
-bool runInstaller(const std::string& path);
+// Full path of the currently-running executable.
+std::string runningExePath();
+
+// Apply an update in place — no installer. `assetPath` is the downloaded asset:
+//   .exe  → it IS the new build; replaces `targetExe`.
+//   .zip  → extracted; the first .exe inside replaces `targetExe`.
+// A running .exe can't be overwritten, so the live one is renamed to
+// "<targetExe>.old" and the new build is dropped into its place; the swap takes
+// effect on the next launch. Returns true if staged; sets `err` on failure.
+bool applyUpdate(const std::string& assetPath, const std::string& targetExe, std::string& err);
+
+// Delete a leftover "<targetExe>.old" from a previous in-place update. Best-effort.
+void cleanupStaleUpdate(const std::string& targetExe);
 
 // Open a URL in the default browser.
 void openUrl(const std::string& url);

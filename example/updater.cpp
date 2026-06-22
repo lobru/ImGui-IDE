@@ -190,10 +190,115 @@ bool download(const std::string& url, const std::string& destPath)
     return ok && status == 200;
 }
 
-bool runInstaller(const std::string& path)
+std::string runningExePath()
 {
-    HINSTANCE h = ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    return (INT_PTR) h > 32;
+    char buf[MAX_PATH * 2] = {0};
+    DWORD n = GetModuleFileNameA(nullptr, buf, (DWORD) sizeof(buf));
+    return std::string(buf, n);
+}
+
+static bool iendsWith(const std::string& s, const char* suf)
+{
+    std::string a = s, b = suf;
+    std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+    return a.size() >= b.size() && a.compare(a.size() - b.size(), b.size(), b) == 0;
+}
+
+static bool runHidden(const std::string& cmd)
+{
+    std::vector<char> c(cmd.begin(), cmd.end());
+    c.push_back('\0');
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessA(nullptr, c.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                        nullptr, nullptr, &si, &pi))
+        return false;
+    WaitForSingleObject(pi.hProcess, 60000);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return code == 0;
+}
+
+// Recursively (bounded) find the first *.exe under `dir`.
+static std::string findExe(const std::string& dir, int depth)
+{
+    if (depth > 3)
+        return {};
+    WIN32_FIND_DATAA fd;
+    std::string found, subdirs;
+    HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE)
+        return {};
+    do
+    {
+        std::string name = fd.cFileName;
+        if (name == "." || name == "..")
+            continue;
+        std::string full = dir + "\\" + name;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        {
+            if (subdirs.empty())
+                subdirs = full; // remember to descend after files
+            std::string deeper = findExe(full, depth + 1);
+            if (!deeper.empty() && found.empty())
+                found = deeper;
+        }
+        else if (iendsWith(name, ".exe") && found.empty())
+            found = full;
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return found;
+}
+
+bool applyUpdate(const std::string& assetPath, const std::string& targetExe, std::string& err)
+{
+    std::string newExe = assetPath;
+    if (iendsWith(assetPath, ".zip"))
+    {
+        std::string stageDir = assetPath + "_stage";
+        CreateDirectoryA(stageDir.c_str(), nullptr);
+        if (!runHidden("tar.exe -xf \"" + assetPath + "\" -C \"" + stageDir + "\""))
+        {
+            err = "failed to extract update archive";
+            return false;
+        }
+        newExe = findExe(stageDir, 0);
+        if (newExe.empty())
+        {
+            err = "no .exe found inside the update archive";
+            return false;
+        }
+    }
+    else if (!iendsWith(assetPath, ".exe"))
+    {
+        err = "unsupported asset type (expected .exe or .zip)";
+        return false;
+    }
+
+    // A running exe can't be overwritten, but it CAN be renamed; do that, then
+    // drop the new build into the freed name. Rolls back on copy failure.
+    std::string oldExe = targetExe + ".old";
+    DeleteFileA(oldExe.c_str());
+    if (!MoveFileExA(targetExe.c_str(), oldExe.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        err = "couldn't move the running executable aside";
+        return false;
+    }
+    if (!CopyFileA(newExe.c_str(), targetExe.c_str(), FALSE))
+    {
+        MoveFileExA(oldExe.c_str(), targetExe.c_str(), MOVEFILE_REPLACE_EXISTING); // rollback
+        err = "couldn't write the new executable";
+        return false;
+    }
+    return true;
+}
+
+void cleanupStaleUpdate(const std::string& targetExe)
+{
+    DeleteFileA((targetExe + ".old").c_str());
 }
 
 void openUrl(const std::string& url)
@@ -212,7 +317,13 @@ Release fetchLatest(const std::string&, const std::string&)
     return r;
 }
 bool download(const std::string&, const std::string&) { return false; }
-bool runInstaller(const std::string&) { return false; }
+std::string runningExePath() { return {}; }
+bool applyUpdate(const std::string&, const std::string&, std::string& err)
+{
+    err = "in-place update only implemented on Windows";
+    return false;
+}
+void cleanupStaleUpdate(const std::string&) {}
 void openUrl(const std::string&) {}
 } // namespace updater
 #endif

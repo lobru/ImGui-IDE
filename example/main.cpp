@@ -294,6 +294,7 @@ int main(int argc, char** argv) {
 	// Tell Editor to skip the demo doc when launched with files / project.
 	Editor::sSkipDemo = (!projectArg.empty() || !filesArg.empty());
 	Editor editor;
+	updater::cleanupStaleUpdate(updater::runningExePath());   // drop any <exe>.old from a prior in-place update
 	if (!projectArg.empty()) editor.setProjectRoot(projectArg);
 	for (auto& p : filesArg) editor.openFile(p);
 	if (focusArg) editor.setFocusMode(true);

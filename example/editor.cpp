@@ -8532,15 +8532,27 @@ void Editor::pollUpdates()
         updateDownloadFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
     {
         bool ok = updateDownloadFuture.get();
-        updateDownloadState = ok ? 2 : 3;
         if (ok)
         {
-            pushToast("Downloaded " + updateInfo.assetName + " \xe2\x80\x94 launching installer",
-                      IM_COL32(120, 200, 120, 255));
-            updater::runInstaller(updateDownloadPath);
+            // No installer — overwrite the exe in place (running one renamed aside).
+            std::string err;
+            if (updater::applyUpdate(updateDownloadPath, updater::runningExePath(), err))
+            {
+                updateDownloadState = 2;
+                pushToast("Updated to " + updateInfo.tag + " \xe2\x80\x94 restart to apply",
+                          IM_COL32(120, 200, 120, 255));
+            }
+            else
+            {
+                updateDownloadState = 3;
+                pushToast("Update failed: " + err, IM_COL32(224, 96, 96, 255));
+            }
         }
         else
+        {
+            updateDownloadState = 3;
             pushToast("Download failed", IM_COL32(224, 96, 96, 255));
+        }
     }
 }
 
@@ -8566,15 +8578,17 @@ void Editor::renderUpdateDialog()
         }
         if (updateDownloadState == 1)
             ImGui::TextDisabled("Downloading %s\xe2\x80\xa6", updateInfo.assetName.c_str());
+        else if (updateDownloadState == 2)
+            ImGui::TextColored(ImVec4(0.45f, 0.8f, 0.45f, 1.0f), "Updated \xe2\x80\x94 restart ImGui-IDE to apply.");
         else if (updateDownloadState == 3)
-            ImGui::TextColored(ImVec4(0.9f, 0.45f, 0.45f, 1.0f), "Download failed \xe2\x80\x94 try GitHub.");
+            ImGui::TextColored(ImVec4(0.9f, 0.45f, 0.45f, 1.0f), "Update failed \xe2\x80\x94 try GitHub.");
         ImGui::Spacing();
 
         bool busy = (updateDownloadState == 1);
         ImGui::BeginDisabled(busy);
         if (!updateInfo.assetUrl.empty())
         {
-            if (ImGui::Button("Download & Install", ImVec2(160.0f, 0.0f)))
+            if (ImGui::Button("Download & Update", ImVec2(160.0f, 0.0f)))
             {
                 std::string name = updateInfo.assetName.empty() ? "ImGui-IDE-update.exe" : updateInfo.assetName;
                 updateDownloadPath = (userConfigDir() / name).string();
