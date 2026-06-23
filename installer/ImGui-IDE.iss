@@ -41,7 +41,9 @@ Name: "dircontext";   Description: "Add ""Open with ImGui-IDE"" to the folder ri
 
 [Files]
 Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\languages\*"; DestDir: "{app}\languages"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Source the runtime languages from the canonical example/languages/ folder so a
+; clean checkout always packages them (independent of the build's POST_BUILD copy).
+Source: "..\example\languages\*"; DestDir: "{app}\languages"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\example\app.ico";      DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]

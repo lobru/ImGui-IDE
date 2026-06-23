@@ -3199,7 +3199,9 @@ void Editor::rebuildProjectIndex()
                     idx->memberTypes[tkv.first][mkv.first] = mkv.second;
         };
         std::error_code ec;
-        int budget = 30000;   // higher now that dependency source is indexed too
+        int budget = 120000;   // covers large SDK trees (UE/UEVR); the build is
+                               // background-threaded + mtime-cached so a big walk
+                               // doesn't stall the UI or re-parse unchanged files
 
         for (auto it = std::filesystem::recursive_directory_iterator(
                  root, std::filesystem::directory_options::skip_permission_denied, ec);
@@ -11201,16 +11203,25 @@ void Editor::renderStatusBar()
                 label += "(none)";
             else
             {
-                auto p = std::filesystem::path(activeMsvcPath);
-                for (auto it = p; !it.empty() && it.has_parent_path(); it = it.parent_path())
+                // Cache the extracted version segment — only re-walk the path when
+                // activeMsvcPath changes, not every frame a C/C++ file is active.
+                static std::string verCache, verCacheFor;
+                if (verCacheFor != activeMsvcPath)
                 {
-                    auto name = it.filename().string();
-                    if (!name.empty() && (name[0] >= '0' && name[0] <= '9') && name.find('.') != std::string::npos)
+                    verCacheFor = activeMsvcPath;
+                    verCache.clear();
+                    auto p = std::filesystem::path(activeMsvcPath);
+                    for (auto it = p; !it.empty() && it.has_parent_path(); it = it.parent_path())
                     {
-                        label += name;
-                        break;
+                        auto name = it.filename().string();
+                        if (!name.empty() && (name[0] >= '0' && name[0] <= '9') && name.find('.') != std::string::npos)
+                        {
+                            verCache = name;
+                            break;
+                        }
                     }
                 }
+                label += verCache;
             }
             ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
             ImGui::SetNextItemWidth(220.0f);
