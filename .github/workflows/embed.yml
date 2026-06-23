@@ -1,0 +1,38 @@
+name: Embed
+
+# Builds the embeddable TextEditor DLL (embed/) and runs the cross-binary contract
+# test + the web-IDE GitHub-parse test. Also builds the ReShade-ready variant
+# (TE_EMBED_NO_IMGUI_INTERNAL = public Dear ImGui API only) so that path is proven
+# on every push — the desktop/web CI don't cover the embed core.
+
+on: [push]
+
+jobs:
+  build-embed:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Ninja
+      run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+    # Default build: bundled Dear ImGui (with imgui_internal.h), full feature set.
+    - name: Configure + build (default)
+      run: |
+        cmake -B build-embed -G Ninja -S embed -DCMAKE_BUILD_TYPE=Release
+        cmake --build build-embed
+
+    - name: Test (default)
+      run: ctest --test-dir build-embed --output-on-failure
+
+    # ReShade-ready build: public ImGui API only (no imgui_internal.h). Must still
+    # build clean and pass the contract test.
+    - name: Configure + build (no imgui_internal / ReShade-ready)
+      run: |
+        cmake -B build-embed-ri -G Ninja -S embed -DCMAKE_BUILD_TYPE=Release -DTE_EMBED_NO_IMGUI_INTERNAL=ON
+        cmake --build build-embed-ri
+
+    - name: Test (no imgui_internal)
+      run: ctest --test-dir build-embed-ri --output-on-failure
