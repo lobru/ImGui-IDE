@@ -150,7 +150,11 @@ class Editor {
 	// Checks <owner>/<repo>'s latest release against kAppVersion. Auto every 12 h
 	// (when prefAutoUpdate), or on demand from Help > Check for Updates. The check
 	// + download run on a worker (std::async); pollUpdates() drains them each frame.
-	static constexpr const char* kAppVersion = "0.1.0";
+#ifndef IMGUI_IDE_VERSION
+#define IMGUI_IDE_VERSION "0.0.0-dev"   // overridden by CMake (git describe) for the example target
+#endif
+	static constexpr const char* kAppVersion = IMGUI_IDE_VERSION;
+	int    prefUpdateChannel = 0;   // 0 = stable (latest release), 1 = nightly (newest prerelease)
 	bool   prefAutoUpdate        = true;   // background 12 h check
 	long long lastUpdateCheckEpoch = 0;    // wall-clock (time_t) of last check; persisted
 	std::future<updater::Release> updateFuture;

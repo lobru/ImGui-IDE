@@ -189,9 +189,12 @@ void Editor::loadRuntimeLanguages()
     auto &byExt = runtimeLanguagesByExt();
     if (!byExt.empty())
         return; // already loaded
-    // Try a few candidate roots: cwd/languages, exe-dir/languages, ../languages
+    // Try a few candidate roots. get_module_path() is the exe FILE path, so take
+    // its parent — "<exe>.exe/languages" is nonsense and silently missed, which is
+    // exactly why the INSTALLED build (launched with a non-build CWD) lost its
+    // runtime languages while the dev build happened to hit a CWD-relative path.
     std::vector<std::filesystem::path> roots = {
-        get_module_path() / "languages",
+        get_module_path().parent_path() / "languages",
         std::filesystem::current_path() / "languages",
         std::filesystem::current_path() / ".." / "languages",
         std::filesystem::current_path() / ".." / ".." / "languages",
@@ -6616,6 +6619,8 @@ void Editor::loadSettings()
                 prefAutoSave = (v == "1" || v == "true");
             else if (k == "auto_save_sec")
                 prefAutoSaveSec = std::atoi(v.c_str());
+            else if (k == "update_channel")
+                prefUpdateChannel = std::atoi(v.c_str());
             else if (k == "pan_scroll_accel")
                 prefPanScrollAccel = std::strtof(v.c_str(), nullptr);
             else if (k == "word_wrap")
@@ -6747,6 +6752,7 @@ void Editor::saveSettings()
     f << "last_update_check=" << lastUpdateCheckEpoch << "\n";
     f << "auto_save=" << (prefAutoSave ? "1" : "0") << "\n";
     f << "auto_save_sec=" << prefAutoSaveSec << "\n";
+    f << "update_channel=" << prefUpdateChannel << "\n";
     f << "word_wrap=" << (prefWordWrap ? "1" : "0") << "\n";
     f << "wrap_width=" << prefWrapWidthPx << "\n";
     f << "fps_limit=" << prefFpsLimit << "\n";
@@ -8562,9 +8568,10 @@ void Editor::checkForUpdates(bool manual)
     updateCheckManual = manual;
     lastUpdateCheckEpoch = (long long)std::time(nullptr);
     std::string owner = kUpdateOwner, repo = kUpdateRepo;
+    bool nightly = (prefUpdateChannel == 1);
     updateFuture = std::async(std::launch::async,
-                              [owner, repo]
-                              { return updater::fetchLatest(owner, repo); });
+                              [owner, repo, nightly]
+                              { return updater::fetchLatest(owner, repo, nightly); });
 }
 
 void Editor::pollUpdates()
@@ -8671,6 +8678,15 @@ void Editor::renderUpdateDialog()
                                                   [url, path]
                                                   { return updater::download(url, path); });
                 updateDownloadState = 1;
+            }
+            ImGui::SameLine();
+        }
+        if (updateDownloadState == 2)
+        {
+            if (ImGui::Button("Restart Now", ImVec2(120.0f, 0.0f)))
+            {
+                updater::relaunch(updater::runningExePath());
+                done = true; // exit so the freshly-swapped exe takes over
             }
             ImGui::SameLine();
         }
@@ -10561,11 +10577,28 @@ void Editor::renderMenuBar()
 
         if (ImGui::BeginMenu("Help"))
         {
+            ImGui::MenuItem(("Version  " + std::string(kAppVersion)).c_str(), nullptr, false, false);
             if (ImGui::MenuItem("Check for Updates", nullptr, false, !updateFuture.valid()))
                 checkForUpdates(true);
             if (updateAvailable && ImGui::MenuItem("Download Update…"))
                 showUpdateDialog = true;
             ImGui::MenuItem("Auto-check (every 12 h)", nullptr, &prefAutoUpdate);
+            if (ImGui::BeginMenu("Update Channel"))
+            {
+                if (ImGui::MenuItem("Stable", nullptr, prefUpdateChannel == 0))
+                {
+                    prefUpdateChannel = 0;
+                    lastUpdateCheckEpoch = 0; // re-check against the new channel soon
+                }
+                if (ImGui::MenuItem("Nightly", nullptr, prefUpdateChannel == 1))
+                {
+                    prefUpdateChannel = 1;
+                    lastUpdateCheckEpoch = 0;
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Changelog…"))
+                updater::openUrl("https://github.com/" + std::string(kUpdateOwner) + "/" + kUpdateRepo + "/releases");
             ImGui::Separator();
             if (ImGui::MenuItem("About ImGui-IDE"))
                 showAboutDialog = true;
@@ -10625,7 +10658,7 @@ void Editor::renderMenuBar()
     }
     if (ImGui::BeginPopupModal("About ImGui-IDE", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::Text("ImGui-IDE  0.1.0");
+        ImGui::Text("ImGui-IDE  %s", kAppVersion);
         ImGui::TextDisabled("(c) 2026 Logan Brunet  -  MIT");
         ImGui::Separator();
         ImGui::TextDisabled("A lightweight IDE-lite editor.");

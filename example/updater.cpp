@@ -106,12 +106,62 @@ bool httpGet(const std::wstring& url, int& status, std::string& body, std::strin
 }
 } // namespace
 
+namespace
+{
+updater::Release parseRelease(const nlohmann::json& j)
+{
+    updater::Release r;
+    r.tag = j.value("tag_name", std::string());
+    r.htmlUrl = j.value("html_url", std::string());
+    r.notes = j.value("body", std::string());
+    if (j.contains("assets") && j["assets"].is_array())
+    {
+        std::string firstUrl, firstName;
+        for (auto& a : j["assets"])
+        {
+            std::string name = a.value("name", std::string());
+            std::string durl = a.value("browser_download_url", std::string());
+            if (durl.empty())
+                continue;
+            if (firstUrl.empty())
+            {
+                firstUrl = durl;
+                firstName = name;
+            }
+            std::string low = name;
+            std::transform(low.begin(), low.end(), low.begin(),
+                           [](unsigned char c) { return (char) std::tolower(c); });
+            if (low.size() >= 4 && (low.compare(low.size() - 4, 4, ".exe") == 0 ||
+                                    low.compare(low.size() - 4, 4, ".zip") == 0 ||
+                                    low.compare(low.size() - 4, 4, ".msi") == 0))
+            {
+                r.assetUrl = durl;
+                r.assetName = name;
+                break;
+            }
+        }
+        if (r.assetUrl.empty())
+        {
+            r.assetUrl = firstUrl;
+            r.assetName = firstName;
+        }
+    }
+    r.ok = !r.tag.empty();
+    if (!r.ok)
+        r.error = "release JSON missing tag_name";
+    return r;
+}
+} // namespace
+
 namespace updater
 {
-Release fetchLatest(const std::string& owner, const std::string& repo)
+Release fetchLatest(const std::string& owner, const std::string& repo, bool nightly)
 {
     Release r;
-    std::string url = "https://api.github.com/repos/" + owner + "/" + repo + "/releases/latest";
+    std::string base = "https://api.github.com/repos/" + owner + "/" + repo;
+    // Stable = the published "latest" release. Nightly = newest release including
+    // prereleases (the releases list is returned newest-first).
+    std::string url = nightly ? (base + "/releases?per_page=20") : (base + "/releases/latest");
     int status = 0;
     std::string body, err;
     if (!httpGet(widen(url), status, body, err))
@@ -133,43 +183,31 @@ Release fetchLatest(const std::string& owner, const std::string& repo)
     try
     {
         auto j = nlohmann::json::parse(body);
-        r.tag = j.value("tag_name", std::string());
-        r.htmlUrl = j.value("html_url", std::string());
-        r.notes = j.value("body", std::string());
-        if (j.contains("assets") && j["assets"].is_array())
+        if (nightly)
         {
-            std::string firstUrl, firstName;
-            for (auto& a : j["assets"])
+            if (!j.is_array() || j.empty())
             {
-                std::string name = a.value("name", std::string());
-                std::string durl = a.value("browser_download_url", std::string());
-                if (durl.empty())
-                    continue;
-                if (firstUrl.empty())
-                {
-                    firstUrl = durl;
-                    firstName = name;
-                }
-                std::string low = name;
-                std::transform(low.begin(), low.end(), low.begin(),
-                               [](unsigned char c) { return (char) std::tolower(c); });
-                if (low.size() >= 4 && (low.compare(low.size() - 4, 4, ".exe") == 0 ||
-                                        low.compare(low.size() - 4, 4, ".msi") == 0))
-                {
-                    r.assetUrl = durl;
-                    r.assetName = name;
-                    break;
-                }
+                r.notFound = true;
+                r.ok = true;
+                return r;
             }
-            if (r.assetUrl.empty())
+            for (auto& rel : j) // newest-first; take the first non-draft
             {
-                r.assetUrl = firstUrl;
-                r.assetName = firstName;
+                if (rel.value("draft", false))
+                    continue;
+                r = parseRelease(rel);
+                break;
+            }
+            if (r.tag.empty() && r.error.empty())
+            {
+                r.notFound = true;
+                r.ok = true;
             }
         }
-        r.ok = !r.tag.empty();
-        if (!r.ok)
-            r.error = "release JSON missing tag_name";
+        else
+        {
+            r = parseRelease(j);
+        }
     }
     catch (const std::exception& e)
     {
@@ -305,12 +343,17 @@ void openUrl(const std::string& url)
 {
     ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
+
+void relaunch(const std::string& exePath)
+{
+    ShellExecuteA(nullptr, "open", exePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
 } // namespace updater
 
 #else // !_WIN32 — non-Windows builds get harmless stubs.
 namespace updater
 {
-Release fetchLatest(const std::string&, const std::string&)
+Release fetchLatest(const std::string&, const std::string&, bool)
 {
     Release r;
     r.error = "updater only implemented on Windows";
@@ -318,6 +361,7 @@ Release fetchLatest(const std::string&, const std::string&)
 }
 bool download(const std::string&, const std::string&) { return false; }
 std::string runningExePath() { return {}; }
+void relaunch(const std::string&) {}
 bool applyUpdate(const std::string&, const std::string&, std::string& err)
 {
     err = "in-place update only implemented on Windows";

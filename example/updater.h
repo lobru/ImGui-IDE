@@ -19,7 +19,12 @@ struct Release
 };
 
 // Blocking HTTPS GET of <owner>/<repo>'s latest release. Safe on a worker thread.
-Release fetchLatest(const std::string& owner, const std::string& repo);
+// nightly=false → the latest stable release (/releases/latest). nightly=true →
+// the newest release including prereleases (the nightly channel).
+Release fetchLatest(const std::string& owner, const std::string& repo, bool nightly = false);
+
+// Relaunch a (just-updated) executable and let the current process exit.
+void relaunch(const std::string& exePath);
 
 // Blocking download of url -> destPath (follows redirects). True on success.
 bool download(const std::string& url, const std::string& destPath);

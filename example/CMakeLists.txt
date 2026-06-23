@@ -97,6 +97,21 @@ set_target_properties(example PROPERTIES OUTPUT_NAME "ImGui-IDE")
 # The example executable owns main(); the editor library doesn't.
 target_compile_definitions(example PRIVATE STANDALONE=1)
 
+# Version string from git: tag for a release ("1.0"), tag-commits-sha for nightly
+# ("1.0-7-gabc1234"), or a short sha if untagged. Surfaced as IMGUI_IDE_VERSION
+# and shown in About / used by the in-app updater's newer-than check.
+execute_process(
+	COMMAND git describe --tags --always --dirty
+	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+	OUTPUT_VARIABLE IMGUI_IDE_GIT_VERSION
+	OUTPUT_STRIP_TRAILING_WHITESPACE
+	ERROR_QUIET)
+if(NOT IMGUI_IDE_GIT_VERSION)
+	set(IMGUI_IDE_GIT_VERSION "0.0.0-dev")
+endif()
+target_compile_definitions(example PRIVATE IMGUI_IDE_VERSION="${IMGUI_IDE_GIT_VERSION}")
+message(STATUS "ImGui-IDE version: ${IMGUI_IDE_GIT_VERSION}")
+
 # Link as a GUI (WINDOWS) subsystem app so no console window appears when the
 # editor is launched from Explorer / a shortcut. main() stays the entry point
 # via /ENTRY:mainCRTStartup (the WINDOWS subsystem would otherwise want WinMain).
