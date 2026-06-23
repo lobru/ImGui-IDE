@@ -2310,6 +2310,36 @@ std::filesystem::path Editor::workspaceRoot() const
     return {};
 }
 
+// Write every dirty document that already has a path (skips "untitled"). No
+// trailing-whitespace strip — must not move the caret mid-edit. Returns the count.
+int Editor::saveDirtyTitledDocs()
+{
+    int saved = 0;
+    for (size_t i = 0; i < tabs.size(); ++i)
+    {
+        if (!isDirtyTab(i))
+            continue;
+        TabDocument &t = *tabs[i];
+        if (t.filename.empty() || t.filename == "untitled")
+            continue;
+        try
+        {
+            std::ofstream stream(t.filename.c_str());
+            stream << t.editor.GetText();
+            stream.close();
+            t.version = t.editor.GetUndoIndex();
+            t.syncedText = t.editor.GetText();
+            recordDiskMtime(t); // our own write — keep the external-change watch quiet
+            ++saved;
+        }
+        catch (...)
+        {
+            // leave it dirty; retry next time
+        }
+    }
+    return saved;
+}
+
 void Editor::autoSaveTick()
 {
     if (!prefAutoSave || tabs.empty())
@@ -2319,29 +2349,7 @@ void Editor::autoSaveTick()
     if (now - lastAutoSave < (double) interval)
         return;
     lastAutoSave = now;
-    for (size_t i = 0; i < tabs.size(); ++i)
-    {
-        if (!isDirtyTab(i))
-            continue;
-        TabDocument &t = *tabs[i];
-        if (t.filename.empty() || t.filename == "untitled")
-            continue; // no path → needs a Save-As; can't autosave silently
-        try
-        {
-            // No trailing-whitespace strip here — autosave must not move the
-            // caret mid-edit. A manual save still strips.
-            std::ofstream stream(t.filename.c_str());
-            stream << t.editor.GetText();
-            stream.close();
-            t.version = t.editor.GetUndoIndex();
-            t.syncedText = t.editor.GetText();
-            recordDiskMtime(t); // our own write — keep the external-change watch quiet
-        }
-        catch (...)
-        {
-            // leave it dirty; retry next tick
-        }
-    }
+    saveDirtyTitledDocs();
 }
 
 void Editor::renderNavigationPanel()
@@ -8727,6 +8735,8 @@ void Editor::renderUpdateDialog()
         {
             if (ImGui::Button("Restart Now", ImVec2(120.0f, 0.0f)))
             {
+                saveDirtyTitledDocs();   // don't lose on-disk edits on the silent exit
+                saveSettings();
                 updater::relaunch(updater::runningExePath());
                 done = true; // exit so the freshly-swapped exe takes over
             }
@@ -8856,8 +8866,9 @@ void Editor::renderToasts()
     else if (clickedAction == 0)
     {
         writeToastReply(clickedText);       // generic toast → reply outbox
-        pushToast("Reply sent to Claude", IM_COL32(120, 200, 120, 255));
+        pushToast("Reply sent to Claude", IM_COL32(120, 200, 120, 255), 2); // 2 = dismiss-only
     }
+    // clickedAction == 2 (system confirmations): click only dismisses, no re-reply.
 }
 
 //  Append an external-change event to the persistent activity feed.

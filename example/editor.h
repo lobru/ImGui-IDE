@@ -196,6 +196,7 @@ private:
 	int    prefAutoSaveSec = 30;
 	double lastAutoSave    = 0.0;   // ImGui::GetTime() of the last sweep
 	void   autoSaveTick();
+	int    saveDirtyTitledDocs();   // write all dirty on-disk docs; returns count saved
 
 	// index = -1  → append at end
 	// split = true → request the new doc be docked next to the active one
