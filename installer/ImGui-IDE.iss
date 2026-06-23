@@ -45,6 +45,7 @@ Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; clean checkout always packages them (independent of the build's POST_BUILD copy).
 Source: "..\example\languages\*"; DestDir: "{app}\languages"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\example\app.ico";      DestDir: "{app}"; Flags: ignoreversion
+Source: "..\CHANGELOG.md";         DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}";            Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"

@@ -516,6 +516,7 @@ private:
 	// editor toggles. Persisted to <configDir>/settings.json (minimal
 	// hand-rolled writer; no JSON dep).
 	bool settingsVisible = false;
+	bool keybindCapturing = false;   // Settings keybind capture is listening — block app shortcuts
 	bool settingsFocusRequest = false;   // un-collapse + focus the settings window next frame
 	// Middle-mouse pan/scroll for non-editor windows (nav tree, settings). Mirrors
 	// the editor widget's pan using the public scroll API; tracks its own per-frame

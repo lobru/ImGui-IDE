@@ -1652,7 +1652,6 @@ void TextEditor::handleKeyboardInputs()
 		auto isCtrlShift = !ctrl && shift && !alt && super;
 		auto isOptionalAltShift = !ctrl;
 #else
-		auto isShiftAlt = !ctrl && shift && alt;
 		auto isOptionalCtrlShift = !alt;
 		(void)isOptionalCtrlShift;  // currently unused on non-Apple builds
 #endif
@@ -1717,11 +1716,14 @@ void TextEditor::handleKeyboardInputs()
 		else if (isOptionalAltShift && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) { moveLeft(shift, super, alt); }
 		else if (isOptionalAltShift && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { moveRight(shift, super, alt); }
 #else
-		// Windows/Linux: Ctrl = word jump, Alt = subword jump, Shift = select.
-		else if (isShiftAlt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) { shrinkSelectionsToCurlyBrackets(); }
-		else if (isShiftAlt && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { growSelectionsToCurlyBrackets(); }
-		else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) { moveLeft(shift, ctrl, alt); }
-		else if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { moveRight(shift, ctrl, alt); }
+		// Windows/Linux: Ctrl = word jump, Alt = subword jump, Shift = select — so
+		// Alt+Shift+arrow is subword-select (Sublime-style). Ctrl+Alt+arrow is NOT
+		// consumed here: it's left for the host app's nav back/forward. Bracket
+		// grow/shrink moved to Ctrl+Shift+[ / ] so it no longer steals subword-select.
+		else if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) { shrinkSelectionsToCurlyBrackets(); }
+		else if (ctrl && shift && !alt && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) { growSelectionsToCurlyBrackets(); }
+		else if (!(ctrl && alt) && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) { moveLeft(shift, ctrl, alt); }
+		else if (!(ctrl && alt) && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) { moveRight(shift, ctrl, alt); }
 #endif
 
 		else if (isOptionalShift && ImGui::IsKeyPressed(ImGuiKey_PageUp)) { moveUp(visibleLines - 2, shift); }
@@ -7438,11 +7440,14 @@ void TextEditor::renderFindReplace(ImVec2 pos, float width)
 			}
 			else if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
 			{
-				// Enter inside the find textbox advances to the next match
-				// and re-focuses the input so the user can keep hitting Enter
-				// to walk through occurrences instead of accidentally typing
-				// newlines into the editor.
-				if (!findText.empty()) findNext();
+				// Enter inside the find textbox advances to the next match (Shift+Enter
+				// the previous) and re-focuses the input so the user can keep walking
+				// occurrences instead of typing newlines into the editor.
+				if (!findText.empty())
+				{
+					if (ImGui::IsKeyDown(ImGuiMod_Shift)) findPrevious();
+					else findNext();
+				}
 				focusOnFind = true;
 			}
 		}
@@ -7464,6 +7469,20 @@ void TextEditor::renderFindReplace(ImVec2 pos, float width)
 		{
 			ImGui::BeginDisabled();
 		}
+
+		// Prev / next match step buttons (Shift+Enter / Enter also do this).
+		ImGui::SameLine();
+		if (ImGui::Button("<##findprev", ImVec2(optionWidth, 0.0f)))
+		{
+			findPrevious();
+		}
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Previous match (Shift+Enter)");
+		ImGui::SameLine();
+		if (ImGui::Button(">##findnext", ImVec2(optionWidth, 0.0f)))
+		{
+			findNext();
+		}
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip("Next match (Enter)");
 
 		ImGui::SameLine();
 
@@ -7873,6 +7892,51 @@ void TextEditor::findNext()
 	if (findText.size())
 	{
 		selectNextOccurrenceOf(findText, caseSensitiveFind, wholeWordFind);
+		focusOnEditor = true;
+		focusOnFind = false;
+	}
+}
+
+
+//
+//	TextEditor::findPrevious
+//
+
+void TextEditor::selectPreviousOccurrenceOf(const std::string_view& text, bool caseSensitive, bool wholeWord)
+{
+	if (text.empty()) return;
+	auto less = [](Coordinate a, Coordinate b) {
+		return a.line != b.line ? a.line < b.line : a.column < b.column; };
+	// document.findText only searches forward (wrapping). To go backward, scan all
+	// matches once and keep the last one strictly before the current selection;
+	// if none precede it, wrap to the final match.
+	Coordinate target = cursors.getCurrent().getSelectionStart();
+	Coordinate from{ 0, 0 }, s, e, bestS, bestE, lastS, lastE;
+	bool haveBest = false, haveLast = false, first = true;
+	int n = 0;
+	while (document.findText(from, text, caseSensitive, wholeWord, s, e))
+	{
+		if (!first && !less(from, e)) break;   // no forward progress → wrapped
+		first = false;
+		lastS = s; lastE = e; haveLast = true;
+		if (less(s, target)) { bestS = s; bestE = e; haveBest = true; }
+		from = e;
+		if (++n > 100000) break;               // pathological safety bound
+	}
+	Coordinate rs, re;
+	if (haveBest) { rs = bestS; re = bestE; }
+	else if (haveLast) { rs = lastS; re = lastE; }   // none before cursor → wrap to last
+	else return;
+	scrollToLine(rs.line, Scroll::alignMiddle);
+	cursors.setCursor(rs, re);
+	makeCursorVisible();
+}
+
+void TextEditor::findPrevious()
+{
+	if (findText.size())
+	{
+		selectPreviousOccurrenceOf(findText, caseSensitiveFind, wholeWordFind);
 		focusOnEditor = true;
 		focusOnFind = false;
 	}

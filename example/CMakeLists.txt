@@ -137,7 +137,11 @@ add_custom_command(TARGET example POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
 		"${CMAKE_CURRENT_SOURCE_DIR}/languages"
 		"$<TARGET_FILE_DIR:example>/languages"
-	COMMENT "Syncing languages/ next to example.exe")
+	# Also drop CHANGELOG.md next to the exe so Help > Changelog opens it in-app.
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		"${CMAKE_CURRENT_SOURCE_DIR}/../CHANGELOG.md"
+		"$<TARGET_FILE_DIR:example>/CHANGELOG.md"
+	COMMENT "Syncing languages/ + CHANGELOG.md next to example.exe")
 
 # ── Headless logic self-test ─────────────────────────────────────────────
 # A tiny console executable that exercises the pure (non-UI) code paths —

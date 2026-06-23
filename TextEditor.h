@@ -1554,6 +1554,7 @@ protected:
 	void goToDefinitionOf(const std::string_view& text, bool caseSensitive = true);
 	void selectFirstOccurrenceOf(const std::string_view& text, bool caseSensitive, bool wholeWord);
 	void selectNextOccurrenceOf(const std::string_view& text, bool caseSensitive, bool wholeWord);
+	void selectPreviousOccurrenceOf(const std::string_view& text, bool caseSensitive, bool wholeWord);
 	void selectAllOccurrencesOf(const std::string_view& text, bool caseSensitive, bool wholeWord);
 	void addNextOccurrence();
 	void selectAllOccurrences();
@@ -1566,6 +1567,7 @@ protected:
 	void closeFindReplace();
 	void find();
 	void findNext();
+	void findPrevious();
 	void findAll();
 	void replace();
 	void replaceAll();
