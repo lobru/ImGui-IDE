@@ -177,6 +177,19 @@ public:
 	void setFocusMode(bool on);   // public so main.cpp can honor --focus at launch
 private:
 
+	// Effective nav/browse root: projectRoot if set, else the active document's
+	// folder, else empty. Never the process CWD — a shell/Explorer launch can put
+	// that at C:\Windows\System32, and walking it freezes the nav.
+	std::filesystem::path workspaceRoot() const;
+
+	// ── Autosave ──────────────────────────────────────────────────────────────
+	// Periodically writes dirty documents that already have a path (skips
+	// "untitled" — those need a Save-As). Off by default; interval persisted.
+	bool   prefAutoSave    = false;
+	int    prefAutoSaveSec = 30;
+	double lastAutoSave    = 0.0;   // ImGui::GetTime() of the last sweep
+	void   autoSaveTick();
+
 	// index = -1  → append at end
 	// split = true → request the new doc be docked next to the active one
 	TabDocument& newTab(const std::string& path, bool split = false, int index = -1);

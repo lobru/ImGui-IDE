@@ -1589,7 +1589,9 @@ bool Editor::navDirHasMatch(const std::filesystem::path &dir) const
     {
         navMatchFilterCached = navFilterBuf;
         navMatchDirs.clear();
-        auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
+        auto root = workspaceRoot();   // never CWD (could be System32)
+        if (root.empty())
+            return true;
         std::error_code ec;
         int budget = 200000;
         for (auto it = std::filesystem::recursive_directory_iterator(
@@ -2283,6 +2285,62 @@ void Editor::middleMousePanScroll(int windowKey)
         ImGui::SetScrollY(ImGui::GetScrollY() - panSign * delta.y * accel);
 }
 
+std::filesystem::path Editor::workspaceRoot() const
+{
+    if (!projectRoot.empty())
+        return projectRoot;
+    // No project: root at the active document's folder if it's a real on-disk
+    // file. Never the process CWD — a command-line / Explorer launch can leave
+    // that at C:\Windows\System32, and walking it freezes the nav.
+    if (!tabs.empty())
+    {
+        size_t at = (size_t) activeTab < tabs.size() ? (size_t) activeTab : 0;
+        const std::string &fn = tabs[at]->filename;
+        if (!fn.empty() && fn != "untitled")
+        {
+            std::error_code ec;
+            auto p = std::filesystem::path(fn).parent_path();
+            if (!p.empty() && std::filesystem::is_directory(p, ec))
+                return p;
+        }
+    }
+    return {};
+}
+
+void Editor::autoSaveTick()
+{
+    if (!prefAutoSave || tabs.empty())
+        return;
+    double now = ImGui::GetTime();
+    int interval = prefAutoSaveSec < 5 ? 5 : prefAutoSaveSec;
+    if (now - lastAutoSave < (double) interval)
+        return;
+    lastAutoSave = now;
+    for (size_t i = 0; i < tabs.size(); ++i)
+    {
+        if (!isDirtyTab(i))
+            continue;
+        TabDocument &t = *tabs[i];
+        if (t.filename.empty() || t.filename == "untitled")
+            continue; // no path → needs a Save-As; can't autosave silently
+        try
+        {
+            // No trailing-whitespace strip here — autosave must not move the
+            // caret mid-edit. A manual save still strips.
+            std::ofstream stream(t.filename.c_str());
+            stream << t.editor.GetText();
+            stream.close();
+            t.version = t.editor.GetUndoIndex();
+            t.syncedText = t.editor.GetText();
+            recordDiskMtime(t); // our own write — keep the external-change watch quiet
+        }
+        catch (...)
+        {
+            // leave it dirty; retry next tick
+        }
+    }
+}
+
 void Editor::renderNavigationPanel()
 {
     if (!navPanelVisible)
@@ -2290,7 +2348,7 @@ void Editor::renderNavigationPanel()
     ImGui::SetNextWindowSize(ImVec2(180.0f, 480.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Navigation##projectNav", &navPanelVisible))
     {
-        auto root = projectRoot.empty() ? std::filesystem::current_path() : projectRoot;
+        auto root = workspaceRoot();   // projectRoot / active doc's folder / none (never CWD)
 
         // A nav edit (rename/move/delete/paste) invalidated the cached listings.
         // Clear here — at the top, before anything iterates a cached vector — so a
@@ -6554,6 +6612,10 @@ void Editor::loadSettings()
                 prefAutoUpdate = (v == "1" || v == "true");
             else if (k == "last_update_check")
                 lastUpdateCheckEpoch = std::strtoll(v.c_str(), nullptr, 10);
+            else if (k == "auto_save")
+                prefAutoSave = (v == "1" || v == "true");
+            else if (k == "auto_save_sec")
+                prefAutoSaveSec = std::atoi(v.c_str());
             else if (k == "pan_scroll_accel")
                 prefPanScrollAccel = std::strtof(v.c_str(), nullptr);
             else if (k == "word_wrap")
@@ -6683,6 +6745,8 @@ void Editor::saveSettings()
     f << "pan_scroll_accel=" << prefPanScrollAccel << "\n";
     f << "auto_update=" << (prefAutoUpdate ? "1" : "0") << "\n";
     f << "last_update_check=" << lastUpdateCheckEpoch << "\n";
+    f << "auto_save=" << (prefAutoSave ? "1" : "0") << "\n";
+    f << "auto_save_sec=" << prefAutoSaveSec << "\n";
     f << "word_wrap=" << (prefWordWrap ? "1" : "0") << "\n";
     f << "wrap_width=" << prefWrapWidthPx << "\n";
     f << "fps_limit=" << prefFpsLimit << "\n";
@@ -6894,6 +6958,16 @@ void Editor::renderSettings()
                     ImGui::SetTooltip("Code > Format Document (Alt+Shift+F) runs clang-format.\nChecked = brace on next line (Allman); unchecked = attached (same line).");
                 ImGui::Checkbox("Show FPS on status bar", &prefShowFps);
                 ImGui::Checkbox("Ctrl + scroll wheel adjusts editor font size", &prefCtrlScrollZoom);
+                ImGui::Checkbox("Autosave", &prefAutoSave);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Periodically save documents that already have a path.\nNew (untitled) buffers are skipped — they need Save As first.");
+                if (prefAutoSave)
+                {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    if (ImGui::SliderInt("every (s)", &prefAutoSaveSec, 5, 300))
+                        lastAutoSave = 0.0; // apply the new interval promptly
+                }
                 ImGui::Checkbox("Invert middle-mouse pan direction", &prefInvertPan);
                 ImGui::SetNextItemWidth(220.0f);
                 ImGui::SliderFloat("Pan/scroll acceleration", &prefPanScrollAccel, 0.0f, 4.0f, "%.2f");
@@ -8851,6 +8925,7 @@ void Editor::render()
     checkExternalChanges(); // reload clean docs / flag conflicts when disk changes under us
     pollToastInbox();       // external toast API: <configDir>/toasts/* → on-screen toasts
     pollUpdates();          // GitHub release check (auto 12 h / manual) + download drain
+    autoSaveTick();         // periodic save of dirty, on-disk documents (if enabled)
 
     renderDockedDocuments();
     renderNavigationPanel();
@@ -11785,7 +11860,31 @@ void Editor::renderConfirmQuit()
 
     if (ImGui::BeginPopupModal("Quit Editor?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::Text("You have unsaved changes!\nDo you really want to quit?\n\n");
+        ImGui::Text("Unsaved changes in these documents:");
+        ImGui::Spacing();
+        int dirtyCount = 0;
+        for (size_t i = 0; i < tabs.size(); ++i)
+            if (isDirtyTab(i))
+                ++dirtyCount;
+        // Scroll if there are a lot; otherwise the popup just grows to fit.
+        float rowH = ImGui::GetTextLineHeightWithSpacing();
+        float listH = (dirtyCount > 10 ? 10.0f : (float) (dirtyCount < 1 ? 1 : dirtyCount)) * rowH;
+        ImGui::BeginChild("##unsavedList", ImVec2(360.0f, listH), ImGuiChildFlags_Borders);
+        for (size_t i = 0; i < tabs.size(); ++i)
+        {
+            if (!isDirtyTab(i))
+                continue;
+            const std::string &fn = tabs[i]->filename;
+            std::string name = (fn.empty() || fn == "untitled")
+                                   ? "untitled"
+                                   : std::filesystem::path(fn).filename().string();
+            ImGui::BulletText("%s", name.c_str());
+            if (fn != "untitled" && !fn.empty() && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", fn.c_str());
+        }
+        ImGui::EndChild();
+        ImGui::Spacing();
+        ImGui::TextDisabled("Quit anyway and lose these edits?");
         ImGui::Separator();
         static constexpr float buttonWidth = 80.0f;
         ImGui::Indent(ImGui::GetContentRegionAvail().x - buttonWidth * 2.0f - ImGui::GetStyle().ItemSpacing.x);
