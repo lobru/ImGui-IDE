@@ -8502,11 +8502,27 @@ void Editor::mergeExternalChange(TabDocument &t)
 }
 
 //  Queue a transient corner notification.
-void Editor::pushToast(const std::string &text, ImU32 accent)
+void Editor::pushToast(const std::string &text, ImU32 accent, int action)
 {
-    toasts.push_back({text, ImGui::GetTime() + 5.0, accent});
+    toasts.push_back({text, ImGui::GetTime() + 5.0, accent, action});
     if (toasts.size() > 6)
         toasts.erase(toasts.begin());
+}
+
+// Clicking a (non-update) toast drops its text into <configDir>/replies/ — the
+// outbox half of the feedback bridge. A Claude Code watcher / the imgui-ide-bridge
+// plugin can tail this folder to receive in-editor replies.
+void Editor::writeToastReply(const std::string &text)
+{
+    std::error_code ec;
+    auto dir = userConfigDir() / "replies";
+    std::filesystem::create_directories(dir, ec);
+    static int seq = 0;
+    char name[64];
+    std::snprintf(name, sizeof(name), "reply_%lld_%d.txt", (long long) std::time(nullptr), seq++);
+    std::ofstream f(dir / name, std::ios::binary | std::ios::trunc);
+    if (f)
+        f << text;
 }
 
 // External toast API. Any process can show a toast in the running editor by
@@ -8620,7 +8636,7 @@ void Editor::pollUpdates()
         updateAvailable = newer;
         if (newer)
         {
-            pushToast("\xe2\x86\x91 Update available: " + updateInfo.tag, IM_COL32(120, 200, 120, 255));
+            pushToast("\xe2\x86\x91 Update available: " + updateInfo.tag + " (click)", IM_COL32(120, 200, 120, 255), 1);
             showUpdateDialog = true;
         }
         else if (updateCheckManual)
@@ -8788,11 +8804,15 @@ void Editor::renderToasts()
     const float pad = 14.0f;
     float y = vp->WorkPos.y + pad;
 
+    // No NoInputs — toasts are clickable (act on / dismiss). They stay top-right,
+    // small, and non-focus-stealing, so they don't get in the way.
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoDocking;
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking;
 
+    int clickedAction = -1;        // dispatch AFTER the loop (avoids mutating toasts mid-iterate)
+    std::string clickedText;
     for (size_t i = 0; i < toasts.size(); ++i)
     {
         auto &to = toasts[i];
@@ -8814,11 +8834,29 @@ void Editor::renderToasts()
             ImGui::PushStyleColor(ImGuiCol_Text, accent);
             ImGui::TextUnformatted(to.text.c_str());
             ImGui::PopStyleColor();
+            if (ImGui::IsWindowHovered())
+            {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    clickedAction = to.action;
+                    clickedText = to.text;
+                    to.expiry = now; // dismiss this toast next frame
+                }
+            }
             y += ImGui::GetWindowHeight() + 8.0f;
         }
         ImGui::End();
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
+    }
+
+    if (clickedAction == 1)
+        showUpdateDialog = true;            // update toast → open the updater
+    else if (clickedAction == 0)
+    {
+        writeToastReply(clickedText);       // generic toast → reply outbox
+        pushToast("Reply sent to Claude", IM_COL32(120, 200, 120, 255));
     }
 }
 

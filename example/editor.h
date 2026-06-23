@@ -137,10 +137,13 @@ class Editor {
 	// Transient corner notifications — used to make external edits loud. Each
 	// toast fades out after `expiry`. pushToast() enqueues; renderToasts()
 	// draws them stacked over the main viewport.
-	struct Toast { std::string text; double expiry; ImU32 accent; };
+	// action: 0 = clicking writes the text to the reply outbox (feedback bridge),
+	// 1 = clicking opens the Update dialog. Toasts are click-to-act + click-to-dismiss.
+	struct Toast { std::string text; double expiry; ImU32 accent; int action = 0; };
 	std::vector<Toast> toasts;
-	void pushToast(const std::string& text, ImU32 accent);
+	void pushToast(const std::string& text, ImU32 accent, int action = 0);
 	void renderToasts();
+	void writeToastReply(const std::string& text);   // -> <configDir>/replies/* (bridge outbox)
 	// External toast API: any process drops a text file in <configDir>/toasts/ and
 	// it shows as a toast here (optional "info|warn|error|success" severity prefix,
 	// then the message). Polled (throttled) once per frame; files are consumed.
