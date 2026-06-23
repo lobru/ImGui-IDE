@@ -348,6 +348,8 @@ Editor::TabDocument &Editor::newTab()
     t->diff.SetPanScrollAccel(prefPanScrollAccel);
     t->editor.SetWordWrap(prefWordWrap);
     t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
+    if (focusMode)
+        t->editor.SetShowScrollbarMiniMapEnabled(false); // honor focus mode for tabs opened while focused
     applyKeybindOverridesToEditor(t->editor); // user keybind remaps into this editor
     tabs.push_back(std::move(t));
     activeTab = tabs.size() - 1;

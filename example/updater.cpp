@@ -79,6 +79,16 @@ bool httpGet(const std::wstring& url, int& status, std::string& body, std::strin
                             WINHTTP_HEADER_NAME_BY_INDEX, &sc, &scl, WINHTTP_NO_HEADER_INDEX);
         status = (int) sc;
 
+        // Content-Length (if the server sends one) lets us detect a truncated
+        // download — critical, since applyUpdate would otherwise swap in a partial
+        // (unrunnable) exe and brick the install.
+        DWORD64 contentLen = 0;
+        DWORD cll = sizeof(contentLen);
+        BOOL haveLen = WinHttpQueryHeaders(
+            hReq, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER64,
+            WINHTTP_HEADER_NAME_BY_INDEX, &contentLen, &cll, WINHTTP_NO_HEADER_INDEX);
+        unsigned long long total = 0;
+
         for (;;)
         {
             DWORD avail = 0;
@@ -88,10 +98,19 @@ bool httpGet(const std::wstring& url, int& status, std::string& body, std::strin
             DWORD read = 0;
             if (!WinHttpReadData(hReq, buf.data(), avail, &read) || read == 0)
                 break;
+            total += read;
             if (sink)
                 sink->write(buf.data(), (std::streamsize) read);
             else
                 body.append(buf.data(), read);
+        }
+
+        // Truncation guard for file downloads only (API JSON has no fixed length here).
+        if (sink && haveLen && contentLen > 0 && total != contentLen)
+        {
+            err = "incomplete download (" + std::to_string(total) + "/" +
+                  std::to_string(contentLen) + " bytes)";
+            ok = FALSE;
         }
     }
     else
