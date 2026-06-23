@@ -787,7 +787,17 @@ private:
 	bool        gitCommitRequest  = false;
 	char        gitCommitMsg[1024] = {};
 	bool        gitDiscardRequest = false;
-	void        renderGitDialogs();   // commit message + discard confirm modals
+	bool        gitCloneRequest   = false;
+	char        gitCloneUrl[512]  = {};
+	char        gitCloneDir[512]  = {};   // parent directory to clone into
+	bool        gitRevCompareRequest = false;
+	char        gitRevBuf[128]    = "HEAD";   // revision to compare the active file against
+	void        renderGitDialogs();   // commit / discard / clone / revision-compare modals
+	void        cloneRepository(const std::string& url, const std::string& parentDir);
+	void        compareActiveFileWithRevision(const std::string& rev);
+	// Detect the IDE's own source repo (walks up from the exe / cwd looking for
+	// example/editor.cpp). Used by Dev Tools to auto-open it as the project.
+	std::filesystem::path findSelfRepoRoot() const;
 
 	// Project-wide Go to Definition — greps files under projectRoot (or the
 	// active doc's directory) for definition patterns (class/struct/interface/

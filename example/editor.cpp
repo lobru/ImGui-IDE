@@ -5859,7 +5859,23 @@ void Editor::renderDevTools()
 
         ImGui::SeparatorText("Where is this feature's code?");
         ImGui::TextWrapped("Click a row to jump to the function (project-wide go-to-def). "
-                           "Open the editor's own repo as the project for these to resolve.");
+                           "Clicking auto-opens the ImGui-IDE source repo as the project if it isn't already.");
+        std::error_code selfec;
+        bool selfRepoOpen = !projectRoot.empty() &&
+                            std::filesystem::exists(projectRoot / "example" / "editor.cpp", selfec);
+        if (!selfRepoOpen)
+        {
+            auto self = findSelfRepoRoot();
+            if (!self.empty())
+            {
+                if (ImGui::SmallButton("Open ImGui-IDE repo"))
+                    setProjectRoot(self);
+                ImGui::SameLine();
+                ImGui::TextDisabled("(%s)", self.filename().string().c_str());
+            }
+            else
+                ImGui::TextDisabled("(source repo not found next to this build)");
+        }
         ImGui::Spacing();
 
         struct DevLoc
@@ -5916,7 +5932,18 @@ void Editor::renderDevTools()
                 ImGui::TableNextColumn();
                 ImGui::PushID(i);
                 if (ImGui::Selectable(locs[i].feature, false, ImGuiSelectableFlags_SpanAllColumns))
+                {
+                    // Auto-open the IDE's own repo so these project-wide lookups resolve.
+                    std::error_code rec;
+                    if (projectRoot.empty() ||
+                        !std::filesystem::exists(projectRoot / "example" / "editor.cpp", rec))
+                    {
+                        auto self = findSelfRepoRoot();
+                        if (!self.empty())
+                            setProjectRoot(self);
+                    }
                     goToDefinitionProjectWide(locs[i].symbol, false);
+                }
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("%s  -  %s", locs[i].symbol, locs[i].file);
                 ImGui::PopID();
@@ -10542,10 +10569,29 @@ void Editor::renderMenuBar()
                 {
                     gitDiscardRequest = true;
                 }
+                if (ImGui::MenuItem("Compare File with Revision…", nullptr, false, inRepo && !tabs.empty()))
+                {
+                    std::snprintf(gitRevBuf, sizeof(gitRevBuf), "HEAD");
+                    gitRevCompareRequest = true;
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Diff Against File…"))
                 {
                     openDiffOtherDialog();
+                }
+                if (ImGui::MenuItem("Clone Repository from URL…"))
+                {
+                    gitCloneUrl[0] = '\0';
+                    if (gitCloneDir[0] == '\0')
+                    {
+                        // default parent = current project's parent, else cwd
+                        std::error_code dec;
+                        auto parent = !projectRoot.empty() ? projectRoot.parent_path()
+                                                           : std::filesystem::current_path();
+                        std::snprintf(gitCloneDir, sizeof(gitCloneDir), "%s", parent.string().c_str());
+                        (void) dec;
+                    }
+                    gitCloneRequest = true;
                 }
                 ImGui::EndMenu();
             }
@@ -10919,6 +10965,105 @@ void Editor::runGit(const std::string &args)
     gitPollTime = -1000.0; // force the status indicator to refresh after the action
 }
 
+void Editor::cloneRepository(const std::string &url, const std::string &parentDir)
+{
+    if (url.empty())
+    {
+        showError("Clone: enter a repository URL.");
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::path parent = parentDir.empty() ? std::filesystem::current_path()
+                                                     : std::filesystem::path(parentDir);
+    std::filesystem::create_directories(parent, ec);
+    // repo name = last URL segment minus a trailing .git
+    std::string name = url;
+    auto slash = name.find_last_of("/\\");
+    if (slash != std::string::npos)
+        name = name.substr(slash + 1);
+    if (name.size() > 4 && name.compare(name.size() - 4, 4, ".git") == 0)
+        name.resize(name.size() - 4);
+    if (name.empty())
+        name = "repo";
+    auto dest = parent / name;
+    runCommandInOutputPanel("git clone \"" + url + "\" \"" + dest.string() + "\"", parent.string());
+    // Root the nav at the destination; it auto-populates as files land (cache TTL).
+    setProjectRoot(dest);
+    pushToast("Cloning into " + dest.string() + " \xe2\x80\xa6", IM_COL32(150, 160, 255, 255));
+    gitPollTime = -1000.0;
+}
+
+void Editor::compareActiveFileWithRevision(const std::string &rev)
+{
+    if (tabs.empty())
+        return;
+    auto &t = doc();
+    std::string root = gitRoot();
+    if (root.empty())
+    {
+        showError("Not a git repository.");
+        return;
+    }
+    if (t.filename.empty() || t.filename == "untitled")
+    {
+        showError("Save the file before comparing against a revision.");
+        return;
+    }
+    std::error_code ec;
+    auto rel = std::filesystem::relative(t.filename, root, ec);
+    if (ec || rel.empty())
+    {
+        showError("Active file is outside the repository.");
+        return;
+    }
+    std::string relg = rel.generic_string(); // git wants forward slashes
+    std::string r = rev.empty() ? std::string("HEAD") : rev;
+#ifdef _WIN32
+    std::string cmd = "git -C \"" + root + "\" show \"" + r + ":" + relg + "\" 2>NUL";
+    FILE *p = _popen(cmd.c_str(), "rb");
+#else
+    std::string cmd = "git -C \"" + root + "\" show \"" + r + ":" + relg + "\" 2>/dev/null";
+    FILE *p = _popen(cmd.c_str(), "r");
+#endif
+    std::string content;
+    if (p)
+    {
+        char buf[8192];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), p)) > 0)
+            content.append(buf, n);
+        _pclose(p);
+    }
+    if (content.empty())
+    {
+        showError("git show " + r + ":" + relg + " returned nothing (new file, or unknown revision).");
+        return;
+    }
+    t.diff.SetLanguage(t.editor.GetLanguage());
+    t.diff.SetText(content, t.editor.GetText()); // left = revision, right = current buffer
+    dialogViewportId = ImGui::GetMainViewport()->ID;
+    dialogNeedsPlacement = true;
+    state = State::diff;
+}
+
+std::filesystem::path Editor::findSelfRepoRoot() const
+{
+    std::error_code ec;
+    std::filesystem::path starts[] = {get_module_path().parent_path(),
+                                      std::filesystem::current_path()};
+    for (auto start : starts)
+    {
+        for (auto d = start; !d.empty(); d = d.parent_path())
+        {
+            if (std::filesystem::exists(d / "example" / "editor.cpp", ec))
+                return d;
+            if (d == d.parent_path())
+                break;
+        }
+    }
+    return {};
+}
+
 // Commit-message + discard-confirm modals (rendered at render() top level so they
 // pop out properly; anchored to the main viewport like the other dialogs).
 void Editor::renderGitDialogs()
@@ -10979,6 +11124,69 @@ void Editor::renderGitDialogs()
         if (ImGui::Button("Discard", ImVec2(90.0f, 0.0f)))
         {
             runGit("checkout -- .");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // Clone a repository from a URL, then open it as the project.
+    if (gitCloneRequest)
+    {
+        ImGui::OpenPopup("Clone Repository");
+        gitCloneRequest = false;
+        ImGuiViewport *vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
+    if (ImGui::BeginPopupModal("Clone Repository", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextDisabled("Runs git clone, then opens the result as the project.");
+        ImGui::SetNextItemWidth(440.0f);
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        ImGui::InputTextWithHint("##cloneurl", "https://github.com/user/repo.git", gitCloneUrl, sizeof(gitCloneUrl));
+        ImGui::SetNextItemWidth(440.0f);
+        ImGui::InputTextWithHint("##clonedir", "parent directory to clone into", gitCloneDir, sizeof(gitCloneDir));
+        ImGui::Separator();
+        bool hasUrl = gitCloneUrl[0] != '\0';
+        if (!hasUrl)
+            ImGui::BeginDisabled();
+        if (ImGui::Button("Clone", ImVec2(90.0f, 0.0f)))
+        {
+            cloneRepository(gitCloneUrl, gitCloneDir);
+            ImGui::CloseCurrentPopup();
+        }
+        if (!hasUrl)
+            ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    // Compare the active file against a git revision (git show <rev>:<path>).
+    if (gitRevCompareRequest)
+    {
+        ImGui::OpenPopup("Compare with Revision");
+        gitRevCompareRequest = false;
+        ImGuiViewport *vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
+    if (ImGui::BeginPopupModal("Compare with Revision", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextDisabled("Diffs the active file against a revision (HEAD, a tag,\nbranch, or commit sha).");
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        bool go = ImGui::InputText("revision", gitRevBuf, sizeof(gitRevBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::Separator();
+        if (ImGui::Button("Compare", ImVec2(90.0f, 0.0f)) || go)
+        {
+            compareActiveFileWithRevision(gitRevBuf);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
