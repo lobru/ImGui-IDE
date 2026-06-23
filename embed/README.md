@@ -100,7 +100,7 @@ for the embed DLL - bind the *plugin's* context instead of some host app's:
 A skeleton lives in `hosts/uevr/`. It is a template against the
 ExamplePlugin layout, not a drop-in build - check the TODO markers.
 
-### ReShade (shader editor add-on) - core unblocked, add-on next
+### ReShade (shader editor add-on) - core unblocked, skeleton in hosts/reshade/
 
 ReShade add-ons do not get the host's `ImGuiContext*`. Overlay drawing goes
 through ReShade's **imgui function table** (`reshade_overlay.hpp`), which
@@ -116,11 +116,23 @@ IME positioning, the scrollbar minimap, the diff view's custom synced
 horizontal scrollbars, and the autocomplete popup z-order nudge
 (`CalcItemSize` was replaced with a public-API replica outright).
 
-Remaining for a working add-on: compile the core against ReShade's
-`reshade_overlay.hpp` at the imgui version that ReShade release pins (any
-signature deltas surface at compile time), then the add-on itself -
-`register_overlay` "Shader Editor", enumerate the active preset's effect files
-via the `effect_runtime` API, save + force effect reload. Windows build.
+A starting template lives in `hosts/reshade/reshade_addon.cpp` (same TEMPLATE
+convention as `hosts/uevr/` - `#if 0` guarded, TODO markers). It has the add-on
+scaffold ready: `DllMain` -> `register_addon` / `register_overlay` "Shader
+Editor", lazy `te_bind_imgui` to ReShade's context (with the
+`te_imgui_version_num()` guard), the `te_render` editor, and load/save of the
+selected `.fx`. The TODOs are the version-specific ReShade bits that can only be
+validated against a real ReShade install + a running game:
+
+- enumerate the active preset's effect files via the `effect_runtime` API
+  (`enumerate_techniques` -> effect name -> resolve path);
+- force the edited effect to recompile after save (the `reload_effect` path);
+- the build itself: compile this file + the core (`TE_NO_IMGUI_INTERNAL=1`)
+  against the ReShade SDK headers at ReShade's pinned ImGui version, supplying
+  ImGui via `reshade_overlay.hpp` (no bundled `imgui.cpp`), output `*.addon64`.
+
+Because it needs hardware + a game to verify, it is intentionally left as a
+fill-in-the-TODOs template rather than a CI-built target.
 
 ### Web (Emscripten)
 
