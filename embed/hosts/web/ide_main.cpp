@@ -120,6 +120,19 @@ struct App {
 	// UI
 	float treeWidth = 260.0f;
 	bool darkTheme = true;
+
+	// Editor preferences (ported from the desktop Settings window). Applied to
+	// every editor instance — open tabs and newly created ones — and persisted
+	// to localStorage. Only the subset the embed C API exposes.
+	struct Prefs {
+		int   tabSize              = 4;      // te_set_tab_size: 1..8
+		float lineSpacing          = 1.0f;   // te_set_line_spacing: 1..2
+		bool  showLineNumbers      = true;
+		bool  showWhitespace       = false;
+		bool  showMinimap          = true;
+		bool  showMatchingBrackets = true;
+	} prefs;
+
 	std::string status;
 	bool statusIsError = false;
 	double statusUntil = 0.0;
@@ -138,6 +151,55 @@ static void persistConfig() {
 	js_store("ide.repo", app.cfg.repo.c_str());
 	js_store("ide.branch", app.cfg.branch.c_str());
 	js_store("ide.token", app.cfg.token.c_str());
+}
+
+//
+//	editor preferences — apply to every editor + persist
+//
+
+//	Push the current prefs (+ theme palette) into one editor instance.
+static void applyPrefs(te_editor* ed) {
+	if (!ed) {
+		return;
+	}
+
+	te_set_palette(ed, app.darkTheme ? TE_PALETTE_DARK : TE_PALETTE_LIGHT);
+	te_set_tab_size(ed, app.prefs.tabSize);
+	te_set_line_spacing(ed, app.prefs.lineSpacing);
+	te_set_show_line_numbers(ed, app.prefs.showLineNumbers ? 1 : 0);
+	te_set_show_whitespace(ed, app.prefs.showWhitespace ? 1 : 0);
+	te_set_show_minimap(ed, app.prefs.showMinimap ? 1 : 0);
+	te_set_show_matching_brackets(ed, app.prefs.showMatchingBrackets ? 1 : 0);
+}
+
+//	Re-apply prefs to all open tabs (after a settings change).
+static void applyPrefsAll() {
+	for (auto& t : app.tabs) {
+		applyPrefs(t.ed);
+	}
+}
+
+static void persistPrefs() {
+	js_store("ide.theme", app.darkTheme ? "1" : "0");
+	js_store("ide.tabSize", std::to_string(app.prefs.tabSize).c_str());
+	js_store("ide.lineSpacing", std::to_string(app.prefs.lineSpacing).c_str());
+	js_store("ide.lineNumbers", app.prefs.showLineNumbers ? "1" : "0");
+	js_store("ide.whitespace", app.prefs.showWhitespace ? "1" : "0");
+	js_store("ide.minimap", app.prefs.showMinimap ? "1" : "0");
+	js_store("ide.brackets", app.prefs.showMatchingBrackets ? "1" : "0");
+}
+
+//	Load persisted prefs from localStorage (call once at startup). Missing keys
+//	keep the struct defaults.
+static void restorePrefs() {
+	std::string v;
+	v = lsGet("ide.theme");        if (!v.empty()) { app.darkTheme = (v != "0"); }
+	v = lsGet("ide.tabSize");      if (!v.empty()) { int n = std::atoi(v.c_str()); if (n >= 1 && n <= 8) app.prefs.tabSize = n; }
+	v = lsGet("ide.lineSpacing");  if (!v.empty()) { float f = (float) std::atof(v.c_str()); if (f >= 1.0f && f <= 2.0f) app.prefs.lineSpacing = f; }
+	v = lsGet("ide.lineNumbers");  if (!v.empty()) { app.prefs.showLineNumbers = (v != "0"); }
+	v = lsGet("ide.whitespace");   if (!v.empty()) { app.prefs.showWhitespace = (v != "0"); }
+	v = lsGet("ide.minimap");      if (!v.empty()) { app.prefs.showMinimap = (v != "0"); }
+	v = lsGet("ide.brackets");     if (!v.empty()) { app.prefs.showMatchingBrackets = (v != "0"); }
 }
 
 //
@@ -276,9 +338,7 @@ static void openFile(const std::string& path, const std::string& sha) {
 	tab.sha = sha;
 	tab.loading = true;
 	tab.ed = te_create();
-	te_set_palette(tab.ed, app.darkTheme ? TE_PALETTE_DARK : TE_PALETTE_LIGHT);
-	te_set_show_line_numbers(tab.ed, 1);
-	te_set_show_minimap(tab.ed, 1);
+	applyPrefs(tab.ed);
 	te_set_language(tab.ed, ghp::languageForPath(path));
 	te_set_text(tab.ed, "// loading...", (size_t) -1);
 	te_set_read_only(tab.ed, 1);
@@ -506,6 +566,8 @@ static void drawTopBar() {
 		for (auto& t : app.tabs) {
 			te_set_palette(t.ed, app.darkTheme ? TE_PALETTE_DARK : TE_PALETTE_LIGHT);
 		}
+
+		persistPrefs();
 	}
 }
 
@@ -517,25 +579,68 @@ static void drawPopups() {
 	}
 
 	if (ImGui::BeginPopupModal("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::InputText("Owner", app.inOwner, sizeof(app.inOwner));
-		ImGui::InputText("Repo", app.inRepo, sizeof(app.inRepo));
-		ImGui::InputText("Token", app.inToken, sizeof(app.inToken), ImGuiInputTextFlags_Password);
-		ImGui::TextDisabled("fine-grained PAT with Contents read/write;\nstored in this browser's localStorage");
+		if (ImGui::BeginTabBar("##settingsTabs")) {
+			// Connection: the GitHub target + auth.
+			if (ImGui::BeginTabItem("Connection")) {
+				ImGui::InputText("Owner", app.inOwner, sizeof(app.inOwner));
+				ImGui::InputText("Repo", app.inRepo, sizeof(app.inRepo));
+				ImGui::InputText("Token", app.inToken, sizeof(app.inToken), ImGuiInputTextFlags_Password);
+				ImGui::TextDisabled("fine-grained PAT with Contents read/write;\nstored in this browser's localStorage");
 
-		if (ImGui::Button("Connect", ImVec2(120.0f, 0.0f))) {
-			app.cfg.owner = app.inOwner;
-			app.cfg.repo = app.inRepo;
-			app.cfg.token = app.inToken;
-			persistConfig();
-			closeAllTabs();
-			ImGui::CloseCurrentPopup();
-			connect();
-		}
+				if (ImGui::Button("Connect", ImVec2(120.0f, 0.0f))) {
+					app.cfg.owner = app.inOwner;
+					app.cfg.repo = app.inRepo;
+					app.cfg.token = app.inToken;
+					persistConfig();
+					closeAllTabs();
+					ImGui::CloseCurrentPopup();
+					connect();
+				}
 
-		ImGui::SameLine();
+				ImGui::SameLine();
 
-		if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
-			ImGui::CloseCurrentPopup();
+				if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+					ImGui::CloseCurrentPopup();
+				}
+
+				ImGui::EndTabItem();
+			}
+
+			// Editor: preferences ported from the desktop Settings. Live-apply to
+			// every open tab + persist; new tabs pick them up via applyPrefs().
+			if (ImGui::BeginTabItem("Editor")) {
+				bool changed = false;
+
+				int theme = app.darkTheme ? 0 : 1;
+				if (ImGui::Combo("Theme", &theme, "Dark\0Light\0")) {
+					app.darkTheme = (theme == 0);
+					if (app.darkTheme) { ImGui::StyleColorsDark(); } else { ImGui::StyleColorsLight(); }
+					changed = true;
+				}
+
+				if (ImGui::SliderInt("Tab size", &app.prefs.tabSize, 1, 8))                       { changed = true; }
+				if (ImGui::SliderFloat("Line spacing", &app.prefs.lineSpacing, 1.0f, 2.0f, "%.2f")) { changed = true; }
+				ImGui::Separator();
+				if (ImGui::Checkbox("Line numbers", &app.prefs.showLineNumbers))                  { changed = true; }
+				if (ImGui::Checkbox("Show whitespace", &app.prefs.showWhitespace))                { changed = true; }
+				if (ImGui::Checkbox("Minimap", &app.prefs.showMinimap))                           { changed = true; }
+				if (ImGui::Checkbox("Matching brackets", &app.prefs.showMatchingBrackets))        { changed = true; }
+
+				if (changed) {
+					applyPrefsAll();
+					persistPrefs();
+				}
+
+				ImGui::Spacing();
+
+				if (ImGui::Button("Close", ImVec2(120.0f, 0.0f))) {
+					ImGui::CloseCurrentPopup();
+				}
+
+				ImGui::EndTabItem();
+			}
+
+			ImGui::EndTabBar();
 		}
 
 		ImGui::EndPopup();
@@ -605,8 +710,7 @@ static void drawPopups() {
 				tab.name = slash == std::string::npos ? path : path.substr(slash + 1);
 				tab.isNew = true;
 				tab.ed = te_create();
-				te_set_palette(tab.ed, app.darkTheme ? TE_PALETTE_DARK : TE_PALETTE_LIGHT);
-				te_set_show_line_numbers(tab.ed, 1);
+				applyPrefs(tab.ed);
 				te_set_language(tab.ed, ghp::languageForPath(path));
 				app.tabs.push_back(std::move(tab));
 			}
@@ -904,6 +1008,13 @@ int main() {
 	ImGuiMemAllocFunc allocFn; ImGuiMemFreeFunc freeFn; void* allocUd;
 	ImGui::GetAllocatorFunctions(&allocFn, &freeFn, &allocUd);
 	te_bind_imgui(ImGui::GetCurrentContext(), allocFn, freeFn, allocUd);
+
+	// restore editor preferences + theme (StyleColorsDark was set above; flip if
+	// the user last chose light).
+	restorePrefs();
+	if (!app.darkTheme) {
+		ImGui::StyleColorsLight();
+	}
 
 	// restore connection settings; auto-connect if we have a target
 	app.cfg.owner = lsGet("ide.owner");

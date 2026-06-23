@@ -1,0 +1,39 @@
+name: Web
+
+# Builds the Emscripten cloud-IDE host (embed/hosts/web/ide_main.cpp) so the
+# web track is verified on every push — the desktop build/CI can't catch a break
+# in the emscripten-only host.
+
+on: [push]
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Emscripten
+      uses: mymindstorm/setup-emsdk@v14
+
+    - name: Fetch Dear ImGui (v1.92.7-docking)
+      run: git clone --depth 1 --branch v1.92.7-docking https://github.com/ocornut/imgui.git "$RUNNER_TEMP/imgui"
+
+    - name: Fetch nlohmann/json (single header)
+      run: |
+        mkdir -p "$RUNNER_TEMP/json/nlohmann"
+        curl -sSL https://raw.githubusercontent.com/nlohmann/json/v3.11.3/single_include/nlohmann/json.hpp \
+          -o "$RUNNER_TEMP/json/nlohmann/json.hpp"
+
+    - name: Build cloud IDE (GitHub-backed)
+      run: |
+        IMGUI_DIR="$RUNNER_TEMP/imgui" JSON_DIR="$RUNNER_TEMP/json" \
+          bash embed/hosts/web/build_ide.sh "$RUNNER_TEMP/imgui_ide_cloud.html"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: imgui-ide-cloud-html
+        path: ${{ runner.temp }}/imgui_ide_cloud.html
+        if-no-files-found: error
