@@ -341,13 +341,18 @@ bool applyUpdate(const std::string& assetPath, const std::string& targetExe, std
     DeleteFileA(oldExe.c_str());
     if (!MoveFileExA(targetExe.c_str(), oldExe.c_str(), MOVEFILE_REPLACE_EXISTING))
     {
-        err = "couldn't move the running executable aside";
+        err = (GetLastError() == ERROR_ACCESS_DENIED)
+                  ? "no write access to the install folder (Program Files?) \xe2\x80\x94 reinstall with the installer to update"
+                  : "couldn't move the running executable aside";
         return false;
     }
     if (!CopyFileA(newExe.c_str(), targetExe.c_str(), FALSE))
     {
+        DWORD e = GetLastError();
         MoveFileExA(oldExe.c_str(), targetExe.c_str(), MOVEFILE_REPLACE_EXISTING); // rollback
-        err = "couldn't write the new executable";
+        err = (e == ERROR_ACCESS_DENIED)
+                  ? "no write access to the install folder (Program Files?) \xe2\x80\x94 reinstall with the installer to update"
+                  : "couldn't write the new executable";
         return false;
     }
     return true;

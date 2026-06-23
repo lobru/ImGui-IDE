@@ -189,22 +189,14 @@ void Editor::loadRuntimeLanguages()
     auto &byExt = runtimeLanguagesByExt();
     if (!byExt.empty())
         return; // already loaded
-    // Try a few candidate roots. get_module_path() is the exe FILE path, so take
-    // its parent — "<exe>.exe/languages" is nonsense and silently missed, which is
-    // exactly why the INSTALLED build (launched with a non-build CWD) lost its
-    // runtime languages while the dev build happened to hit a CWD-relative path.
-    std::vector<std::filesystem::path> roots = {
-        get_module_path().parent_path() / "languages",
-        std::filesystem::current_path() / "languages",
-        std::filesystem::current_path() / ".." / "languages",
-        std::filesystem::current_path() / ".." / ".." / "languages",
-        std::filesystem::current_path() / ".." / ".." / ".." / "example" / "languages",
-    };
-    for (const auto &root : roots)
-    {
+
+    // Load every .lang in `root`, registering by extension (later calls override
+    // earlier ones). Returns how many languages it added.
+    auto loadDir = [&byExt](const std::filesystem::path &root) -> int {
         std::error_code ec;
         if (!std::filesystem::is_directory(root, ec))
-            continue;
+            return 0;
+        int n = 0;
         for (const auto &entry : std::filesystem::directory_iterator(root, ec))
         {
             if (!entry.is_regular_file())
@@ -218,11 +210,30 @@ void Editor::loadRuntimeLanguages()
             {
                 for (const auto &e : lang->extensions)
                     byExt[e] = lang;
+                ++n;
             }
         }
-        if (!byExt.empty())
-            return; // stop at first non-empty hit
-    }
+        return n;
+    };
+
+    // Bundled set: <exe-dir>/languages first (the installed/deployed location —
+    // get_module_path() is the exe FILE, so take its parent), then dev-tree
+    // CWD-relative fallbacks. Stop at the first root that actually has .lang files.
+    const std::filesystem::path bundled[] = {
+        get_module_path().parent_path() / "languages",
+        std::filesystem::current_path() / "languages",
+        std::filesystem::current_path() / ".." / "languages",
+        std::filesystem::current_path() / ".." / ".." / "languages",
+        std::filesystem::current_path() / ".." / ".." / ".." / "example" / "languages",
+    };
+    for (const auto &root : bundled)
+        if (loadDir(root) > 0)
+            break;
+
+    // User languages in a WRITABLE per-user dir, loaded LAST so they add to or
+    // override the bundled set. A Program Files install makes <exe-dir>/languages
+    // read-only, so this is where users drop their own / edited .lang files.
+    loadDir(userConfigDir() / "languages");
 }
 
 const TextEditor::Language *Editor::languageForPath(const std::string &path)
@@ -5802,7 +5813,7 @@ void Editor::renderDevTools()
         }
 
         ImGui::Separator();
-        if (ImGui::TreeNode("Dear ImGui Tools"))
+        if (ImGui::TreeNode("Source code for features"))
         {
 
             ImGui::TextWrapped("Click a row to jump to the function (project-wide go-to-def). "
