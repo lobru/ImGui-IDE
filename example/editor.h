@@ -799,6 +799,11 @@ private:
 	void        renderGitDialogs();   // commit / discard / clone / revision-compare modals
 	void        cloneRepository(const std::string& url, const std::string& parentDir);
 	void        compareActiveFileWithRevision(const std::string& rev);
+	// After an async clone, rebuild the index once the repo's .git appears so
+	// go-to-def / symbols populate without a manual Rebuild.
+	std::string pendingCloneRoot;
+	double      pendingCloneSince = 0.0;
+	void        pollCloneCompletion();
 	// Detect the IDE's own source repo (walks up from the exe / cwd looking for
 	// example/editor.cpp). Used by Dev Tools to auto-open it as the project.
 	std::filesystem::path findSelfRepoRoot() const;

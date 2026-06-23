@@ -9017,6 +9017,7 @@ void Editor::render()
     pollToastInbox();       // external toast API: <configDir>/toasts/* → on-screen toasts
     pollUpdates();          // GitHub release check (auto 12 h / manual) + download drain
     autoSaveTick();         // periodic save of dirty, on-disk documents (if enabled)
+    pollCloneCompletion();  // rebuild the index once an in-progress git clone lands
 
     renderDockedDocuments();
     renderNavigationPanel();
@@ -11038,8 +11039,33 @@ void Editor::cloneRepository(const std::string &url, const std::string &parentDi
     runCommandInOutputPanel("git clone \"" + url + "\" \"" + dest.string() + "\"", parent.string());
     // Root the nav at the destination; it auto-populates as files land (cache TTL).
     setProjectRoot(dest);
-    pushToast("Cloning into " + dest.string() + " \xe2\x80\xa6", IM_COL32(150, 160, 255, 255));
+    pushToast("Cloning into " + dest.string() + " \xe2\x80\xa6", IM_COL32(150, 160, 255, 255), 2);
+    pendingCloneRoot = dest.string();   // pollCloneCompletion() rebuilds the index once .git lands
+    pendingCloneSince = ImGui::GetTime();
     gitPollTime = -1000.0;
+}
+
+void Editor::pollCloneCompletion()
+{
+    if (pendingCloneRoot.empty())
+        return;
+    static double next = 0.0;
+    double now = ImGui::GetTime();
+    if (now < next)
+        return;
+    next = now + 1.0; // check at ~1 Hz while a clone is outstanding
+    std::error_code ec;
+    if (std::filesystem::exists(std::filesystem::path(pendingCloneRoot) / ".git", ec))
+    {
+        rebuildProjectIndex(); // repo landed → populate symbols / go-to-def
+        gitPollTime = -1000.0; // refresh the branch indicator
+        pushToast("Clone complete \xe2\x80\x94 indexing", IM_COL32(120, 200, 120, 255), 2);
+        pendingCloneRoot.clear();
+    }
+    else if (now - pendingCloneSince > 600.0) // give up after 10 min (clone failed / cancelled)
+    {
+        pendingCloneRoot.clear();
+    }
 }
 
 void Editor::compareActiveFileWithRevision(const std::string &rev)
