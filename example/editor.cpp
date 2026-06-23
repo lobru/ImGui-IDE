@@ -6095,25 +6095,22 @@ void Editor::renderMarkdownPreview()
 {
     if (!mdPreviewVisible)
         return;
+    // Autohide: only show while the active document is markdown. Switch to a
+    // non-md doc and the panel vanishes; switch back and it returns. mdPreviewVisible
+    // stays the user's intent, so there's never a stale "(open a .md file)" panel.
+    if (tabs.empty())
+        return;
+    {
+        std::string aext = std::filesystem::path(doc().filename).extension().string();
+        std::transform(aext.begin(), aext.end(), aext.begin(), [](unsigned char c)
+                       { return (char)std::tolower(c); });
+        if (aext != ".md" && aext != ".markdown")
+            return;
+    }
     ImGui::SetNextWindowSize(ImVec2(560.0f, 600.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Markdown Preview###mdPreview", &mdPreviewVisible))
     {
-        if (tabs.empty())
-        {
-            ImGui::TextDisabled("(no document)");
-            ImGui::End();
-            return;
-        }
         auto &t = doc();
-        std::string ext = std::filesystem::path(t.filename).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c)
-                       { return (char)std::tolower(c); });
-        if (ext != ".md" && ext != ".markdown")
-        {
-            ImGui::TextDisabled("Open a Markdown (.md) file to preview it here.");
-            ImGui::End();
-            return;
-        }
 
         // Cache the serialized text — re-fetch only when the doc or its edit
         // count changes, so we don't allocate a whole-document copy every frame.
@@ -6611,8 +6608,8 @@ void Editor::loadSettings()
                 prefCtrlScrollZoom = (v == "1" || v == "true");
             else if (k == "autocomplete")
                 autocomplete = (v == "1" || v == "true");
-            else if (k == "invert_pan")
-                prefInvertPan = (v == "1" || v == "true");
+            else if (k == "pan_invert")   // renamed from invert_pan so the old saved
+                prefInvertPan = (v == "1" || v == "true"); // value is dropped → new inverted default applies once
             else if (k == "auto_update")
                 prefAutoUpdate = (v == "1" || v == "true");
             else if (k == "last_update_check")
@@ -6748,7 +6745,7 @@ void Editor::saveSettings()
     f << "theme=" << prefTheme << "\n";
     f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
     f << "autocomplete=" << (autocomplete ? "1" : "0") << "\n";
-    f << "invert_pan=" << (prefInvertPan ? "1" : "0") << "\n";
+    f << "pan_invert=" << (prefInvertPan ? "1" : "0") << "\n";
     f << "pan_scroll_accel=" << prefPanScrollAccel << "\n";
     f << "auto_update=" << (prefAutoUpdate ? "1" : "0") << "\n";
     f << "last_update_check=" << lastUpdateCheckEpoch << "\n";

@@ -1,0 +1,65 @@
+name: Nightly
+
+# Builds the desktop IDE once a day (and on demand) and publishes a rolling
+# "nightly" prerelease whose ImGui-IDE.exe asset the in-app updater downloads
+# when Help > Update Channel is set to Nightly. Prereleases are never GitHub's
+# "latest", so the Stable channel (/releases/latest) is unaffected.
+on:
+  schedule:
+    - cron: '0 7 * * *'   # 07:00 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: write          # create/update the release + move the tag
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  build-nightly:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout (full history for git-describe versioning)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -S example
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Stage artifacts
+        id: stage
+        shell: pwsh
+        run: |
+          $rel = "build/Release"
+          if (-not (Test-Path "$rel/ImGui-IDE.exe")) { throw "ImGui-IDE.exe not found in $rel" }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "$rel/ImGui-IDE.exe" dist/
+          # Portable zip carries the runtime languages too (manual download path).
+          $items = @("$rel/ImGui-IDE.exe")
+          if (Test-Path "$rel/languages") { $items += "$rel/languages" }
+          Compress-Archive -Path $items -DestinationPath dist/ImGui-IDE-nightly.zip -Force
+          $ver = (git describe --tags --always --dirty)
+          "version=$ver" >> $env:GITHUB_OUTPUT
+          Write-Host "nightly version: $ver"
+
+      - name: Publish rolling nightly prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly ${{ steps.stage.outputs.version }}"
+          body: |
+            Automated nightly build of ImGui-IDE — `${{ steps.stage.outputs.version }}`.
+
+            In-app: Help > Update Channel > Nightly, then Check for Updates. The
+            updater downloads `ImGui-IDE.exe` and swaps it in place. The `.zip`
+            also bundles the runtime languages for a manual portable copy.
+          prerelease: true
+          make_latest: false
+          files: |
+            dist/ImGui-IDE.exe
+            dist/ImGui-IDE-nightly.zip

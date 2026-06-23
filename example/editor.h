@@ -556,7 +556,7 @@ private:
 	void   formatActiveDocument();          // run clang-format over the active doc (undo-safe)
 	bool   prefShowFps         = false;   // FPS readout on the status bar
 	bool   prefCtrlScrollZoom  = true;    // Ctrl+wheel adjusts editor font size
-	bool   prefInvertPan       = false;   // flip middle-mouse pan direction
+	bool   prefInvertPan       = true;    // inverted ("grab the content") pan is the default
 	bool   prefWordWrap        = false;   // soft-wrap long lines
 	int    prefWrapWidthPx     = 0;       // 0 = wrap to view width, else fixed px
 	float  prefPanScrollAccel  = 1.0f;    // middle-mouse pan/scroll accel gain (1.0 = default feel, 0 = linear)
