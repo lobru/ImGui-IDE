@@ -104,6 +104,11 @@ struct App {
 	char newFilePath[256] = "";
 	bool openNewFilePopup = false;
 
+	// go-to-line (Ctrl+G) + about
+	char gotoBuf[32] = "";
+	bool openGotoPopup = false;
+	bool openAboutPopup = false;
+
 	// search
 	char searchQuery[256] = "";
 	std::vector<ghp::SearchHit> searchResults;
@@ -556,7 +561,17 @@ static void drawTopBar() {
 		ImGui::TextUnformatted(app.conn == Conn::Branches ? "loading branches..." : "loading tree...");
 	}
 
-	ImGui::SameLine(ImGui::GetContentRegionAvail().x - 50.0f);
+	ImGui::SameLine(ImGui::GetContentRegionAvail().x - 78.0f);
+
+	if (ImGui::Button("?")) {
+		app.openAboutPopup = true;
+	}
+
+	if (ImGui::IsItemHovered()) {
+		ImGui::SetTooltip("About ImGui-IDE");
+	}
+
+	ImGui::SameLine();
 
 	if (ImGui::Button(app.darkTheme ? "Light" : "Dark")) {
 		app.darkTheme = !app.darkTheme;
@@ -750,6 +765,68 @@ static void drawPopups() {
 
 		if (ImGui::Button("Stay", ImVec2(140.0f, 0.0f))) {
 			app.pendingBranch.clear();
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	// ── go to line (Ctrl+G) ──────────────────────────────────────────
+	if (app.openGotoPopup) {
+		ImGui::OpenPopup("Go to line");
+		app.openGotoPopup = false;
+	}
+
+	if (ImGui::BeginPopupModal("Go to line", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		bool valid = app.activeTab >= 0 && app.activeTab < (int) app.tabs.size();
+		int total = valid ? te_line_count(app.tabs[(size_t) app.activeTab].ed) : 0;
+		ImGui::Text("Line (1 - %d):", total);
+		ImGui::SetNextItemWidth(160.0f);
+
+		bool enter = ImGui::InputText("##gotoline", app.gotoBuf, sizeof(app.gotoBuf),
+			ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue);
+
+		if (ImGui::IsWindowAppearing()) {
+			ImGui::SetKeyboardFocusHere(-1);
+		}
+
+		if ((ImGui::Button("Go", ImVec2(120.0f, 0.0f)) || enter) && valid && app.gotoBuf[0]) {
+			int want = std::atoi(app.gotoBuf);
+
+			if (want < 1) { want = 1; }
+			if (want > total) { want = total; }
+
+			te_set_cursor(app.tabs[(size_t) app.activeTab].ed, want - 1, 0);  // 0-based
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	// ── about ────────────────────────────────────────────────────────
+	if (app.openAboutPopup) {
+		ImGui::OpenPopup("About ImGui-IDE");
+		app.openAboutPopup = false;
+	}
+
+	if (ImGui::BeginPopupModal("About ImGui-IDE", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+		ImGui::Text("ImGui-IDE  -  cloud (web)");
+		ImGui::TextDisabled("(c) 2026 Logan Brunet  -  MIT");
+		ImGui::Separator();
+		ImGui::TextDisabled("A GitHub-backed code editor in the browser.");
+		ImGui::TextDisabled("Dear ImGui + Emscripten + the GitHub REST API.");
+		ImGui::Spacing();
+		ImGui::TextDisabled("Editor widget forked from ImGuiColorTextEdit");
+		ImGui::TextDisabled("by Johan A. Goossens.");
+		ImGui::Spacing();
+
+		if (ImGui::Button("Close", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
 			ImGui::CloseCurrentPopup();
 		}
 
@@ -956,6 +1033,12 @@ static void mainLoop() {
 		app.savingTab = app.activeTab;
 		app.commitMsg[0] = '\0';
 		app.openSavePopup = true;
+	}
+
+	// Ctrl+G jumps to a line in the active tab
+	if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_G) && app.activeTab >= 0) {
+		app.gotoBuf[0] = '\0';
+		app.openGotoPopup = true;
 	}
 
 	ImGuiIO& io = ImGui::GetIO();
