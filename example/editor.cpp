@@ -6966,6 +6966,16 @@ void Editor::renderSettings()
                 }
                 ImGui::SliderFloat("Editor font size", &prefFontSize, 10.0f, 28.0f, "%.0f");
 
+                if (ImGui::Button("Open user languages folder"))
+                {
+                    std::error_code lec;
+                    auto dir = userConfigDir() / "languages";
+                    std::filesystem::create_directories(dir, lec);
+                    navOpenPathInExplorer(dir.string());
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Drop your own / edited *.lang files here (writable, unlike a\nProgram Files install). They override or extend the bundled set on next launch.");
+
                 ImGui::Separator();
                 ImGui::TextDisabled("Performance");
                 // 0 = unlimited. Clamp display so the slider can reach "off".
