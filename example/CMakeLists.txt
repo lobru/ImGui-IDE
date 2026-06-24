@@ -156,6 +156,18 @@ target_compile_options(selftest PRIVATE
 enable_testing()
 add_test(NAME selftest COMMAND selftest)
 
+# ── Headless performance regression net ──────────────────────────────────
+# Times the dominant non-UI hot paths (load+colorize, fold detection, color
+# lookups, serialization, cursor normalization) on a large synthetic doc. Prints
+# every timing and fails only on a gross (order-of-magnitude) regression, so it's
+# a CI tripwire rather than a flaky benchmark.
+add_executable(perftest perftest.cpp)
+target_link_libraries(perftest PRIVATE TextEditorLib imguifd tsindex)
+target_compile_options(perftest PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+add_test(NAME perftest COMMAND perftest)
+
 # ── LSP integration gate ──────────────────────────────────────────────────
 # Spawns a real clangd and asserts a completion + go-to-def round trip. SKIPs
 # (ctest return code 77) when no clangd is found, so CI without clangd stays green.
