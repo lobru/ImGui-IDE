@@ -117,6 +117,35 @@ int main()
 	});
 	BUDGET("SetCursor sweep (normalizeCoordinate)", tCursor, 1000.0);
 
+	// 6) MarkChangedLines — the diff run on every external/Claude reload. `ed` holds
+	//    `big`; we diff a *previous* version against it.
+	//    a) Localized edit (one char): the equal prefix/suffix trim should make this
+	//       near-instant regardless of document size.
+	std::string editedLocal = big;
+	editedLocal[big.size() / 2] = (editedLocal[big.size() / 2] == 'x') ? 'y' : 'x';
+	double tDiffLocal = timeMs([&] {
+		auto r = ed.MarkChangedLines(editedLocal);
+		if (r.size() > 1000000)
+			std::fprintf(stderr, "unreachable %zu\n", r.size());
+	});
+	BUDGET("MarkChangedLines (localized 1-line change)", tDiffLocal, 300.0);
+
+	//    b) A large differing block (rewrite the first ~quarter): trim can't help, so
+	//       the bounded LCS runs (or the >3000-line wholesale-mark guard trips). Either
+	//       way this is the worst realistic case.
+	std::string editedBlock = big;
+	for (size_t i = 0, q = big.size() / 4; i < q; ++i)
+		if (editedBlock[i] == 'e')
+			editedBlock[i] = '3';
+	double tDiffBlock = timeMs([&] {
+		auto r = ed.MarkChangedLines(editedBlock);
+		if (r.size() > 1000000)
+			std::fprintf(stderr, "unreachable %zu\n", r.size());
+	});
+	BUDGET("MarkChangedLines (large differing block)", tDiffBlock, 2000.0);
+	// restore the markers to a clean state (the test mutated them)
+	ed.ClearMarkers();
+
 	if (gFailures == 0)
 		std::printf("perftest: all within budget\n");
 	else
