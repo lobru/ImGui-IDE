@@ -246,18 +246,24 @@ static void seedUserLanguages()
     {
         if (!std::filesystem::is_directory(src, ec))
             continue;
-        int copied = 0;
+        // Count bundled .lang PRESENT in this root — that (not copy success) is what
+        // selects the root. Tying the break to a copy result was wrong: skip_existing
+        // returns false on a benign already-exists, and a real copy failure would
+        // otherwise look like success. Copy stays best-effort (bundled set still loads
+        // regardless; the Settings button opens the folder so emptiness is visible).
+        int found = 0;
         for (const auto &e : std::filesystem::directory_iterator(src, ec))
         {
             if (!e.is_regular_file() || !isLang(e.path()))
                 continue;
+            ++found;
             std::filesystem::create_directories(userDir, ec);
+            std::error_code cec;
             std::filesystem::copy_file(e.path(), userDir / e.path().filename(),
-                                       std::filesystem::copy_options::skip_existing, ec);
-            ++copied;
+                                       std::filesystem::copy_options::skip_existing, cec);
         }
-        if (copied > 0)
-            break;
+        if (found > 0)
+            break; // located the bundled set; don't probe lower-priority roots
     }
 }
 
