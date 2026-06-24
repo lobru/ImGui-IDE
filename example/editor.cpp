@@ -10970,9 +10970,9 @@ void Editor::runGit(const std::string &args)
 
 void Editor::cloneRepository(const std::string &url, const std::string &parentDir)
 {
-    if (url.empty())
+    if (url.empty() || url.find('"') != std::string::npos)
     {
-        showError("Clone: enter a repository URL.");
+        showError("Clone: enter a repository URL (without quotes).");
         return;
     }
     std::error_code ec;
@@ -11046,6 +11046,11 @@ void Editor::compareActiveFileWithRevision(const std::string &rev)
     }
     std::string relg = rel.generic_string(); // git wants forward slashes
     std::string r = rev.empty() ? std::string("HEAD") : rev;
+    if (r.find('"') != std::string::npos)
+    {
+        showError("Revision can't contain a double-quote."); // would break the shell command
+        return;
+    }
 #ifdef _WIN32
     std::string cmd = "git -C \"" + root + "\" show \"" + r + ":" + relg + "\" 2>NUL";
     FILE *p = _popen(cmd.c_str(), "rb");
