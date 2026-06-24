@@ -387,6 +387,14 @@ public:
 	// headless; used to highlight external/Claude edits after a reload.
 	std::vector<std::pair<int, int>> MarkChangedLines(const std::string& previousText);
 
+	// Three-way line merge (diff3): merge `mine` and `theirs` over their common
+	// ancestor `base`. Non-overlapping changes auto-merge; regions both sides changed
+	// differently are wrapped in git-style <<<<<<< / ======= / >>>>>>> markers and set
+	// `conflict`. Pure logic (no ImGui context) — unit-testable headless. Used to
+	// reconcile an external/Claude edit with unsaved buffer changes.
+	static std::string Merge3(const std::string& base, const std::string& mine,
+							   const std::string& theirs, bool& conflict);
+
 	// specify a change callback (called when changes are made (including undo/redo))
 	// the delay parameter specifies a time in miliseconds that the editor will wait for before calling
 	// which helps in case you don't need to track every keystroke

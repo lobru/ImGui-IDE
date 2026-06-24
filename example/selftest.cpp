@@ -925,6 +925,39 @@ int main()
 		}
 	}
 
+	// ── Merge3 (3-way / diff3 merge, ported from the app) ─────────────────
+	{
+		bool cf = false;
+		// Only mine changed → take mine, no conflict.
+		cf = false;
+		CHECK(TextEditor::Merge3("a\nb\nc\n", "a\nB\nc\n", "a\nb\nc\n", cf) == "a\nB\nc\n" && !cf,
+			"Merge3: only-mine change auto-merges");
+		// Only theirs changed → take theirs.
+		cf = false;
+		CHECK(TextEditor::Merge3("a\nb\nc\n", "a\nb\nc\n", "a\nb\nC\n", cf) == "a\nb\nC\n" && !cf,
+			"Merge3: only-theirs change auto-merges");
+		// Non-overlapping changes on both sides → both applied, no conflict.
+		cf = false;
+		CHECK(TextEditor::Merge3("a\nb\nc\nd\ne\n", "a\nB\nc\nd\ne\n", "a\nb\nc\nD\ne\n", cf) ==
+				  "a\nB\nc\nD\ne\n" && !cf,
+			"Merge3: non-overlapping changes auto-merge");
+		// Identical change on both sides → dedup, no conflict.
+		cf = false;
+		CHECK(TextEditor::Merge3("a\nb\nc\n", "a\nB\nc\n", "a\nB\nc\n", cf) == "a\nB\nc\n" && !cf,
+			"Merge3: identical change on both sides dedups");
+		// Overlapping different changes → git-style conflict markers.
+		cf = false;
+		std::string conflicted = TextEditor::Merge3("a\nb\nc\n", "a\nB\nc\n", "a\nX\nc\n", cf);
+		CHECK(cf && conflicted.find("<<<<<<<") != std::string::npos &&
+				  conflicted.find("=======") != std::string::npos &&
+				  conflicted.find(">>>>>>>") != std::string::npos,
+			"Merge3: overlapping changes produce a conflict");
+		// No change anywhere → identity.
+		cf = false;
+		CHECK(TextEditor::Merge3("a\nb\nc\n", "a\nb\nc\n", "a\nb\nc\n", cf) == "a\nb\nc\n" && !cf,
+			"Merge3: identical inputs -> identity");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;
