@@ -7,6 +7,18 @@ read `tag-commits-gsha`.
 ## Unreleased
 
 ### Added
+- **Reply to Claude** feedback loop: when an external tool edits an open file, its
+  changed lines get a clickable purple gutter dot. Click it (or right-click a line
+  number, a row in Dev Tools > "Claude changes", or a toast) to type a message and
+  **Send now** or **Add comment** for **batch** submission. Replies land in
+  `%APPDATA%\ImGuiColorTextEdit\replies\` for a watcher/CLI to pick up.
+- **Persistent file-type associations**: pick a language in the status-bar picker and
+  that extension reopens with it (Settings `[filetypes]`).
+- The per-user languages folder is **auto-populated** with editable copies of the
+  bundled definitions on first run (and via Settings > Open user languages folder).
+- Clone a repository from a URL, and compare the active file against a git revision.
+- Clickable toasts (open the updater, or reply to Claude); Markdown preview auto-hides
+  when no `.md` is focused; subword navigation/selection keybinds; find-bar prev/next.
 - In-app updater with **Stable / Nightly** channels (Help > Update Channel),
   auto-check every 12 h, and in-place exe replacement (no installer) with an
   optional one-click **Restart Now**.
@@ -18,7 +30,10 @@ read `tag-commits-gsha`.
 
 ### Fixed
 - Installed build no longer loses runtime languages (`loadRuntimeLanguages` now
-  resolves `<exe-dir>/languages`, not `<exe-file>/languages`).
+  resolves `<exe-dir>/languages`, not `<exe-file>/languages`). A writable per-user
+  languages folder also lets read-only (Program Files) installs be extended/overridden.
+- Git revision / clone-URL fields reject a double-quote that would break the shell
+  command. Updater rejects truncated downloads (anti-brick).
 - Nav no longer indexes the process CWD (e.g. System32) when launched without a
   project; roots at the active document's folder or shows a hint.
 - Symbols project filter cached (no per-frame rescan); nav directory listings
