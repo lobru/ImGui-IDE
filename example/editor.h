@@ -81,6 +81,7 @@ class Editor {
 		bool        externalChange = false;
 		bool        externallyTouched = false;   // edited on disk since you last viewed this tab (badge)
 		bool        externalMarkers   = false;   // gutter markers on externally-changed lines are live
+		std::vector<std::pair<int,int>> changedRanges; // inclusive 0-based line ranges Claude/an external tool changed
 		std::string syncedText;                  // last persisted content (load/save/reload) = 3-way merge base
 	};
 
@@ -144,6 +145,21 @@ class Editor {
 	void pushToast(const std::string& text, ImU32 accent, int action = 0);
 	void renderToasts();
 	void writeToastReply(const std::string& text);   // -> <configDir>/replies/* (bridge outbox)
+
+	// "Reply to Claude" feedback popup: type a message about a Claude/external change
+	// (or a toast) and either send it now or queue it for batch submission. All replies
+	// land in the <configDir>/replies/* outbox the bridge/CLI tails.
+	void requestReply(const std::string& file, int line0, const std::string& contextLabel);
+	void renderReplyPopup();
+	void submitReply(const char* message, bool immediate); // immediate=Send now, else queue for batch
+	void flushReplyBatch();
+	bool lineIsChanged(const TabDocument& t, int line) const;
+	bool replyPopupRequested = false;
+	std::string replyContextLabel;             // shown at the top of the popup
+	std::string replyTargetFile;               // file the reply is about ("" = general/toast)
+	int replyTargetLine = -1;                  // 0-based line, or -1
+	std::vector<std::string> replyBatch;       // queued comments awaiting batch submission
+	char replyBuf[2048] = {};                  // popup text buffer
 	// External toast API: any process drops a text file in <configDir>/toasts/ and
 	// it shows as a toast here (optional "info|warn|error|success" severity prefix,
 	// then the message). Polled (throttled) once per frame; files are consumed.

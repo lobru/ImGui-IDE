@@ -5906,6 +5906,59 @@ void Editor::renderDevTools()
             }
         }
 
+        // ── Claude / external changes — reply inline ─────────────────────
+        ImGui::SeparatorText("Claude changes \xe2\x80\x94 reply");
+        {
+            int totalRanges = 0;
+            for (auto &up : tabs)
+                totalRanges += (int)up->changedRanges.size();
+            if (totalRanges == 0)
+                ImGui::TextDisabled("No marked changes. When Claude edits an open file, its changed lines "
+                                    "get a purple gutter dot \xe2\x80\x94 click it, a row here, or right-click "
+                                    "a line number to reply.");
+            else
+            {
+                ImGui::TextDisabled("Click a change to type a reply (Send now, or queue for batch).");
+                for (size_t i = 0; i < tabs.size(); ++i)
+                {
+                    auto &t = *tabs[i];
+                    if (t.changedRanges.empty())
+                        continue;
+                    std::string fn = std::filesystem::path(t.filename).filename().string();
+                    for (auto &rg : t.changedRanges)
+                    {
+                        ImGui::PushID((const void *)&rg);
+                        char label[160];
+                        if (rg.first == rg.second)
+                            std::snprintf(label, sizeof(label), "\xf0\x9f\x92\xac %s : line %d", fn.c_str(), rg.first + 1);
+                        else
+                            std::snprintf(label, sizeof(label), "\xf0\x9f\x92\xac %s : lines %d-%d", fn.c_str(),
+                                          rg.first + 1, rg.second + 1);
+                        if (ImGui::Button(label))
+                        {
+                            t.wantFocus = true;
+                            t.editor.SetCursor(rg.first, 0);
+                            t.editor.ScrollToLine(rg.first, TextEditor::Scroll::alignMiddle);
+                            requestReply(t.filename, rg.first, t.filename + ":" + std::to_string(rg.first + 1));
+                        }
+                        ImGui::PopID();
+                    }
+                }
+            }
+            if (!replyBatch.empty())
+            {
+                ImGui::Spacing();
+                ImGui::Text("%d comment%s queued for batch", (int)replyBatch.size(),
+                            replyBatch.size() == 1 ? "" : "s");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Submit batch"))
+                    flushReplyBatch();
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Discard"))
+                    replyBatch.clear();
+            }
+        }
+
         ImGui::Separator();
         if (ImGui::TreeNode("Source code for features"))
         {
@@ -8244,6 +8297,8 @@ void Editor::checkExternalChanges()
 void Editor::markChangedLines(TabDocument &t, const std::string &oldText, const std::string &newText)
 {
     t.editor.ClearMarkers();
+    t.editor.ClearLineDecorator();
+    t.changedRanges.clear();
     t.externalMarkers = false;
 
     auto split = [](const std::string &s) {
@@ -8283,50 +8338,220 @@ void Editor::markChangedLines(TabDocument &t, const std::string &oldText, const 
     size_t n = ea - p, m = eb - p; // sizes of the differing windows
     if (m == 0)
         return; // pure deletion — nothing to mark in b
-    if (n > 3000 || m > 3000)
-    { // window still huge → mark the whole window
-        const ImU32 g = IM_COL32(170, 130, 250, 255), bgc = IM_COL32(120, 90, 200, 38);
-        for (size_t k = p; k < eb; ++k)
-            t.editor.AddMarker((int)k, g, bgc, "Changed externally", "Changed on disk by an external tool");
-        t.externalMarkers = (eb > p);
-        return;
-    }
-
-    // LCS over the differing window only.
-    std::vector<std::vector<int>> dp(n + 1, std::vector<int>(m + 1, 0));
-    for (size_t i = n; i-- > 0;)
-        for (size_t j = m; j-- > 0;)
-            dp[i][j] = (a[p + i] == b[p + j]) ? dp[i + 1][j + 1] + 1
-                                              : (std::max)(dp[i + 1][j], dp[i][j + 1]);
-
-    std::vector<char> common(m, 0);
-    for (size_t i = 0, j = 0; i < n && j < m;)
-    {
-        if (a[p + i] == b[p + j])
-        {
-            common[j] = 1;
-            ++i;
-            ++j;
-        }
-        else if (dp[i + 1][j] >= dp[i][j + 1])
-            ++i;
-        else
-            ++j;
-    }
 
     const ImU32 gutter = IM_COL32(170, 130, 250, 255);
     const ImU32 bg = IM_COL32(120, 90, 200, 38);
-    int changed = 0;
-    for (size_t k = 0; k < m; ++k)
+    std::vector<int> changed; // 0-based lines marked (ascending) — coalesced into ranges below
+
+    if (n > 3000 || m > 3000)
     {
-        if (!common[k])
+        // window still huge → mark the whole window
+        for (size_t k = p; k < eb; ++k)
         {
-            t.editor.AddMarker((int)(p + k), gutter, bg, "Changed externally",
-                               "Changed on disk by an external tool");
-            ++changed;
+            t.editor.AddMarker((int)k, gutter, bg, "Changed externally", "Changed on disk by an external tool");
+            changed.push_back((int)k);
         }
     }
-    t.externalMarkers = (changed > 0);
+    else
+    {
+        // LCS over the differing window only.
+        std::vector<std::vector<int>> dp(n + 1, std::vector<int>(m + 1, 0));
+        for (size_t i = n; i-- > 0;)
+            for (size_t j = m; j-- > 0;)
+                dp[i][j] = (a[p + i] == b[p + j]) ? dp[i + 1][j + 1] + 1
+                                                  : (std::max)(dp[i + 1][j], dp[i][j + 1]);
+
+        std::vector<char> common(m, 0);
+        for (size_t i = 0, j = 0; i < n && j < m;)
+        {
+            if (a[p + i] == b[p + j])
+            {
+                common[j] = 1;
+                ++i;
+                ++j;
+            }
+            else if (dp[i + 1][j] >= dp[i][j + 1])
+                ++i;
+            else
+                ++j;
+        }
+
+        for (size_t k = 0; k < m; ++k)
+        {
+            if (!common[k])
+            {
+                t.editor.AddMarker((int)(p + k), gutter, bg, "Changed externally",
+                                   "Changed on disk by an external tool");
+                changed.push_back((int)(p + k));
+            }
+        }
+    }
+
+    t.externalMarkers = !changed.empty();
+    // Coalesce consecutive changed lines into inclusive ranges (Dev Tools list +
+    // gutter hit-test), then install a clickable purple dot per changed line.
+    for (int ln : changed)
+    {
+        if (!t.changedRanges.empty() && ln == t.changedRanges.back().second + 1)
+            t.changedRanges.back().second = ln;
+        else
+            t.changedRanges.emplace_back(ln, ln);
+    }
+    if (changed.empty())
+        return;
+    t.editor.SetLineDecorator(-1.6f, [this](TextEditor::Decorator &d) {
+        TabDocument *td = nullptr;
+        for (auto &up : tabs)
+            if (&up->editor == d.editor)
+            {
+                td = up.get();
+                break;
+            }
+        if (!td || !lineIsChanged(*td, d.line))
+            return;
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##claudeReplyDot", ImVec2(d.width, d.glyphSize.y));
+        bool hov = ImGui::IsItemHovered();
+        if (hov)
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("Reply to Claude about line %d", d.line + 1);
+        }
+        ImU32 col = hov ? IM_COL32(205, 165, 255, 255) : IM_COL32(170, 130, 250, 210);
+        ImGui::GetWindowDrawList()->AddCircleFilled(
+            ImVec2(pos.x + d.width * 0.5f, pos.y + d.glyphSize.y * 0.5f), d.glyphSize.y * 0.20f, col);
+        if (ImGui::IsItemClicked())
+            requestReply(td->filename, d.line, td->filename + ":" + std::to_string(d.line + 1));
+    });
+}
+
+bool Editor::lineIsChanged(const TabDocument &t, int line) const
+{
+    for (auto &r : t.changedRanges)
+        if (line >= r.first && line <= r.second)
+            return true;
+    return false;
+}
+
+// Open the "Reply to Claude" popup about `file`:`line0` (line0 < 0 / file empty =
+// general or toast feedback). The modal opens next frame via renderReplyPopup().
+void Editor::requestReply(const std::string &file, int line0, const std::string &contextLabel)
+{
+    replyTargetFile = file;
+    replyTargetLine = line0;
+    replyContextLabel = contextLabel.empty() ? std::string("General feedback to Claude") : contextLabel;
+    replyBuf[0] = '\0';
+    replyPopupRequested = true;
+}
+
+// Turn a typed message into an outbox entry. immediate == "Send now", else queue it
+// for batch submission (Submit batch flushes the queue as one file).
+void Editor::submitReply(const char *message, bool immediate)
+{
+    if (!message || !*message)
+        return;
+    std::string prefix;
+    if (!replyTargetFile.empty())
+    {
+        std::string rel = replyTargetFile;
+        std::error_code ec;
+        if (!projectRoot.empty())
+        {
+            auto r = std::filesystem::relative(replyTargetFile, projectRoot, ec);
+            if (!ec && !r.empty())
+                rel = r.generic_string();
+        }
+        else
+            rel = std::filesystem::path(replyTargetFile).filename().string();
+        prefix = "[" + rel + (replyTargetLine >= 0 ? ":" + std::to_string(replyTargetLine + 1) : "") + "] ";
+    }
+    std::string body = prefix + message;
+    if (immediate)
+    {
+        writeToastReply(body);
+        pushToast("Reply sent to Claude", IM_COL32(120, 200, 120, 255), 2);
+    }
+    else
+    {
+        replyBatch.push_back(body);
+        pushToast("Comment queued (" + std::to_string(replyBatch.size()) + ")", IM_COL32(170, 130, 250, 255), 2);
+    }
+}
+
+// Flush all queued comments as a single reply file (one "- " bullet per comment).
+void Editor::flushReplyBatch()
+{
+    if (replyBatch.empty())
+        return;
+    std::string all = "Batched feedback from ImGui-IDE:\n";
+    for (auto &c : replyBatch)
+        all += "- " + c + "\n";
+    writeToastReply(all);
+    pushToast("Batch sent: " + std::to_string(replyBatch.size()) + " comment(s)", IM_COL32(120, 200, 120, 255), 2);
+    replyBatch.clear();
+}
+
+void Editor::renderReplyPopup()
+{
+    if (replyPopupRequested)
+    {
+        ImGui::OpenPopup("Reply to Claude###claudeReply");
+        replyPopupRequested = false;
+    }
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Reply to Claude###claudeReply", nullptr, ImGuiWindowFlags_NoMove))
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(190, 155, 255, 255));
+        ImGui::TextWrapped("%s", replyContextLabel.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        ImGui::InputTextMultiline("##claudeMsg", replyBuf, sizeof(replyBuf), ImVec2(-FLT_MIN, 120.0f));
+
+        bool has = replyBuf[0] != '\0';
+        if (!has)
+            ImGui::BeginDisabled();
+        if (ImGui::Button("Send now"))
+        {
+            submitReply(replyBuf, true);
+            replyBuf[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add comment")) // queue for batch, then back to the editor to mark the next change
+        {
+            submitReply(replyBuf, false);
+            replyBuf[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+        if (!has)
+            ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+        {
+            replyBuf[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (!replyBatch.empty())
+        {
+            ImGui::Separator();
+            ImGui::Text("%d comment%s queued for batch", (int)replyBatch.size(),
+                        replyBatch.size() == 1 ? "" : "s");
+            if (ImGui::Button("Submit batch"))
+            {
+                flushReplyBatch();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Discard batch"))
+                replyBatch.clear();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 // ── 3-way merge (buffer + disk over the last reconciled base) ─────────────
@@ -8907,10 +9132,7 @@ void Editor::renderToasts()
     if (clickedAction == 1)
         showUpdateDialog = true; // update toast → open the updater
     else if (clickedAction == 0)
-    {
-        writeToastReply(clickedText);                                       // generic toast → reply outbox
-        pushToast("Reply sent to Claude", IM_COL32(120, 200, 120, 255), 2); // 2 = dismiss-only
-    }
+        requestReply("", -1, "Re: " + clickedText); // open the type-to-Claude popup (instant reply)
     // clickedAction == 2 (system confirmations): click only dismisses, no re-reply.
 }
 
@@ -9076,6 +9298,7 @@ void Editor::render()
     renderExternalChanges(); // persistent external-edit feed
     renderSettings();
     renderToasts(); // transient Claude-edited notifications, drawn over everything
+    renderReplyPopup(); // "Reply to Claude" modal (gutter dot / Dev Tools / toast)
 
     // Diff-against-other file picker — overlay on any state.
     if (diffOtherMode)
@@ -12570,6 +12793,13 @@ void Editor::configureTabAutocomplete(TabDocument &t)
     // (which re-scanned big docs + re-inserted the whole project index on every
     // "+" press — the multi-second new-tab stall).
     TabDocument *tptr = &t;
+    // Right-click a line number → "Reply to Claude about this line" (any line). The
+    // purple gutter dot on Claude-changed lines is the left-click equivalent; both
+    // open the reply popup → <configDir>/replies outbox.
+    t.editor.SetLineNumberContextMenuCallback([this, tptr](int line) {
+        if (ImGui::MenuItem("\xf0\x9f\x92\xac Reply to Claude about this line"))
+            requestReply(tptr->filename, line, tptr->filename + ":" + std::to_string(line + 1));
+    });
     TextEditor::AutoCompleteConfig config;
     config.callback = [this, tptr](TextEditor::AutoCompleteState &state) {
         // LSP completion (clangd): fire async at the cursor BEFORE the tree-sitter
