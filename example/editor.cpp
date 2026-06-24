@@ -8294,12 +8294,21 @@ void Editor::checkExternalChanges()
 
 //  Gutter-highlight the lines a reload changed. Prefix/suffix trim keeps the LCS
 //  bounded so a localized edit in a huge file is cheap.
-void Editor::markChangedLines(TabDocument &t, const std::string &oldText, const std::string &newText)
+// Drop every "external/Claude change" decoration from a doc — gutter markers, the
+// clickable reply-dot decorator, and the tracked ranges — together, so they never
+// drift out of sync (a partial clear left stale clickable dots after the user
+// started editing).
+void Editor::clearChangeMarks(TabDocument &t)
 {
     t.editor.ClearMarkers();
     t.editor.ClearLineDecorator();
     t.changedRanges.clear();
     t.externalMarkers = false;
+}
+
+void Editor::markChangedLines(TabDocument &t, const std::string &oldText, const std::string &newText)
+{
+    clearChangeMarks(t);
 
     auto split = [](const std::string &s) {
         std::vector<std::string> v;
@@ -8751,8 +8760,7 @@ void Editor::mergeExternalChange(TabDocument &t)
 
     t.editor.SetText(merged);
     t.externalChange = false;
-    t.editor.ClearMarkers();
-    t.externalMarkers = false;
+    clearChangeMarks(t);
     recordDiskMtime(t);                      // baseline to disk so the watch won't re-fire
     t.version = t.editor.GetUndoIndex() + 1; // merged != disk → force dirty so the user saves
 
@@ -9826,10 +9834,7 @@ void Editor::renderDocumentWindow(TabDocument &t)
     // Once the user starts editing again, the Claude-changed gutter markers have
     // served their purpose — clear them so they don't linger over fresh edits.
     if (t.externalMarkers && t.editor.GetUndoIndex() != t.version)
-    {
-        t.editor.ClearMarkers();
-        t.externalMarkers = false;
-    }
+        clearChangeMarks(t); // user started editing → drop markers, dot decorator, and ranges together
 
     ImGui::PushFont(activeFont, fontSize);
     t.editor.SetTextContextMenuCallback([this, &t](int line, int column) {
