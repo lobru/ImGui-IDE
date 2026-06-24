@@ -226,6 +226,12 @@ private:
 	void configureTabAutocomplete(TabDocument& t);   // wire autocomplete + build trie for ONE tab
 
 	static const TextEditor::Language* languageForPath(const std::string& path);
+	// Resolve a language by display name ("C++", "Lua", a runtime lang's name, or
+	// "None"/empty -> nullptr). Used to apply persisted file-type associations.
+	static const TextEditor::Language* languageByName(const std::string& name);
+	// Persistent ".ext" -> language display-name associations (Settings [filetypes]),
+	// set from the status-bar language picker; languageForPath consults these first.
+	static std::unordered_map<std::string, std::string>& extLanguageOverrides();
 
 public:
 	// Set the navigation panel's project root and show it. Called from

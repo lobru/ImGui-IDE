@@ -157,6 +157,38 @@ std::unordered_map<std::string, const TextEditor::Language *> &Editor::runtimeLa
     return map;
 }
 
+std::unordered_map<std::string, std::string> &Editor::extLanguageOverrides()
+{
+    static std::unordered_map<std::string, std::string> map;
+    return map;
+}
+
+const TextEditor::Language *Editor::languageByName(const std::string &name)
+{
+    if (name.empty() || name == "None")
+        return nullptr;
+    if (name == "C") return TextEditor::Language::C();
+    if (name == "C++") return TextEditor::Language::Cpp();
+    if (name == "C#") return TextEditor::Language::Cs();
+    if (name == "AngelScript") return TextEditor::Language::AngelScript();
+    if (name == "Lua") return TextEditor::Language::Lua();
+    if (name == "Python") return TextEditor::Language::Python();
+    if (name == "GLSL") return TextEditor::Language::Glsl();
+    if (name == "HLSL") return TextEditor::Language::Hlsl();
+    if (name == "JSON") return TextEditor::Language::Json();
+    if (name == "Markdown") return TextEditor::Language::Markdown();
+    if (name == "SQL") return TextEditor::Language::Sql();
+    if (name == "INI") return TextEditor::Language::Ini();
+    // Runtime-loaded languages (HTML, YAML, XAML, …) — match by their name.
+    for (auto &[ext, lang] : runtimeLanguagesByExt())
+    {
+        (void) ext;
+        if (lang && lang->name == name)
+            return lang;
+    }
+    return nullptr;
+}
+
 static std::filesystem::path get_module_path()
 {
 #ifdef _WIN32
@@ -184,11 +216,57 @@ static std::filesystem::path get_module_path()
 #endif
 }
 
+// Copy the bundled *.lang into the writable user languages dir as editable
+// starting points — but only if that dir has no .lang yet, so it never clobbers
+// the user's edits or re-adds files they deleted. NOTE: an unedited copy here
+// overrides the identical bundled definition; a future bundled change won't reach
+// a type the user has a copy of until they delete that copy.
+static void seedUserLanguages()
+{
+    std::error_code ec;
+    auto userDir = Editor::userConfigDir() / "languages";
+    auto isLang = [](const std::filesystem::path &p) {
+        auto x = p.extension().string();
+        std::transform(x.begin(), x.end(), x.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        return x == ".lang";
+    };
+    if (std::filesystem::is_directory(userDir, ec))
+        for (const auto &e : std::filesystem::directory_iterator(userDir, ec))
+            if (e.is_regular_file() && isLang(e.path()))
+                return; // already populated — leave it alone
+
+    const std::filesystem::path roots[] = {
+        get_module_path().parent_path() / "languages",
+        std::filesystem::current_path() / "languages",
+        std::filesystem::current_path() / ".." / "languages",
+        std::filesystem::current_path() / ".." / ".." / "languages",
+        std::filesystem::current_path() / ".." / ".." / ".." / "example" / "languages",
+    };
+    for (const auto &src : roots)
+    {
+        if (!std::filesystem::is_directory(src, ec))
+            continue;
+        int copied = 0;
+        for (const auto &e : std::filesystem::directory_iterator(src, ec))
+        {
+            if (!e.is_regular_file() || !isLang(e.path()))
+                continue;
+            std::filesystem::create_directories(userDir, ec);
+            std::filesystem::copy_file(e.path(), userDir / e.path().filename(),
+                                       std::filesystem::copy_options::skip_existing, ec);
+            ++copied;
+        }
+        if (copied > 0)
+            break;
+    }
+}
+
 void Editor::loadRuntimeLanguages()
 {
     auto &byExt = runtimeLanguagesByExt();
     if (!byExt.empty())
         return; // already loaded
+    seedUserLanguages(); // first run: drop editable copies of the bundled set in the user dir
 
     // Load every .lang in `root`, registering by extension (later calls override
     // earlier ones). Returns how many languages it added.
@@ -253,6 +331,16 @@ const TextEditor::Language *Editor::languageForPath(const std::string &path)
         auto it = byExt.find(".cmake");
         if (it != byExt.end())
             return it->second;
+    }
+
+    // User-set persistent association for this extension wins over the built-ins
+    // (Settings [filetypes], set from the status-bar language picker). "None" maps
+    // to nullptr = plain text, a valid choice.
+    if (!ext.empty())
+    {
+        auto ov = extLanguageOverrides().find(ext);
+        if (ov != extLanguageOverrides().end())
+            return languageByName(ov->second);
     }
 
     // Built-in matches take precedence; fall back to user-loaded definitions.
@@ -6554,6 +6642,8 @@ void Editor::loadSettings()
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
         if (section == "interpreters")
             interpreterOverrides[k] = v;
+        else if (section == "filetypes")
+            extLanguageOverrides()[k] = v;
         else if (section == "build")
             projectBuildOverrides[k] = v;
         else if (section == "keybinds")
@@ -6765,6 +6855,9 @@ void Editor::saveSettings()
     f << "[interpreters]\n";
     for (auto &[k, v] : interpreterOverrides)
         f << k << "=" << v << "\n";
+    f << "\n[filetypes]\n";
+    for (auto &[k, v] : extLanguageOverrides())
+        f << k << "=" << v << "\n";
     f << "\n[build]\n";
     for (auto &[k, v] : projectBuildOverrides)
         f << k << "=" << v << "\n";
@@ -6971,6 +7064,7 @@ void Editor::renderSettings()
                     std::error_code lec;
                     auto dir = userConfigDir() / "languages";
                     std::filesystem::create_directories(dir, lec);
+                    seedUserLanguages(); // populate with editable copies if still empty
                     navOpenPathInExplorer(dir.string());
                 }
                 if (ImGui::IsItemHovered())
@@ -11415,6 +11509,16 @@ void Editor::renderStatusBar()
             {
                 e.SetLanguage(langDefsV[n]);
                 buildAutocompleteTrie(t);
+                // Persist the extension -> language association so this and future
+                // files of the same type reopen with the chosen language.
+                auto pext = std::filesystem::path(t.filename).extension().string();
+                std::transform(pext.begin(), pext.end(), pext.begin(),
+                               [](unsigned char c) { return (char) std::tolower(c); });
+                if (!pext.empty() && t.filename != "untitled")
+                {
+                    extLanguageOverrides()[pext] = langNamesV[n];
+                    saveSettings();
+                }
             }
             if (selected)
                 ImGui::SetItemDefaultFocus();
