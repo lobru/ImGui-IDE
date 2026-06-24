@@ -146,6 +146,21 @@ int main()
 	// restore the markers to a clean state (the test mutated them)
 	ed.ClearMarkers();
 
+	// 7) Merge3 — a 3-way diff3 just under the 4000-line cap, so the real LCS runs
+	//    (not the coarse fallback). One localized change on each side.
+	std::string mergeBase = makeBigCpp(380); // ~2.6k lines, under the diff3 cap
+	std::string mineV = mergeBase;
+	mineV[100] = (mineV[100] == 'x') ? 'y' : 'x';
+	std::string theirsV = mergeBase;
+	theirsV[mergeBase.size() - 200] = (theirsV[mergeBase.size() - 200] == 'x') ? 'y' : 'x';
+	bool mergeConflict = false;
+	double tMerge = timeMs([&] {
+		std::string r = TextEditor::Merge3(mergeBase, mineV, theirsV, mergeConflict);
+		if (r.empty())
+			std::fprintf(stderr, "unreachable empty merge\n");
+	});
+	BUDGET("Merge3 (~2.6k-line 3-way diff3)", tMerge, 2000.0);
+
 	if (gFailures == 0)
 		std::printf("perftest: all within budget\n");
 	else
