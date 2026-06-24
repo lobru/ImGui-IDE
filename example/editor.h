@@ -122,7 +122,7 @@ class Editor {
 	void recordDiskMtime(TabDocument& t);
 	void reloadFromDisk(TabDocument& t);
 	void checkExternalChanges();
-	void markChangedLines(TabDocument& t, const std::string& oldText, const std::string& newText);
+	void markChangedLines(TabDocument& t, const std::string& oldText); // diff oldText vs the doc's current text
 	void clearChangeMarks(TabDocument& t);   // drop gutter markers + reply-dot decorator + ranges together
 	double extWatchTime = 0.0;   // last poll time (throttle)
 

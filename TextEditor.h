@@ -381,6 +381,12 @@ public:
 	inline void ClearMarkers() { clearMarkers(); }
 	inline bool HasMarkers() const { return markers.size() != 0; }
 
+	// Diff `previousText` against the current text, add a change marker (purple gutter)
+	// on each differing line, and return those lines as coalesced inclusive [first,last]
+	// 0-based ranges. Pure logic (needs no ImGui context), so it is unit-testable
+	// headless; used to highlight external/Claude edits after a reload.
+	std::vector<std::pair<int, int>> MarkChangedLines(const std::string& previousText);
+
 	// specify a change callback (called when changes are made (including undo/redo))
 	// the delay parameter specifies a time in miliseconds that the editor will wait for before calling
 	// which helps in case you don't need to track every keystroke

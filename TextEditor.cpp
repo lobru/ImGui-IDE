@@ -2915,6 +2915,116 @@ void TextEditor::clearMarkers()
 
 
 //
+//	TextEditor::MarkChangedLines
+//
+//	Diff `previousText` against the current document text and add a purple change
+//	marker on every differing line, returning those lines as coalesced inclusive
+//	0-based ranges. An equal prefix/suffix trim bounds the LCS so a localized edit
+//	in a huge file is cheap; a still-huge differing window marks wholesale.
+
+std::vector<std::pair<int, int>> TextEditor::MarkChangedLines(const std::string& previousText)
+{
+	clearMarkers();
+	std::vector<std::pair<int, int>> ranges;
+
+	auto split = [](const std::string& s) {
+		std::vector<std::string> v;
+		std::string cur;
+		for (char c : s)
+		{
+			if (c == '\r')
+				continue;
+			if (c == '\n')
+			{
+				v.push_back(cur);
+				cur.clear();
+			}
+			else
+				cur += c;
+		}
+		v.push_back(cur);
+		return v;
+	};
+	std::vector<std::string> a = split(previousText), b = split(document.getText());
+	size_t N = a.size(), M = b.size();
+	if (M == 0)
+		return ranges;
+
+	// Trim the equal prefix / suffix — external edits are usually localized.
+	size_t p = 0;
+	while (p < N && p < M && a[p] == b[p])
+		++p;
+	size_t ea = N, eb = M;
+	while (ea > p && eb > p && a[ea - 1] == b[eb - 1])
+	{
+		--ea;
+		--eb;
+	}
+
+	size_t n = ea - p, m = eb - p; // sizes of the differing windows
+	if (m == 0)
+		return ranges; // pure deletion — nothing to mark in the current text
+
+	const ImU32 gutter = IM_COL32(170, 130, 250, 255);
+	const ImU32 bg = IM_COL32(120, 90, 200, 38);
+	std::vector<int> changed; // 0-based lines marked (ascending)
+
+	if (n > 3000 || m > 3000)
+	{
+		// window still huge → mark the whole window
+		for (size_t k = p; k < eb; ++k)
+		{
+			addMarker((int)k, gutter, bg, "Changed externally", "Changed on disk by an external tool");
+			changed.push_back((int)k);
+		}
+	}
+	else
+	{
+		// LCS over the differing window only.
+		std::vector<std::vector<int>> dp(n + 1, std::vector<int>(m + 1, 0));
+		for (size_t i = n; i-- > 0;)
+			for (size_t j = m; j-- > 0;)
+				dp[i][j] = (a[p + i] == b[p + j]) ? dp[i + 1][j + 1] + 1
+												  : (std::max)(dp[i + 1][j], dp[i][j + 1]);
+
+		std::vector<char> common(m, 0);
+		for (size_t i = 0, j = 0; i < n && j < m;)
+		{
+			if (a[p + i] == b[p + j])
+			{
+				common[j] = 1;
+				++i;
+				++j;
+			}
+			else if (dp[i + 1][j] >= dp[i][j + 1])
+				++i;
+			else
+				++j;
+		}
+
+		for (size_t k = 0; k < m; ++k)
+		{
+			if (!common[k])
+			{
+				addMarker((int)(p + k), gutter, bg, "Changed externally", "Changed on disk by an external tool");
+				changed.push_back((int)(p + k));
+			}
+		}
+	}
+
+	// Coalesce consecutive changed lines into inclusive ranges.
+	for (int ln : changed)
+	{
+		if (!ranges.empty() && ln == ranges.back().second + 1)
+			ranges.back().second = ln;
+		else
+			ranges.emplace_back(ln, ln);
+	}
+	return ranges;
+}
+
+
+//
 //	TextEditor::moveUp
 //
 

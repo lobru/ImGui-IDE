@@ -8222,7 +8222,7 @@ void Editor::reloadFromDisk(TabDocument &t)
     t.externalChange = false;
     recordDiskMtime(t);
     rememberRecentFile(t.filename);
-    markChangedLines(t, oldText, text); // gutter-highlight exactly what changed
+    markChangedLines(t, oldText); // gutter-highlight exactly what changed (widget diffs vs current text)
 
     int total = (std::max)(t.editor.GetLineCount(), 1);
     line = (std::max)(0, (std::min)(line, total - 1));
@@ -8306,107 +8306,16 @@ void Editor::clearChangeMarks(TabDocument &t)
     t.externalMarkers = false;
 }
 
-void Editor::markChangedLines(TabDocument &t, const std::string &oldText, const std::string &newText)
+void Editor::markChangedLines(TabDocument &t, const std::string &oldText)
 {
+    // The diff + gutter markers now live in the widget (TextEditor::MarkChangedLines,
+    // which is headless-testable); it diffs oldText against its own current text. We
+    // keep the app-side pieces here: the tracked ranges (Dev Tools list / gutter
+    // hit-test) and the clickable reply-dot decorator.
     clearChangeMarks(t);
-
-    auto split = [](const std::string &s) {
-        std::vector<std::string> v;
-        std::string cur;
-        for (char c : s)
-        {
-            if (c == '\r')
-                continue;
-            if (c == '\n')
-            {
-                v.push_back(cur);
-                cur.clear();
-            }
-            else
-                cur += c;
-        }
-        v.push_back(cur);
-        return v;
-    };
-    std::vector<std::string> a = split(oldText), b = split(newText);
-    size_t N = a.size(), M = b.size();
-    if (M == 0)
-        return;
-
-    // Trim equal prefix / suffix — Claude edits are usually localized.
-    size_t p = 0;
-    while (p < N && p < M && a[p] == b[p])
-        ++p;
-    size_t ea = N, eb = M;
-    while (ea > p && eb > p && a[ea - 1] == b[eb - 1])
-    {
-        --ea;
-        --eb;
-    }
-
-    size_t n = ea - p, m = eb - p; // sizes of the differing windows
-    if (m == 0)
-        return; // pure deletion — nothing to mark in b
-
-    const ImU32 gutter = IM_COL32(170, 130, 250, 255);
-    const ImU32 bg = IM_COL32(120, 90, 200, 38);
-    std::vector<int> changed; // 0-based lines marked (ascending) — coalesced into ranges below
-
-    if (n > 3000 || m > 3000)
-    {
-        // window still huge → mark the whole window
-        for (size_t k = p; k < eb; ++k)
-        {
-            t.editor.AddMarker((int)k, gutter, bg, "Changed externally", "Changed on disk by an external tool");
-            changed.push_back((int)k);
-        }
-    }
-    else
-    {
-        // LCS over the differing window only.
-        std::vector<std::vector<int>> dp(n + 1, std::vector<int>(m + 1, 0));
-        for (size_t i = n; i-- > 0;)
-            for (size_t j = m; j-- > 0;)
-                dp[i][j] = (a[p + i] == b[p + j]) ? dp[i + 1][j + 1] + 1
-                                                  : (std::max)(dp[i + 1][j], dp[i][j + 1]);
-
-        std::vector<char> common(m, 0);
-        for (size_t i = 0, j = 0; i < n && j < m;)
-        {
-            if (a[p + i] == b[p + j])
-            {
-                common[j] = 1;
-                ++i;
-                ++j;
-            }
-            else if (dp[i + 1][j] >= dp[i][j + 1])
-                ++i;
-            else
-                ++j;
-        }
-
-        for (size_t k = 0; k < m; ++k)
-        {
-            if (!common[k])
-            {
-                t.editor.AddMarker((int)(p + k), gutter, bg, "Changed externally",
-                                   "Changed on disk by an external tool");
-                changed.push_back((int)(p + k));
-            }
-        }
-    }
-
-    t.externalMarkers = !changed.empty();
-    // Coalesce consecutive changed lines into inclusive ranges (Dev Tools list +
-    // gutter hit-test), then install a clickable purple dot per changed line.
-    for (int ln : changed)
-    {
-        if (!t.changedRanges.empty() && ln == t.changedRanges.back().second + 1)
-            t.changedRanges.back().second = ln;
-        else
-            t.changedRanges.emplace_back(ln, ln);
-    }
-    if (changed.empty())
+    t.changedRanges = t.editor.MarkChangedLines(oldText);
+    t.externalMarkers = !t.changedRanges.empty();
+    if (t.changedRanges.empty())
         return;
     t.editor.SetLineDecorator(-1.6f, [this](TextEditor::Decorator &d) {
         TabDocument *td = nullptr;

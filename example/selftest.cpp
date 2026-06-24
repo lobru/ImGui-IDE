@@ -879,6 +879,52 @@ int main()
 		CHECK(!h.back(NavLocation{}, out), "NavHistory: back on empty returns false");
 	}
 
+	// ── MarkChangedLines (diff → change markers, ported from the app) ──────
+	{
+		// Build the editor at the NEW text, then diff against the OLD text.
+		auto marked = [](const std::string& oldText, const std::string& newText) {
+			TextEditor ed;
+			ed.SetText(newText);
+			return ed.MarkChangedLines(oldText);
+		};
+
+		// Single changed middle line → one inclusive [1,1] range.
+		{
+			auto r = marked("a\nb\nc\n", "a\nB\nc\n");
+			CHECK(r.size() == 1 && r[0].first == 1 && r[0].second == 1,
+				"MarkChangedLines: one changed line -> [1,1]");
+		}
+		// Identical text → no ranges.
+		{
+			auto r = marked("a\nb\nc\n", "a\nb\nc\n");
+			CHECK(r.empty(), "MarkChangedLines: identical text -> no ranges");
+		}
+		// Two consecutive changed lines → coalesced into a single [1,2] range.
+		{
+			auto r = marked("a\nb\nc\nd\n", "a\nB\nC\nd\n");
+			CHECK(r.size() == 1 && r[0].first == 1 && r[0].second == 2,
+				"MarkChangedLines: consecutive changes coalesce to [1,2]");
+		}
+		// An inserted line is marked at its position.
+		{
+			auto r = marked("a\nc\n", "a\nb\nc\n");
+			CHECK(r.size() == 1 && r[0].first == 1 && r[0].second == 1,
+				"MarkChangedLines: inserted line -> [1,1]");
+		}
+		// Pure deletion (new text strictly shorter, nothing new) → no marks.
+		{
+			auto r = marked("a\nb\nc\n", "a\nc\n");
+			CHECK(r.empty(), "MarkChangedLines: pure deletion -> no ranges");
+		}
+		// Two separated changes → two distinct ranges.
+		{
+			auto r = marked("a\nb\nc\nd\ne\n", "A\nb\nc\nd\nE\n");
+			CHECK(r.size() == 2 && r[0].first == 0 && r[0].second == 0 &&
+				  r[1].first == 4 && r[1].second == 4,
+				"MarkChangedLines: separated changes -> two ranges");
+		}
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;
