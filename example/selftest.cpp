@@ -676,6 +676,18 @@ int main()
 		std::fprintf(stderr, "[ts:lua] symbols=%zu\n", luas.size());
 		CHECK(hasDef(luas, "helper"), "Lua: function helper found");
 
+		// Real-world Lua definition forms must all land in tsDefs (the index that
+		// gates whether "Go to Definition" is offered — see goToDefinitionProjectWide).
+		auto luaForms = ts::extractSymbols(ts::Lang::Lua,
+			"function M.foo() end\n"
+			"function obj:bar() end\n"
+			"M.baz = function() end\n"
+			"function globalFn() end\n");
+		CHECK(hasDef(luaForms, "foo"),      "Lua: function M.foo() captured");
+		CHECK(hasDef(luaForms, "bar"),      "Lua: method obj:bar() captured");
+		CHECK(hasDef(luaForms, "baz"),      "Lua: M.baz = function() captured");
+		CHECK(hasDef(luaForms, "globalFn"), "Lua: global function captured");
+
 		std::string go =
 			"package main\n"
 			"type Widget struct { X int }\n"

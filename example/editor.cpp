@@ -9911,7 +9911,12 @@ void Editor::renderDocumentWindow(TabDocument &t)
             bool known = !seg.empty() && t.trie.contains(seg);
             if (!known && !seg.empty())
                 if (auto idx = indexSnapshot())
-                    known = idx->defs.count(seg) != 0;
+                    // Consult BOTH indexes: the grep `defs` AND the tree-sitter `tsDefs`.
+                    // tsDefs is where non-clangd languages (Lua, Go, Rust, Python, JS)
+                    // record definitions and is exactly what tsGoToDefinition() resolves
+                    // against — checking only `defs` hid "Go to Definition" for them
+                    // (e.g. cross-file Lua functions) even though the jump would succeed.
+                    known = idx->defs.count(seg) != 0 || idx->tsDefs.count(seg) != 0;
             bool navigable = known && !isKeyword;
 
             // Definition = where it's defined (bodies / .cpp). Declaration =
