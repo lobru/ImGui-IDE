@@ -29,6 +29,9 @@ read `tag-commits-gsha`.
   `imgui-ide-bridge` Claude Code plugin (open-in-ide, toast).
 
 ### Fixed
+- "Go to Definition" now appears for Lua (and Go / Rust / Python / JS) symbols — the
+  menu gate consulted only the grep index, never the tree-sitter index those languages
+  use, so the jump was available but never offered.
 - Installed build no longer loses runtime languages (`loadRuntimeLanguages` now
   resolves `<exe-dir>/languages`, not `<exe-file>/languages`). A writable per-user
   languages folder also lets read-only (Program Files) installs be extended/overridden.
