@@ -970,6 +970,32 @@ int main()
 			"Merge3: identical inputs -> identity");
 	}
 
+	// ── IndentGuideLevels (VSCode-style indent guides, ported into the widget) ──
+	{
+		// Tab indentation: guide count == number of leading tabs (independent of tab
+		// size, since each tab advances to the next stop).
+		TextEditor ed;
+		ed.SetText(
+			"a\n"     // 0: level 0
+			"\tb\n"   // 1: level 1
+			"\t\tc\n" // 2: level 2
+			"\td\n"); // 3: level 1
+		auto lv = ed.IndentGuideLevels();
+		CHECK(lv.size() >= 4 && lv[0] == 0 && lv[1] == 1 && lv[2] == 2 && lv[3] == 1,
+			"IndentGuides: tab indent -> level per line");
+
+		// A blank line inherits the SHALLOWER of its nearest non-blank neighbours, so
+		// guides run through it without overshooting the block.
+		TextEditor ed2;
+		ed2.SetText(
+			"a\n"      // 0: level 0
+			"\tb\n"    // 1: level 1
+			"\n"       // 2: blank -> min(prev 1, next 2) = 1
+			"\t\tc\n"); // 3: level 2
+		auto lv2 = ed2.IndentGuideLevels();
+		CHECK(lv2.size() >= 4 && lv2[2] == 1, "IndentGuides: blank inherits shallower neighbour");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

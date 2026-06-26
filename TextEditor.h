@@ -395,6 +395,11 @@ public:
 	static std::string Merge3(const std::string& base, const std::string& mine,
 							   const std::string& theirs, bool& conflict);
 
+	// Per-line indent-guide count (vertical guides to draw to the left of each line's
+	// content; blank lines inherit the shallower neighbour). Pure logic, headless-
+	// testable; drives renderIndentGuides().
+	std::vector<int> IndentGuideLevels() const;
+
 	// specify a change callback (called when changes are made (including undo/redo))
 	// the delay parameter specifies a time in miliseconds that the editor will wait for before calling
 	// which helps in case you don't need to track every keystroke
@@ -1509,6 +1514,7 @@ protected:
 	void renderSelections();
 	void renderMarkers();
 	void renderMatchingBrackets();
+	void renderIndentGuides();
 	void renderText();
 	void renderTextWrapped();   // word-wrap render path (text + selection + cursors)
 	void renderCursors();

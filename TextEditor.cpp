@@ -426,6 +426,7 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 		renderSelections();
 		renderMarkers();
 		renderMatchingBrackets();
+		renderIndentGuides();    // language-agnostic indent guides (VSCode-style) when folding is on
 		renderMargin();          // <-- moved up so click-to-fold takes effect same frame
 		renderLineNumbers();
 		renderText();
@@ -683,7 +684,10 @@ void TextEditor::renderMatchingBrackets()
 			auto drawList = ImGui::GetWindowDrawList();
 			ImVec2 cursorScreenPos = ImGui::GetCursorScreenPos();
 
-			// render bracket pair lines
+			// Passive per-bracket scope guides — only when folding is OFF. With folding
+			// ON, renderIndentGuides() draws language-agnostic indent guides instead, so
+			// brace-less languages (Lua, Python) get guides too and we avoid doubling.
+			if (!foldRanges.foldingEnabled)
 			for (auto& bracket : bracketeer)
 			{
 				if ((bracket.end.line - bracket.start.line) > 1 &&
@@ -734,6 +738,135 @@ void TextEditor::renderMatchingBrackets()
 			}
 		}
 	}
+}
+
+
+//
+//	TextEditor::IndentGuideLevels
+//
+//	Per-line indent-guide count: the number of vertical indentation guides to draw
+//	on each line (one per indent step to the left of the line's content). Blank
+//	lines inherit the shallower of their nearest non-blank neighbours so guides run
+//	continuously through them without overshooting a block. Pure logic (no ImGui
+//	context) → unit-testable headless.
+
+std::vector<int> TextEditor::IndentGuideLevels() const
+{
+	int ts = document.getTabSize();
+	if (ts <= 0)
+		ts = 4;
+	int n = document.lineCount();
+	std::vector<int> raw(n, -1); // own indent level for non-blank lines, -1 for blank
+	for (int i = 0; i < n; ++i)
+	{
+		const Line& gl = document[i];
+		int col = 0;
+		bool blank = true;
+		for (size_t k = 0; k < gl.size(); ++k)
+		{
+			auto cp = gl[k].codepoint;
+			if (cp == ' ')
+				col += 1;
+			else if (cp == '\t')
+				col += ts - (col % ts);
+			else
+			{
+				blank = false;
+				break;
+			}
+		}
+		if (!blank)
+			raw[i] = col / ts; // full indent steps before the content
+	}
+
+	// Nearest non-blank level to each side (two linear passes, so a run of blank
+	// lines stays O(n) rather than O(n^2)).
+	std::vector<int> prevLvl(n, -1), nextLvl(n, -1);
+	int last = -1;
+	for (int i = 0; i < n; ++i)
+	{
+		prevLvl[i] = last;
+		if (raw[i] >= 0)
+			last = raw[i];
+	}
+	last = -1;
+	for (int i = n - 1; i >= 0; --i)
+	{
+		nextLvl[i] = last;
+		if (raw[i] >= 0)
+			last = raw[i];
+	}
+
+	std::vector<int> levels(n, 0);
+	for (int i = 0; i < n; ++i)
+	{
+		if (raw[i] >= 0)
+		{
+			levels[i] = raw[i];
+			continue;
+		}
+		int prev = prevLvl[i], next = nextLvl[i];
+		if (prev < 0 && next < 0)
+			levels[i] = 0;
+		else if (prev < 0)
+			levels[i] = next;
+		else if (next < 0)
+			levels[i] = prev;
+		else
+			levels[i] = (std::min)(prev, next);
+	}
+	return levels;
+}
+
+
+//
+//	TextEditor::renderIndentGuides
+//
+//	Draw a faint vertical guide at each indentation step for every visible line
+//	(VSCode/Sublime style), independent of language so brace-less code (Lua, Python)
+//	shows block structure too. Only active when folding is enabled.
+
+void TextEditor::renderIndentGuides()
+{
+	if (!foldRanges.foldingEnabled || document.lineCount() == 0)
+		return;
+
+	int ts = document.getTabSize();
+	if (ts <= 0)
+		ts = 4;
+	auto levels = IndentGuideLevels();
+
+	auto drawList = ImGui::GetWindowDrawList();
+	ImVec2 cursorScreenPos = ImGui::GetCursorScreenPos();
+	ImU32 color = palette.get(Color::whitespace);
+
+	// Clip to the text area so guides never bleed under the fixed line-number gutter
+	// when scrolled horizontally (mirrors renderText's clip).
+	const float gutterRightX = ImGui::GetWindowPos().x + textOffset;
+	const float windowRightX = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x - glyphSize.x * 1.5f - verticalScrollBarSize;
+	drawList->PushClipRect(
+		ImVec2(gutterRightX, ImGui::GetWindowPos().y),
+		ImVec2(windowRightX, ImGui::GetWindowPos().y + ImGui::GetWindowSize().y),
+		true);
+
+	int firstVisibleIndex = lineToVisualIndex(firstVisibleLine);
+	int lastVisibleIndex = lineToVisualIndex(lastVisibleLine);
+	for (int vi = firstVisibleIndex; vi <= lastVisibleIndex; ++vi)
+	{
+		int line = visualIndexToLine(vi);
+		if (line < 0 || line >= (int) levels.size())
+			continue;
+		int depth = levels[line];
+		float y0 = cursorScreenPos.y + vi * glyphSize.y;
+		float y1 = y0 + glyphSize.y;
+		for (int k = 0; k < depth; ++k)
+		{
+			float x = cursorScreenPos.x + textOffset + columnToX(line, k * ts);
+			drawList->AddLine(ImVec2(x, y0), ImVec2(x, y1), color, 1.0f);
+		}
+	}
+
+	drawList->PopClipRect();
 }
 
 
