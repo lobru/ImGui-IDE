@@ -29,6 +29,11 @@ read `tag-commits-gsha`.
   `imgui-ide-bridge` Claude Code plugin (open-in-ide, toast).
 
 ### Fixed
+- Clicking in a long line that contains tabs now lands the caret exactly under the
+  click (the click path fed a pre-floored column to the snap; it now passes the true
+  sub-cell position).
+- Language-agnostic indent guides (VSCode-style) draw at every indent level when
+  folding is enabled — brace-less languages (Lua, Python) included.
 - "Go to Definition" now appears for Lua (and Go / Rust / Python / JS) symbols — the
   menu gate consulted only the grep index, never the tree-sitter index those languages
   use, so the jump was available but never offered.
