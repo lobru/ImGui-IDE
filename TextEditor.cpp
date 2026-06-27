@@ -2184,20 +2184,26 @@ void TextEditor::handleMouseInteractions()
 			// the glyph under the cursor regardless of how the line was wrapped.
 			int row = std::clamp(visibleIndex, 0, static_cast<int>(wrapRows.size()) - 1);
 			int realLine = wrapRows[row].line;
-			int colInRow = std::max(0, static_cast<int>((mousePos.x - textOffset) / glyphSize.x));
-			int column = wrapRows[row].startColumn + colInRow;
-			document.normalizeCoordinate(1.0f * realLine, 1.0f * column,
+			// Fractional column (see the non-wrap branch): single tab-aware midpoint snap.
+			float colInRow = std::max(0.0f, (mousePos.x - textOffset) / glyphSize.x);
+			float column = static_cast<float>(wrapRows[row].startColumn) + colInRow;
+			document.normalizeCoordinate(1.0f * realLine, column,
 				glyphCoordinate, cursorCoordinate);
 		}
 		else
 		{
 			int realLine = visualIndexToLine(visibleIndex);
-			// xToColumn == (px / glyphSize.x) in monospace mode; measured walk
-			// when proportional so the caret lands under the clicked glyph.
-			int col = xToColumn(realLine, mousePos.x - textOffset);
+			// Pass the FRACTIONAL visual column so normalizeCoordinate does ONE tab-aware
+			// midpoint snap from the true click position. Pre-flooring via int xToColumn
+			// dropped the sub-cell offset, which on tab-containing lines (wide cells)
+			// biased the caret off the click — the roadmap's "cursor X mis-alignment".
+			// Proportional still needs the measured walk; monospace is an exact x/glyphSize.x.
+			float vcol = proportional
+				? static_cast<float>(xToColumn(realLine, mousePos.x - textOffset))
+				: (mousePos.x - textOffset) / glyphSize.x;
 			document.normalizeCoordinate(
-				1.0f* realLine,
-				1.0f* std::max(0, col),
+				1.0f * realLine,
+				std::max(0.0f, vcol),
 				glyphCoordinate,
 				cursorCoordinate
 			);

@@ -996,6 +996,24 @@ int main()
 		CHECK(lv2.size() >= 4 && lv2[2] == 1, "IndentGuides: blank inherits shallower neighbour");
 	}
 
+	// ── CaretColumnAtVisual (click -> caret midpoint snap; the cursor-X fix) ──
+	{
+		TextEditor ed;
+		ed.SetText("abc\n");
+		// A fractional visual column snaps to the NEARER glyph gap. The bug was that
+		// the click path pre-floored the column (int), so the sub-cell offset was lost
+		// and the caret could land off the click on tab-containing lines.
+		CHECK(ed.CaretColumnAtVisual(0, 0.4f) == 0, "CaretColumn: left of midpoint -> 0");
+		CHECK(ed.CaretColumnAtVisual(0, 0.6f) == 1, "CaretColumn: right of midpoint -> 1");
+		CHECK(ed.CaretColumnAtVisual(0, 1.6f) == 2, "CaretColumn: 1.6 -> 2 (nearest gap)");
+		CHECK(ed.CaretColumnAtVisual(0, 100.0f) == 3, "CaretColumn: past EOL clamps to maxColumn");
+
+		// A leading tab: a click in its left edge stays at the tab start (col 0).
+		TextEditor ed2;
+		ed2.SetText("\tab\n");
+		CHECK(ed2.CaretColumnAtVisual(0, 0.2f) == 0, "CaretColumn: left edge of leading tab -> 0");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;

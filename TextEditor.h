@@ -400,6 +400,15 @@ public:
 	// testable; drives renderIndentGuides().
 	std::vector<int> IndentGuideLevels() const;
 
+	// Map a FRACTIONAL visual column on a line to the caret column via the tab-aware
+	// midpoint snap — the click->caret primitive (mouse x / glyphSize.x feeds this).
+	// Exposed so the snap can be unit-tested headless.
+	int CaretColumnAtVisual(int line, float visualColumn) const {
+		Coordinate g, c;
+		document.normalizeCoordinate(static_cast<float>(line), visualColumn, g, c);
+		return c.column;
+	}
+
 	// specify a change callback (called when changes are made (including undo/redo))
 	// the delay parameter specifies a time in miliseconds that the editor will wait for before calling
 	// which helps in case you don't need to track every keystroke
