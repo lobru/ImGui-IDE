@@ -10,14 +10,15 @@ that is still genuinely outstanding.
 ## 🔧 Open
 
 ### Bugs needing a Windows repro
-- [ ] **Cursor X mis-alignment** on long lines containing tabs. Repro: open a
-      `.md` with tabs, click in the middle of a long line — cursor lands past
-      the click point. The proportional-font column↔pixel rework
-      (`normalizeCoordinate`, `glyphSize.x`) may have changed this; retest
-      before chasing. If still present, add a temporary
-      `assert(column == cursor.column)` around the click→coordinate roundtrip
-      (`normalizeCoordinate` at the mouse-pos call site) to localise whether
-      the drift is in the pixel→column map or the tab-stop normalisation.
+- [x] **Cursor X mis-alignment** on long lines containing tabs — FIXED
+      (2026-06-26, `7db583b`). Root cause: the cursor-placement click path
+      floored the visual column via int `xToColumn` before `normalizeCoordinate`,
+      dropping the sub-cell offset; on wide tab cells that biased the caret off
+      the click. The hover/word path already passed a fractional column — the
+      cursor path (and the word-wrap branch) now do too (monospace = exact
+      `x/glyphSize.x`, proportional keeps the measured walk). New
+      `CaretColumnAtVisual()` + 5 headless selftest cases lock the snap math.
+      Runtime click-accuracy on a tabbed long line is the final visual confirm.
 - [x] **Fold preview drawn on its own row** — confirmed fixed (done long ago;
       the spurious top-level Python indent folds that caused it no longer exist
       after the indent-fold rewrite). Preview draws inline at

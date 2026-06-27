@@ -126,9 +126,10 @@ gates cover the non-UI logic (colorizer, folding, language mapping, member-compl
 resolution) plus a dedicated LSP transport test (`lsptest`). Verification of visual/cursor
 features remains runtime-owned — confirmed in the running app, not just by "it compiles."
 
-The entire 2026-05 roadmap has shipped (see `.claude/roadmap.md`). Remaining open items are
-one bug awaiting a Windows repro (cursor X drift on tabbed long lines) and one polish item
-(distinct `///` docstring-fold preview). The fold-preview-row bug is fixed.
+The entire roadmap has shipped (see `.claude/roadmap.md`). The last open bug — cursor X drift
+on tabbed long lines — was fixed (`7db583b`): the click path now feeds `normalizeCoordinate`
+a fractional column instead of a pre-floored one, with headless `CaretColumnAtVisual` tests.
+The `///` docstring-fold preview and the fold-preview-row bug are also done.
 
 ## Roadmap
 1. Tighter live-agent integration (attribution beyond on-disk diffing).
