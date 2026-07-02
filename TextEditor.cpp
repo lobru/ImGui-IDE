@@ -452,7 +452,7 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	renderFindReplace(pos, visibleSize.x - verticalScrollBarSize);
 
 	// render autocomplete popup
-	if (autocomplete.render(document, cursors, language, textOffset, glyphSize))
+	if (autocomplete.render(*this, document, cursors, language, textOffset, glyphSize))
 	{
 		// user picked a suggestion so insert it
 		auto start = autocomplete.getStart();
@@ -522,7 +522,8 @@ void TextEditor::renderSelections()
 		// First pass: figure out if the mouse is over ANY line of this selection.
 		// Otherwise hovered/non-hovered status diverged per-line, making the top
 		// lines look dimmer than the bottom ones when the user hovered the middle.
-		bool selectionHovered = false;
+//		bool selectionHovered = false;
+	/*
 		for (int line = firstLine; line <= lastLine && !selectionHovered; ++line)
 		{
 			if (!document[line].visible) continue;
@@ -537,7 +538,7 @@ void TextEditor::renderSelections()
 				selectionHovered = true;
 			}
 		}
-
+	*/
 		for (int line = firstLine; line <= lastLine; ++line)
 		{
 			if (!document[line].visible) continue;
@@ -550,7 +551,7 @@ void TextEditor::renderSelections()
 
 
 			bool hovered = ImGui::IsMouseHoveringRect(ImVec2(left, y), ImVec2(right, y + glyphSize.y));
-			ImU32 bgCol = selectionHovered ? IM_COL32(100, 100, 110, 200) : IM_COL32(80, 80, 80, 140);
+			ImU32 bgCol = IM_COL32(80, 80, 80, 180);/*selectionHovered ? IM_COL32(100, 100, 110, 200) : IM_COL32(80, 80, 80, 140);*/
 			drawList->AddRectFilled(ImVec2(left, y), ImVec2(right, y + glyphSize.y), bgCol);
 			// Drag-start detection moved to handleMouseInteractions so it can
 			// be gated on a real ImGui drag (not just an immediate down-click);
@@ -8563,7 +8564,7 @@ static bool renderSuggestion(const std::string_view& suggestion, const std::stri
 //	TextEditor::Autocomplete::render
 //
 
-bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, const Language* language, float textOffset, ImVec2 glyphSize)
+bool TextEditor::Autocomplete::render(const TextEditor& editor, Document& document, Cursors& cursors, const Language* language, float textOffset, ImVec2 glyphSize)
 {
 	// see if we need to activate autocomplete mode
 	if (requestActivation)
@@ -8650,9 +8651,13 @@ bool TextEditor::Autocomplete::render(Document& document, Cursors& cursors, cons
 	bool result = false;
 	auto cursorScreenPos = ImGui::GetCursorScreenPos();
 
+	// Anchor at the VISUAL cursor position: fold-collapsed row (lineToVisualIndex)
+	// and measured x (columnToX — handles proportional fonts; == column*glyph.x in
+	// monospace). Raw line*glyph.y put the popup N-hidden-rows below the caret when
+	// folds were collapsed above it — over whatever window sat under the editor.
 	ImGui::SetNextWindowPos(ImVec2(
-		cursorScreenPos.x + textOffset + currentLocation.column * glyphSize.x,
-		cursorScreenPos.y + (currentLocation.line + 1) * glyphSize.y));
+		cursorScreenPos.x + textOffset + editor.columnToX(currentLocation.line, currentLocation.column),
+		cursorScreenPos.y + (editor.lineToVisualIndex(currentLocation.line) + 1) * glyphSize.y));
 
 	auto suggestions = state.suggestions.size();
 	auto visibleSuggestions = (suggestions == 0) ? 1 : std::min(static_cast<size_t>(10), suggestions);

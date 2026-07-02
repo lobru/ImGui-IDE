@@ -1479,8 +1479,12 @@ protected:
 		// cancel autocomplete mode (if required)
 		void cancel();
 
-		// update autocomplete state and render (if required)
-		bool render(Document& document, Cursors& cursors, const Language* language, float textOffset, ImVec2 glyphSize);
+		// update autocomplete state and render (if required). Takes the owning editor
+		// so the popup anchors at the VISUAL cursor position (fold-collapsed row via
+		// lineToVisualIndex, measured x via columnToX) — raw line*glyph math put the
+		// popup N-hidden-rows too low whenever folds were collapsed above the cursor,
+		// landing it over whatever window sat below the editor.
+		bool render(const TextEditor& editor, Document& document, Cursors& cursors, const Language* language, float textOffset, ImVec2 glyphSize);
 
 		// specify a new set of suggestions
 		void setSuggestions(const std::vector<std::string>& suggestions);
