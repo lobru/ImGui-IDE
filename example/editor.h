@@ -241,6 +241,10 @@ private:
 
 	void setAutocompleteMode(bool flag);
 	void buildAutocompleteTrie(TabDocument& t);
+	// (Re)evaluate large-file mode for `bytes` of content and apply/lift the
+	// intelligence gates on transition. Called on open, reload, and merge — the
+	// file's size can change under us (review finding: the flag was set once).
+	void updateLargeFileMode(TabDocument& t, size_t bytes);
 	void configureTabAutocomplete(TabDocument& t);   // wire autocomplete + build trie for ONE tab
 
 	static const TextEditor::Language* languageForPath(const std::string& path);

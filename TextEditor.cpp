@@ -125,6 +125,10 @@ void TextEditor::setText(const std::string_view& text)
 	// load text into document and reset subsystems
 	document.setText(text);
 	transactions.reset();
+	// transactions.reset() zeroes the undo index, so the indent-guide cache key
+	// (undoIndex, lineCount, tabSize) can COLLIDE with the previous content when a
+	// reload has the same line count — invalidate explicitly.
+	indentGuideCacheLines = -1;
 	bracketeer.reset();
 	colorizer.updateEntireDocument(document, language);
 	if (language)

@@ -8128,20 +8128,13 @@ void Editor::openFile(const std::string &path)
         // Large-file mode: whole-document intelligence (trie build, LSP sync,
         // folding, bracket matching) all walk the full text — on a many-MB file
         // that's seconds of stall on open and per-edit. Keep such files fast,
-        // plain editors instead.
-        target->largeFile = text.size() > 8u * 1024 * 1024;
+        // plain editors instead. (Gates BEFORE SetText so the fold scan is skipped.)
+        updateLargeFileMode(*target, text.size());
 
         target->originalText = text;
         target->syncedText = text; // 3-way merge base = last reconciled content
         target->editor.SetText(text);
         target->editor.SetLanguage(languageForPath(path));
-        if (target->largeFile)
-        {
-            target->editor.SetFoldingEnabled(false);
-            target->editor.SetShowMatchingBrackets(false);
-            pushToast("Large file \xe2\x80\x94 code intelligence disabled for speed",
-                      IM_COL32(240, 200, 90, 255), 2);
-        }
         target->version = target->editor.GetUndoIndex();
         target->filename = path;
         target->wantFocus = true;
@@ -8252,6 +8245,7 @@ void Editor::reloadFromDisk(TabDocument &t)
     int line = 0, column = 0;
     t.editor.GetCurrentCursor(line, column);
 
+    updateLargeFileMode(t, text.size()); // external edit may cross the 8MB threshold
     t.editor.SetText(text);
     t.originalText = text;
     t.syncedText = text; // reconciled with disk
@@ -8530,6 +8524,7 @@ void Editor::mergeExternalChange(TabDocument &t)
     int line = 0, column = 0;
     t.editor.GetCurrentCursor(line, column);
 
+    updateLargeFileMode(t, merged.size()); // merged content may cross the 8MB threshold
     t.editor.SetText(merged);
     t.externalChange = false;
     clearChangeMarks(t);
@@ -12979,6 +12974,27 @@ void Editor::buildProjectTrie()
 //
 //  Editor::buildAutocompleteTrie
 //
+
+void Editor::updateLargeFileMode(TabDocument &t, size_t bytes)
+{
+    bool large = bytes > 8u * 1024 * 1024;
+    if (large == t.largeFile)
+        return;
+    t.largeFile = large;
+    t.editor.SetFoldingEnabled(!large);
+    t.editor.SetShowMatchingBrackets(!large);
+    if (large)
+    {
+        t.trie.clear();
+        pushToast("Large file \xe2\x80\x94 code intelligence disabled for speed",
+                  IM_COL32(240, 200, 90, 255), 2);
+    }
+    else
+    {
+        // Shrank back under the threshold (external edit / merge) — re-arm.
+        buildAutocompleteTrie(t);
+    }
+}
 
 void Editor::buildAutocompleteTrie(TabDocument &t)
 {
