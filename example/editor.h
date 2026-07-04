@@ -770,6 +770,15 @@ private:
 	std::string  ctxLogLabel;    // menu label (file(line))
 	int          ctxLogLine = 0; // 1-based
 
+	// Same memo pattern for C++ definition/declaration generation. The class
+	// scan reads whole-file text, so recompute only when (doc|line|lineCount|
+	// undoIndex) change rather than every frame the popup is open.
+	std::string  ctxGenKey;
+	std::string  ctxGenClass;    // enclosing class name ("" = not in a class)
+	std::string  ctxGenOneDef;   // single-member definition stub ("" = N/A)
+	std::string  ctxGenAllDefs;  // all undefined members' stubs ("" = none)
+	std::string  ctxGenDecl;     // in-class declaration from an out-of-line def
+
 	// Find References results panel — project-wide. Each hit records the file
 	// it was found in so clicking opens that file and jumps to the line.
 	struct RefHit { std::string file; int line; std::string text; };

@@ -82,6 +82,7 @@ add_executable(example
 	updater.cpp
 	unreal.cpp
 	pdfview.cpp
+	cppgen.cpp
 	dejavu.cpp
 	main.cpp)
 
@@ -156,7 +157,7 @@ add_custom_command(TARGET example POST_BUILD
 # colorizer, fold detection — with no SDL/GPU/ImGui context. It links the same
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
-add_executable(selftest selftest.cpp unreal.cpp)
+add_executable(selftest selftest.cpp unreal.cpp cppgen.cpp)
 target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto)
 target_compile_options(selftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>

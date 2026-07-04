@@ -19,6 +19,7 @@
 #include "lsp_protocol.h"
 #include "nav_history.h"
 #include "unreal.h"
+#include "cppgen.h"
 
 #include <filesystem>
 #include <fstream>
@@ -1099,6 +1100,106 @@ int main()
 		// All-caps macros / normal CamelCase are NOT miscolored by the pattern.
 		CHECK(colorAt(cpp, "TESTING x;\n", 0, 0) == plainId, "UE C++: SCREAMING_CASE not treated as a type");
 		CHECK(colorAt(cpp, "Total x;\n", 0, 0) == plainId, "UE C++: normal CamelCase (Total) not a type");
+	}
+
+	// ── C++ definition / declaration generation ───────────────────────────
+	{
+		using namespace cppgen;
+
+		// Single member: normal method.
+		{
+			MemberDecl m = parseMemberDecl("int computeArea(const Rect& r, int scale = 1) const;");
+			CHECK(m.valid, "cppgen: normal method parses");
+			CHECK(m.returnType == "int", "cppgen: return type = int");
+			CHECK(m.name == "computeArea", "cppgen: name = computeArea");
+			CHECK(m.params == "const Rect& r, int scale", "cppgen: default arg stripped");
+			CHECK(m.trailing == "const", "cppgen: const qualifier kept");
+			CHECK(memberDefinition("Widget", m) == "int Widget::computeArea(const Rect& r, int scale) const\n{\n}\n",
+			      "cppgen: definition stub for normal method");
+		}
+
+		// virtual + override are dropped; pure-virtual gets no body.
+		{
+			MemberDecl v = parseMemberDecl("virtual void draw() override;");
+			CHECK(v.valid && v.returnType == "void" && v.trailing.empty(),
+			      "cppgen: virtual/override stripped");
+			CHECK(memberDefinition("Shape", v) == "void Shape::draw()\n{\n}\n",
+			      "cppgen: virtual def has no virtual/override");
+			MemberDecl pure = parseMemberDecl("virtual double area() const = 0;");
+			CHECK(pure.isPureVirtual, "cppgen: = 0 detected");
+			CHECK(memberDefinition("Shape", pure).empty(), "cppgen: pure virtual → no definition");
+		}
+
+		// Constructor / destructor: no return type.
+		{
+			MemberDecl ctor = parseMemberDecl("Widget(int w, int h);");
+			CHECK(ctor.isCtorOrDtor && ctor.returnType.empty() && ctor.name == "Widget",
+			      "cppgen: constructor parsed");
+			CHECK(memberDefinition("Widget", ctor) == "Widget::Widget(int w, int h)\n{\n}\n",
+			      "cppgen: constructor definition");
+			MemberDecl dtor = parseMemberDecl("~Widget();");
+			CHECK(dtor.name == "~Widget", "cppgen: destructor name keeps ~");
+			CHECK(memberDefinition("Widget", dtor) == "Widget::~Widget()\n{\n}\n",
+			      "cppgen: destructor definition");
+			MemberDecl def = parseMemberDecl("Widget() = default;");
+			CHECK(def.isDefaulted && memberDefinition("Widget", def).empty(),
+			      "cppgen: = default → no definition");
+		}
+
+		// noexcept, ref-qualifier, templated return, operator.
+		{
+			MemberDecl m = parseMemberDecl("std::vector<int> values() const noexcept;");
+			CHECK(m.returnType == "std::vector<int>" && m.trailing == "const noexcept",
+			      "cppgen: templated return + const noexcept");
+			MemberDecl op = parseMemberDecl("Widget& operator=(const Widget& o);");
+			CHECK(op.name == "operator=" && op.returnType == "Widget&",
+			      "cppgen: operator= parsed");
+			CHECK(memberDefinition("Widget", op) == "Widget& Widget::operator=(const Widget& o)\n{\n}\n",
+			      "cppgen: operator= definition");
+		}
+
+		// Inline body → excluded from generation.
+		{
+			MemberDecl inl = parseMemberDecl("int getX() const { return x; }");
+			CHECK(inl.hasInlineBody && memberDefinition("P", inl).empty(),
+			      "cppgen: inline-bodied member → no definition");
+		}
+
+		// Enclosing class + whole-class generation, skipping inline/data/pure.
+		{
+			std::string hdr =
+			    "class Widget {\n"
+			    "public:\n"
+			    "    Widget();\n"
+			    "    int area() const;\n"
+			    "    int getX() const { return x; }\n"   // inline: skip
+			    "    virtual void draw() = 0;\n"          // pure: skip
+			    "private:\n"
+			    "    int x;\n"                            // data member: skip
+			    "};\n";
+			CHECK(enclosingClass(hdr, 2) == "Widget", "cppgen: enclosingClass finds Widget");
+			CHECK(enclosingClass(hdr, 0).empty() || enclosingClass(hdr, 8) == "Widget",
+			      "cppgen: enclosingClass line inside body");
+			std::string cls;
+			std::string one = generateOneDefinition(hdr, 3, &cls);  // int area() const;
+			CHECK(one == "int Widget::area() const\n{\n}\n" && cls == "Widget",
+			      "cppgen: generateOneDefinition for area()");
+			std::string all = generateClassDefinitions(hdr, 3, &cls);
+			CHECK(all.find("Widget::Widget()") != std::string::npos, "cppgen: all-defs includes ctor");
+			CHECK(all.find("int Widget::area() const") != std::string::npos, "cppgen: all-defs includes area");
+			CHECK(all.find("getX") == std::string::npos, "cppgen: all-defs skips inline getX");
+			CHECK(all.find("draw") == std::string::npos, "cppgen: all-defs skips pure draw");
+			CHECK(all.find("int x") == std::string::npos, "cppgen: all-defs skips data member");
+		}
+
+		// Reverse: declaration from an out-of-line definition.
+		{
+			std::string decl = declarationFromDefinition("int Widget::computeArea(const Rect& r) const\n{\n    return 0;\n}");
+			CHECK(decl == "int Widget::computeArea(const Rect& r) const;" || decl == "int computeArea(const Rect& r) const;",
+			      "cppgen: declarationFromDefinition strips qualifier");
+			CHECK(declarationFromDefinition("void freeFunc(int x) {}").empty(),
+			      "cppgen: unqualified free function → no declaration");
+		}
 	}
 
 	if (gFailures == 0) {
