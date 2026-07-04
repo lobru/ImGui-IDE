@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace unreal {
 
@@ -42,6 +43,14 @@ std::string generateClangDbCommand(const std::filesystem::path& engineRoot, cons
 
 // Path to UnrealEditor.exe for launching the project (empty if absent).
 std::filesystem::path editorBinary(const std::filesystem::path& engineRoot);
+
+// Autocomplete word list for editing .uproject/.uplugin descriptors: schema keys,
+// module Type / LoadingPhase enum values, and DISCOVERED names — project modules
+// (Source/*), project plugins, engine plugins, engine modules — so dependency,
+// plugin, and module fields complete against what actually exists. Cached per
+// (engineRoot, projectDir); the first call does the directory scans.
+const std::vector<std::string>& descriptorWords(const std::filesystem::path& engineRoot,
+												const std::filesystem::path& projectDir);
 
 // Resolve a UE-style module-relative include ("GameFramework/Actor.h",
 // "CoreMinimal.h", "Actor.generated.h") against the project's and engine's module

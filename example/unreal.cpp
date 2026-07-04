@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 
 #include <nlohmann/json.hpp>
 
@@ -163,6 +164,92 @@ std::filesystem::path editorBinary(const std::filesystem::path& engineRoot)
 	std::error_code ec;
 	auto exe = engineRoot / "Engine" / "Binaries" / "Win64" / "UnrealEditor.exe";
 	return std::filesystem::exists(exe, ec) ? exe : std::filesystem::path{};
+}
+
+const std::vector<std::string>& descriptorWords(const std::filesystem::path& engineRoot,
+												const std::filesystem::path& projectDir)
+{
+	// Cached per (engine, project) — the scans below walk real directory trees.
+	static std::map<std::string, std::vector<std::string>> cache;
+	std::string key = engineRoot.string() + "|" + projectDir.string();
+	auto found = cache.find(key);
+	if (found != cache.end())
+		return found->second;
+
+	std::vector<std::string> w = {
+		// .uproject / .uplugin descriptor keys
+		"FileVersion", "EngineAssociation", "Category", "Description", "Modules", "Plugins",
+		"Name", "Type", "LoadingPhase", "AdditionalDependencies", "Enabled", "Optional",
+		"MarketplaceURL", "SupportedTargetPlatforms", "TargetPlatforms", "TargetAllowList",
+		"TargetDenyList", "PlatformAllowList", "PlatformDenyList", "ProgramAllowList",
+		"PreBuildSteps", "PostBuildSteps", "Version", "VersionName", "FriendlyName",
+		"CreatedBy", "CreatedByURL", "DocsURL", "SupportURL", "EnabledByDefault",
+		"CanContainContent", "IsBetaVersion", "IsExperimentalVersion", "Installed",
+		"ExplicitlyLoaded", "HasExplicitPlatforms", "Hidden", "NoCode", "EpicSampleNameHash",
+		// module Type values
+		"Runtime", "RuntimeNoCommandlet", "RuntimeAndProgram", "CookedOnly", "UncookedOnly",
+		"Developer", "DeveloperTool", "Editor", "EditorNoCommandlet", "EditorAndProgram",
+		"Program", "ServerOnly", "ClientOnly", "ClientOnlyNoCommandlet",
+		// LoadingPhase values
+		"EarliestPossible", "PostConfigInit", "PostSplashScreen", "PreEarlyLoadingScreen",
+		"PreLoadingScreen", "PreDefault", "Default", "PostDefault", "PostEngineInit", "None",
+		// common platform names for the allow/deny lists
+		"Win64", "Linux", "LinuxArm64", "Mac", "Android", "IOS", "TVOS",
+	};
+
+	std::error_code ec;
+	auto addDirNames = [&](const std::filesystem::path& dir) {
+		if (!std::filesystem::is_directory(dir, ec))
+			return;
+		for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+			if (e.is_directory())
+				w.push_back(e.path().filename().string());
+	};
+
+	// Project modules + project plugin names.
+	addDirNames(projectDir / "Source");
+	{
+		auto plugins = projectDir / "Plugins";
+		if (std::filesystem::is_directory(plugins, ec))
+			for (const auto& plug : std::filesystem::directory_iterator(plugins, ec))
+			{
+				if (!plug.is_directory())
+					continue;
+				w.push_back(plug.path().filename().string());
+				addDirNames(plug.path() / "Source"); // plugin modules too
+			}
+	}
+
+	if (!engineRoot.empty())
+	{
+		// Engine modules (dependency names).
+		for (const char* cat : { "Runtime", "Editor", "Developer", "Programs" })
+			addDirNames(engineRoot / "Engine" / "Source" / cat);
+		// Engine plugin names: **.uplugin stems, bounded walk.
+		auto plugRoot = engineRoot / "Engine" / "Plugins";
+		if (std::filesystem::is_directory(plugRoot, ec))
+		{
+			int budget = 6000;
+			for (auto it = std::filesystem::recursive_directory_iterator(
+					 plugRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+				 !ec && it != std::filesystem::recursive_directory_iterator(); ++it)
+			{
+				if (--budget <= 0)
+					break;
+				if (it.depth() > 3)
+				{
+					it.disable_recursion_pending();
+					continue;
+				}
+				if (it->is_regular_file(ec) && it->path().extension() == ".uplugin")
+					w.push_back(it->path().stem().string());
+			}
+		}
+	}
+
+	std::sort(w.begin(), w.end());
+	w.erase(std::unique(w.begin(), w.end()), w.end());
+	return cache.emplace(std::move(key), std::move(w)).first->second;
 }
 
 std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,

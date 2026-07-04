@@ -13177,6 +13177,16 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                 state.suggestions.push_back(s);
         }
     };
+    // UE descriptors (.uproject/.uplugin) are JSON — every completable token
+    // (key, enum value, plugin/module name) sits INSIDE a string literal, which
+    // suppresses autocomplete by default.
+    {
+        std::string cext = std::filesystem::path(t.filename).extension().string();
+        std::transform(cext.begin(), cext.end(), cext.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        if (cext == ".uproject" || cext == ".uplugin")
+            config.triggerInStrings = true;
+    }
     t.editor.SetAutoCompleteConfig(&config);
     t.editor.SetChangeCallback([this, tptr]() { buildAutocompleteTrie(*tptr); }, 3000);
     buildAutocompleteTrie(t);
@@ -13267,4 +13277,25 @@ void Editor::buildAutocompleteTrie(TabDocument &t)
             t.trie.insert(word);
     }
     t.editor.IterateIdentifiers([&](const std::string &id) { t.trie.insert(id); });
+
+    // .uproject / .uplugin descriptors: complete the UE schema (keys, module Type /
+    // LoadingPhase values) plus DISCOVERED plugin + module names from the project
+    // and its engine, so dependency/plugin fields complete against what exists.
+    {
+        std::string ext = std::filesystem::path(t.filename).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        if (ext == ".uproject" || ext == ".uplugin")
+        {
+            auto docDir = std::filesystem::path(t.filename).parent_path();
+            auto uproj = unreal::findUProject(docDir);
+            std::filesystem::path engine;
+            std::string assoc;
+            if (!uproj.empty())
+                engine = unreal::findEngineRoot(uproj, assoc);
+            auto projDir = uproj.empty() ? docDir : uproj.parent_path();
+            for (const auto &word : unreal::descriptorWords(engine, projDir))
+                t.trie.insert(word);
+        }
+    }
 }

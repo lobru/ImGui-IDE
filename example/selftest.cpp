@@ -1056,6 +1056,21 @@ int main()
 		CHECK(unreal::resolveInclude(engine, uproj, "NoSuch/Header.h").empty(),
 			"UE: unknown include stays empty");
 
+		// Descriptor autocomplete: schema words + discovered module/plugin names.
+		mk(root / "FakeProj" / "Plugins" / "MyPlug" / "MyPlug.uplugin");
+		mk(engine / "Engine" / "Plugins" / "Runtime" / "FakePlug" / "FakePlug.uplugin");
+		auto& words = unreal::descriptorWords(engine, uproj.parent_path());
+		auto has = [&](const char* s) {
+			for (auto& x : words) if (x == s) return true;
+			return false;
+		};
+		CHECK(has("LoadingPhase") && has("PostEngineInit") && has("RuntimeAndProgram"),
+			"UE: descriptor schema words present");
+		CHECK(has("MyGame"), "UE: project module name discovered");
+		CHECK(has("MyPlug"), "UE: project plugin name discovered");
+		CHECK(has("FakePlug"), "UE: engine plugin name discovered");
+		CHECK(has("Engine"), "UE: engine module name discovered");
+
 		fs::remove_all(root, ec);
 	}
 
