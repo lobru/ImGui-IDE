@@ -411,8 +411,29 @@ int main(int argc, char** argv) {
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
 
-		// render editor
-		editor.render();
+		// render editor. A stray exception here — most often a std::filesystem
+		// exception from a toolchain/include scan hitting a permission-denied,
+		// too-long, or reparse-point path on a big tree (e.g. a UE engine dir) —
+		// must NOT abort the whole editor and lose the user's unsaved work. Log
+		// it and keep running; ImGui's error recovery closes any windows the
+		// aborted frame left open, and the next frame renders clean.
+		try {
+			editor.render();
+		}
+		catch (const std::exception& ex) {
+			static int loggedFrameErrors = 0;
+			if (loggedFrameErrors++ < 50) {
+				std::error_code lec;
+				auto logPath = Editor::userConfigDir() / "crash.log";
+				std::filesystem::create_directories(logPath.parent_path(), lec);
+				std::ofstream(logPath, std::ios::app)
+					<< "[render] recovered from exception: " << ex.what() << "\n";
+				std::fprintf(stderr, "[render] recovered from exception: %s\n", ex.what());
+			}
+		}
+		catch (...) {
+			std::fprintf(stderr, "[render] recovered from non-std exception\n");
+		}
 
 		// A forwarded open request from a second launch (single-instance) asks us
 		// to surface the window.

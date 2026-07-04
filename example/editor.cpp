@@ -7285,14 +7285,21 @@ void Editor::detectToolchains()
             std::filesystem::path msvcRoot = std::string("C:\\Program Files\\Microsoft Visual Studio\\") + edition + "\\" + flavour + "\\VC\\Tools\\MSVC";
             if (!std::filesystem::is_directory(msvcRoot, ec))
                 continue;
-            for (auto &e : std::filesystem::directory_iterator(msvcRoot, ec))
+            // Use the error_code overloads throughout: the throwing directory
+            // iterator increment / is_directory() abort the whole editor on a
+            // single unreadable entry (dangling reparse point, permission
+            // denied), which crashed the app when Settings scanned toolchains.
+            std::error_code iec;
+            for (auto it = std::filesystem::directory_iterator(msvcRoot, iec);
+                 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
             {
-                if (!e.is_directory())
+                std::error_code dec;
+                if (!it->is_directory(dec) || dec)
                     continue;
-                auto cl = e.path() / "bin" / "Hostx64" / "x64" / "cl.exe";
+                auto cl = it->path() / "bin" / "Hostx64" / "x64" / "cl.exe";
                 if (std::filesystem::is_regular_file(cl, ec))
                 {
-                    std::string ver = e.path().filename().string();
+                    std::string ver = it->path().filename().string();
                     detectedMsvc.push_back({std::string("VS ") + edition + " " + flavour + " — " + ver, cl.string()});
                 }
             }
@@ -10187,7 +10194,7 @@ void Editor::renderDocumentWindow(TabDocument &t)
                             int depth = 0;
                             for (auto it = std::filesystem::recursive_directory_iterator(
                                      projectRoot, std::filesystem::directory_options::skip_permission_denied, ec);
-                                 !ec && it != std::filesystem::recursive_directory_iterator(); ++it)
+                                 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
                             {
                                 if (it.depth() > 4)
                                 {
@@ -10274,7 +10281,7 @@ void Editor::renderDocumentWindow(TabDocument &t)
                             int budget = 20000;
                             for (auto it = std::filesystem::recursive_directory_iterator(
                                      root, std::filesystem::directory_options::skip_permission_denied, ec);
-                                 !ec && it != std::filesystem::recursive_directory_iterator(); ++it)
+                                 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
                             {
                                 if (it.depth() > 3)
                                 {
@@ -10394,7 +10401,7 @@ void Editor::renderDocumentWindow(TabDocument &t)
                         int budget = 50000;
                         for (auto wit = std::filesystem::recursive_directory_iterator(
                                  projectRoot, std::filesystem::directory_options::skip_permission_denied, lec);
-                             !lec && wit != std::filesystem::recursive_directory_iterator(); ++wit)
+                             !lec && wit != std::filesystem::recursive_directory_iterator(); wit.increment(lec))
                         {
                             if (wit.depth() > 6)
                             {
