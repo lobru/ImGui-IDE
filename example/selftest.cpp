@@ -1087,6 +1087,18 @@ int main()
 		CHECK(colorAt(cpp, "TArray<int> a;\n", 0, 0) == typeCol, "UE C++: TArray colored as a type");
 		CHECK(colorAt(cpp, "UCLASS()\n", 0, 0) == kwCol, "UE C++: UCLASS colored as a keyword");
 		CHECK(colorAt(cpp, "UE_LOG(x);\n", 0, 0) == kwCol, "UE C++: UE_LOG colored as a keyword");
+
+		// Both types in "TArray<FString>&" color (tokenizer splits at < > &).
+		CHECK(colorAt(cpp, "TArray<FString>& r;\n", 0, 0) == typeCol, "UE C++: TArray in TArray<FString>&");
+		CHECK(colorAt(cpp, "TArray<FString>& r;\n", 0, 7) == typeCol, "UE C++: FString inside <> colored");
+
+		// Pattern fallback: UNLISTED F*/U*/A*/T* CamelCase types color as types.
+		CHECK(colorAt(cpp, "AMyActor* a;\n", 0, 0) == typeCol, "UE C++: unlisted AMyActor colored (pattern)");
+		CHECK(colorAt(cpp, "UMyComponent* c;\n", 0, 0) == typeCol, "UE C++: unlisted UMyComponent colored");
+		CHECK(colorAt(cpp, "FMyStruct s;\n", 0, 0) == typeCol, "UE C++: unlisted FMyStruct colored");
+		// All-caps macros / normal CamelCase are NOT miscolored by the pattern.
+		CHECK(colorAt(cpp, "TESTING x;\n", 0, 0) == plainId, "UE C++: SCREAMING_CASE not treated as a type");
+		CHECK(colorAt(cpp, "Total x;\n", 0, 0) == plainId, "UE C++: normal CamelCase (Total) not a type");
 	}
 
 	if (gFailures == 0) {

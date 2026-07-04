@@ -7222,6 +7222,11 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 					{
 						color = Color::knownIdentifier;
 					}
+					else if (language->isTypeLike && language->isTypeLike(identifier))
+					{
+						// Convention-based type (e.g. an unlisted Unreal F*/U*/A*/T* type).
+						color = Color::declaration;
+					}
 
 					// colorize identifier and move on
 					setColor(glyph, glyph + size, color);
@@ -11635,6 +11640,25 @@ const TextEditor::Language* TextEditor::Language::C()
 //	TextEditor::Language::Cpp
 //
 
+// Unreal / COM-style type-name convention: a prefix in {F,U,A,T,E,I,S} followed by
+// an uppercase letter, and CamelCase (has a lowercase char — so SCREAMING_CASE macros
+// like FILE/TRUE aren't miscolored). Covers the thousands of UE types that can't be
+// enumerated (FMyStruct, UMyComponent, AMyActor, TMyTemplate, EMyEnum, IMyInterface).
+static bool cppUnrealTypeLike(const std::string& id)
+{
+	if (id.size() < 3)
+		return false;
+	char c0 = id[0], c1 = id[1];
+	if (c0 != 'F' && c0 != 'U' && c0 != 'A' && c0 != 'T' && c0 != 'E' && c0 != 'I' && c0 != 'S')
+		return false;
+	if (c1 < 'A' || c1 > 'Z')
+		return false;
+	for (char c : id)
+		if (c >= 'a' && c <= 'z')
+			return true; // CamelCase → a type, not an all-caps macro
+	return false;
+}
+
 const TextEditor::Language* TextEditor::Language::Cpp()
 {
 	static bool initialized = false;
@@ -11700,6 +11724,7 @@ const TextEditor::Language* TextEditor::Language::Cpp()
 		for (auto& declaration : declarations) { language.declarations.insert(declaration); }
 		for (auto& t : ueTypes) { language.declarations.insert(t); }
 		for (auto& m : ueMacros) { language.keywords.insert(m); }
+		language.isTypeLike = cppUnrealTypeLike; // catch unlisted F*/U*/A*/T*/E*/I*/S* types
 
 		language.isPunctuation = isCStylePunctuation;
 		language.getIdentifier = getCStyleIdentifier;

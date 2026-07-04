@@ -637,6 +637,12 @@ public:
 		std::unordered_set<std::string> declarations;
 		std::unordered_set<std::string> identifiers;
 
+		// Optional fallback classifier for an identifier that is in none of the sets
+		// above — returns true to color it as a type (declaration color). Used for
+		// convention-based type names (e.g. Unreal's F*/U*/A*/T* naming) that can't
+		// all be enumerated. nullptr = no fallback.
+		bool (*isTypeLike)(const std::string&) = nullptr;
+
 		// File extensions this language applies to (lowercase, leading dot, e.g. ".html").
 		// Populated by FromFile when an `extensions=` line is present.
 		std::vector<std::string> extensions;
