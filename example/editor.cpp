@@ -3022,6 +3022,8 @@ bool Editor::lspActiveForExt(const std::string &extLower) const
 
 void Editor::lspSyncDoc(TabDocument &t)
 {
+    if (t.largeFile)
+        return; // didOpen/didChange ship the WHOLE buffer to clangd — skip for huge files
     std::string uri = lspUriForTab(t);
     if (uri.empty())
         return;
@@ -8102,10 +8104,23 @@ void Editor::openFile(const std::string &path)
             target = &newTab();
         }
 
+        // Large-file mode: whole-document intelligence (trie build, LSP sync,
+        // folding, bracket matching) all walk the full text — on a many-MB file
+        // that's seconds of stall on open and per-edit. Keep such files fast,
+        // plain editors instead.
+        target->largeFile = text.size() > 8u * 1024 * 1024;
+
         target->originalText = text;
         target->syncedText = text; // 3-way merge base = last reconciled content
         target->editor.SetText(text);
         target->editor.SetLanguage(languageForPath(path));
+        if (target->largeFile)
+        {
+            target->editor.SetFoldingEnabled(false);
+            target->editor.SetShowMatchingBrackets(false);
+            pushToast("Large file \xe2\x80\x94 code intelligence disabled for speed",
+                      IM_COL32(240, 200, 90, 255), 2);
+        }
         target->version = target->editor.GetUndoIndex();
         target->filename = path;
         target->wantFocus = true;
@@ -8141,11 +8156,12 @@ void Editor::saveFile()
     {
         auto &t = doc();
         t.editor.StripTrailingWhitespaces();
+        std::string out = t.editor.GetText(); // serialize ONCE (was twice — slow on huge files)
         std::ofstream stream(t.filename.c_str());
-        stream << t.editor.GetText();
+        stream << out;
         stream.close();
         t.version = t.editor.GetUndoIndex();
-        t.syncedText = t.editor.GetText(); // persisted content = new merge base
+        t.syncedText = std::move(out); // persisted content = new merge base
         recordDiskMtime(t);                // our own write — re-baseline so the watch ignores it
         // Refresh the project symbol index so go-to-def / autocomplete pick up
         // edits. Cheap: the build is one-at-a-time guarded + gen-superseded.
@@ -12547,6 +12563,8 @@ void Editor::configureTabAutocomplete(TabDocument &t)
     });
     TextEditor::AutoCompleteConfig config;
     config.callback = [this, tptr](TextEditor::AutoCompleteState &state) {
+        if (tptr->largeFile)
+            return; // large-file mode: no per-keystroke completion work (trie is empty anyway)
         // LSP completion (clangd): fire async at the cursor BEFORE the tree-sitter
         // paths below (which fill an instant baseline). pollLsp() refines the popup
         // when clangd replies. searchTermEndIndex is a CODEPOINT index → byte offset
@@ -12893,6 +12911,8 @@ void Editor::buildAutocompleteTrie(TabDocument &t)
 {
     ScopedTimer _t("buildAutocompleteTrie");
     t.trie.clear();
+    if (t.largeFile)
+        return; // whole-doc identifier walk + trie inserts — skipped in large-file mode
     auto language = t.editor.GetLanguage();
     if (language)
     {

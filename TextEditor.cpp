@@ -835,7 +835,18 @@ void TextEditor::renderIndentGuides()
 	int ts = document.getTabSize();
 	if (ts <= 0)
 		ts = 4;
-	auto levels = IndentGuideLevels();
+	// Cached full-doc scan: recompute only when the document (undo version / line
+	// count) or tab size changed — per-frame O(lines) was a large-file frame killer.
+	size_t ver = transactions.getUndoIndex();
+	if (indentGuideCacheVersion != ver || indentGuideCacheLines != document.lineCount() ||
+		indentGuideCacheTab != ts)
+	{
+		indentGuideCache = IndentGuideLevels();
+		indentGuideCacheVersion = ver;
+		indentGuideCacheLines = document.lineCount();
+		indentGuideCacheTab = ts;
+	}
+	const auto& levels = indentGuideCache;
 
 	auto drawList = ImGui::GetWindowDrawList();
 	ImVec2 cursorScreenPos = ImGui::GetCursorScreenPos();

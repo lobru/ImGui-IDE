@@ -161,6 +161,26 @@ int main()
 	});
 	BUDGET("Merge3 (~2.6k-line 3-way diff3)", tMerge, 2000.0);
 
+	// 8) Large-file scale check (~100k lines / ~3.5 MB): open cost and the
+	//    indent-guide full-doc scan (cached per edit in the renderer, but the
+	//    single scan itself must stay linear/fast).
+	{
+		std::string huge = makeBigCpp(15000);
+		TextEditor big2;
+		big2.SetLanguage(TextEditor::Language::Cpp());
+		big2.SetFoldingEnabled(true);
+		double tHugeLoad = timeMs([&] { big2.SetText(huge); });
+		BUDGET("SetText 100k lines (load+colorize+fold)", tHugeLoad, 8000.0);
+		std::printf("    -> %d lines, %zu folds, %zu KB\n",
+			big2.GetLineCount(), big2.GetFoldCount(), huge.size() / 1024);
+		double tHugeGuides = timeMs([&] {
+			auto lv = big2.IndentGuideLevels();
+			if (lv.empty())
+				std::fprintf(stderr, "unreachable empty levels\n");
+		});
+		BUDGET("IndentGuideLevels 100k lines (one scan)", tHugeGuides, 1000.0);
+	}
+
 	if (gFailures == 0)
 		std::printf("perftest: all within budget\n");
 	else

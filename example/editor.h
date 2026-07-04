@@ -81,6 +81,7 @@ class Editor {
 		bool        externalChange = false;
 		bool        externallyTouched = false;   // edited on disk since you last viewed this tab (badge)
 		bool        externalMarkers   = false;   // gutter markers on externally-changed lines are live
+		bool        largeFile         = false;   // >8 MB: whole-doc intelligence (trie/LSP/folds/brackets) disabled
 		std::vector<std::pair<int,int>> changedRanges; // inclusive 0-based line ranges Claude/an external tool changed
 		std::string syncedText;                  // last persisted content (load/save/reload) = 3-way merge base
 	};

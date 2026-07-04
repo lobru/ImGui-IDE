@@ -1528,6 +1528,13 @@ protected:
 	void renderMarkers();
 	void renderMatchingBrackets();
 	void renderIndentGuides();
+	// renderIndentGuides runs every frame but IndentGuideLevels() is a full-document
+	// scan — cache it, keyed on the undo version + line count + tab size, so huge
+	// files don't pay an O(lines) walk per frame.
+	std::vector<int> indentGuideCache;
+	size_t indentGuideCacheVersion = static_cast<size_t>(-1);
+	int indentGuideCacheLines = -1;
+	int indentGuideCacheTab = -1;
 	void renderText();
 	void renderTextWrapped();   // word-wrap render path (text + selection + cursors)
 	void renderCursors();
