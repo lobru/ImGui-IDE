@@ -7,6 +7,20 @@ read `tag-commits-gsha`.
 ## Unreleased
 
 ### Added
+- **Unreal Engine 5 integration**: F6 builds the editor target via UnrealBuildTool
+  (engine auto-discovered from the `.uproject`), Project > Unreal Engine menu with
+  Build / **Generate IntelliSense DB** (clangd compile database in the project root,
+  UE 5.3+) / Launch Unreal Editor, and a UE-side `ImGuiIDESourceCodeAccess` plugin so
+  ImGui-IDE is selectable as the engine's source editor (Editor Prefs > Source Code).
+- **In-app PDF viewer** (Windows): `.pdf` opens in a dockable window — lazy per-page
+  rendering by the OS PDF engine, zoom/fit-width, middle-mouse pan.
+- **Large-file mode**: files over 8 MB open instantly with whole-document
+  intelligence (completion trie, LSP sync, folding, bracket matching) disabled;
+  re-evaluated when the file shrinks/grows across the threshold.
+- **Claude bridge installed as a real plugin** (`imgui-ide-bridge` 0.2.0): in-editor
+  replies now reach Claude **automatically** via a prompt hook draining the reply
+  outbox — plus `/toast`, `/open-in-ide`, `/replies` in every project.
+- Nav panel filter button compacted to a glyph (tinted when filters are active).
 - **Reply to Claude** feedback loop: when an external tool edits an open file, its
   changed lines get a clickable purple gutter dot. Click it (or right-click a line
   number, a row in Dev Tools > "Claude changes", or a toast) to type a message and
