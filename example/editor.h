@@ -470,7 +470,13 @@ private:
 	bool         navCodeOnly     = false;   // hide non-source files
 	bool         navFlatFiles    = false;   // collapse folder bodies (show folders only)
 	bool         navPathWrap     = false;   // project-path display: wrap (true) vs right-align+truncate (false)
+	bool         navShowUeSource = true;    // UE projects: show the engine Source tree (collapsed; lazy)
 	int          navSetAllOpen   = -1;      // one-shot bulk tree open/close: -1 none, 0 collapse all, 1 expand all
+
+	// Memo for the UE-engine-source nav section — resolving the .uproject → engine
+	// root walks the filesystem, so cache it per workspace root.
+	std::string  ueSourceKey;               // workspace root the cache was computed for
+	std::string  ueSourceDir;               // resolved <engine>/Engine/Source ("" = not a UE project)
 	std::unordered_map<std::string, bool> navExcluded; // abs path → true = hidden in tree
 	std::unordered_set<std::string> navSelected;       // canonical abs paths multi-selected in the tree
 	std::string  navClipboardPath;          // last "Copy" target — used by Paste

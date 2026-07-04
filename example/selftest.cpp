@@ -341,6 +341,45 @@ int main()
 		const auto* opt = ts::stlMembers("optional");
 		CHECK(has(opt, "value") && has(opt, "has_value"), "optional members include value/has_value");
 		CHECK(ts::stlMembers("NotAStlType") == nullptr, "unknown type -> no STL members");
+
+		// Unreal Engine container / core-type members.
+		const auto* tarr = ts::stlMembers("TArray");
+		CHECK(has(tarr, "Add") && has(tarr, "Num") && has(tarr, "Contains") && has(tarr, "RemoveAt"),
+			"TArray members include Add/Num/Contains/RemoveAt");
+		const auto* tmap = ts::stlMembers("TMap");
+		CHECK(has(tmap, "Add") && has(tmap, "FindOrAdd") && has(tmap, "Contains") && has(tmap, "Num"),
+			"TMap members include Add/FindOrAdd/Contains/Num");
+		const auto* tset = ts::stlMembers("TSet");
+		CHECK(has(tset, "Add") && has(tset, "Contains") && has(tset, "Num"),
+			"TSet members include Add/Contains/Num");
+		const auto* fstr = ts::stlMembers("FString");
+		CHECK(has(fstr, "Len") && has(fstr, "Contains") && has(fstr, "Replace"),
+			"FString members include Len/Contains/Replace");
+		const auto* tshared = ts::stlMembers("TSharedPtr");
+		CHECK(has(tshared, "Get") && has(tshared, "IsValid"), "TSharedPtr members include Get/IsValid");
+	}
+
+	// UE type resolves through the chain resolver: a declared "TMap<FString,
+	// FString> m;" reduces to "TMap" so "m." completes the curated members.
+	{
+		std::string cpp =
+			"void f() {\n"
+			"    TMap<FString, FString> m;\n"
+			"    TArray<int32> a;\n"
+			"    /*U*/\n"
+			"}\n";
+		int row = 3, col = 4; // the /*U*/ line
+		auto has = [](const std::vector<std::string>* v, const char* mm) {
+			if (!v) return false;
+			for (auto& s : *v) if (s == mm) return true;
+			return false;
+		};
+		std::string mt = ts::resolveMemberChain(ts::Lang::Cpp, cpp, row, col, {"m"});
+		CHECK(mt == "TMap", "chain: TMap<FString,FString> m -> TMap");
+		CHECK(has(ts::stlMembers(mt), "FindOrAdd"), "chain: m. completes TMap members");
+		std::string at = ts::resolveMemberChain(ts::Lang::Cpp, cpp, row, col, {"a"});
+		CHECK(at == "TArray", "chain: TArray<int32> a -> TArray");
+		CHECK(has(ts::stlMembers(at), "Add"), "chain: a. completes TArray members");
 	}
 
 	// ── Scope-aware type resolver (the proof that member completion works) ──

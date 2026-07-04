@@ -2565,6 +2565,8 @@ void Editor::renderNavigationPanel()
             ImGui::Checkbox("Show excluded items", &navShowExcluded);
             ImGui::Checkbox("Flat view (no folder nesting)", &navFlatFiles);
             ImGui::Checkbox("Wrap project path", &navPathWrap);
+            if (!ueSourceDir.empty())
+                ImGui::Checkbox("Show Unreal Engine source", &navShowUeSource);
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -2600,6 +2602,118 @@ void Editor::renderNavigationPanel()
         {
             ImGui::TextDisabled("(folder not found: %s)", root.string().c_str());
         }
+
+        // ── Unreal Engine source ─────────────────────────────────────────────
+        // For UE projects, expose the engine's Source tree as a second root so
+        // engine headers are browsable. Resolving .uproject → engine walks the
+        // filesystem, so memoize per workspace root. The tree is lazy (only an
+        // expanded folder lists its children), so a collapsed node is cheap even
+        // though engine source is huge; hide it entirely via Filters for speed.
+        if (!root.empty())
+        {
+            std::string rk = root.string();
+            if (rk != ueSourceKey)
+            {
+                ueSourceKey = rk;
+                ueSourceDir.clear();
+                std::error_code uec;
+                auto uproj = unreal::findUProject(root);
+                if (!uproj.empty())
+                {
+                    std::string assoc;
+                    auto engine = unreal::findEngineRoot(uproj, assoc);
+                    if (!engine.empty())
+                    {
+                        auto src = engine / "Engine" / "Source";
+                        if (std::filesystem::is_directory(src, uec))
+                            ueSourceDir = src.string();
+                    }
+                }
+            }
+            if (!ueSourceDir.empty() && navShowUeSource)
+            {
+                ImGui::Separator();
+                if (ImGui::TreeNodeEx("Unreal Engine Source",
+                                      ImGuiTreeNodeFlags_SpanAvailWidth))
+                {
+                    renderDirNode(this, std::filesystem::path(ueSourceDir), 1, navShowDotFiles,
+                                  navContextPath, navRenameTarget, navRenameBuf, navPendingDelete);
+                    ImGui::TreePop();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s\n(hide via Filters for speed)", ueSourceDir.c_str());
+            }
+        }
+
+        // ── Open elsewhere ───────────────────────────────────────────────────
+        // Tabs whose file lives OUTSIDE the project root — opened by browsing or
+        // by Go-to-Definition jumping into engine/system headers. Listing them
+        // here gives each a visible location; clicking focuses (and scrolls the
+        // tab bar to) that tab. Shown for every project type.
+        {
+            std::error_code rec;
+            auto rootCanon = root.empty() ? std::filesystem::path()
+                                          : std::filesystem::weakly_canonical(root, rec);
+            auto isUnderRoot = [&](const std::string &fn) {
+                if (rootCanon.empty())
+                    return false;
+                std::error_code lec;
+                auto c = std::filesystem::weakly_canonical(std::filesystem::path(fn), lec);
+                auto rs = rootCanon.generic_string();
+                auto cs = c.generic_string();
+                if (cs.size() < rs.size() || cs.compare(0, rs.size(), rs) != 0)
+                    return false;
+                // Require a path-separator boundary so "C:/proj" doesn't match
+                // the sibling "C:/project2/...".
+                return cs.size() == rs.size() || cs[rs.size()] == '/';
+            };
+            std::vector<size_t> externals;
+            for (size_t i = 0; i < tabs.size(); ++i)
+            {
+                const auto &fn = tabs[i]->filename;
+                if (fn == "untitled")
+                    continue;
+                if (!isUnderRoot(fn))
+                    externals.push_back(i);
+            }
+            if (!externals.empty())
+            {
+                ImGui::Separator();
+                std::string hdr = "Open Elsewhere (" + std::to_string(externals.size()) + ")";
+                if (ImGui::TreeNodeEx(hdr.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth |
+                                                       ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    for (size_t idx : externals)
+                    {
+                        std::filesystem::path fp(tabs[idx]->filename);
+                        std::string leaf = fp.filename().string();
+                        ImGui::PushID((int)idx);
+                        bool selected = (idx == (size_t)activeTab);
+                        if (ImGui::Selectable(leaf.c_str(), selected))
+                        {
+                            activeTab = idx;
+                            tabs[idx]->wantFocus = true;
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s", tabs[idx]->filename.c_str());
+                        // Dim parent-folder hint on the same row (right-aligned).
+                        std::string dir = fp.parent_path().filename().string();
+                        if (!dir.empty())
+                        {
+                            float avail = ImGui::GetContentRegionAvail().x;
+                            float w = ImGui::CalcTextSize(dir.c_str()).x;
+                            ImGui::SameLine();
+                            if (avail > w + 8.0f)
+                                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - w - 4.0f));
+                            ImGui::TextDisabled("%s", dir.c_str());
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
+            }
+        }
+
         navApplyRangeSelect(); // resolve a pending shift-click range now that order is known
         navSetAllOpen = -1;    // bulk open/close request consumed this frame
 
@@ -6987,6 +7101,8 @@ void Editor::loadSettings()
                 navFlatFiles = (v == "1" || v == "true");
             else if (k == "nav_path_wrap")
                 navPathWrap = (v == "1" || v == "true");
+            else if (k == "nav_ue_source")
+                navShowUeSource = (v == "1" || v == "true");
         }
         else if (section == "toolchains")
         {
@@ -7104,6 +7220,7 @@ void Editor::saveSettings()
     f << "nav_code_only=" << (navCodeOnly ? "1" : "0") << "\n";
     f << "nav_flat=" << (navFlatFiles ? "1" : "0") << "\n";
     f << "nav_path_wrap=" << (navPathWrap ? "1" : "0") << "\n";
+    f << "nav_ue_source=" << (navShowUeSource ? "1" : "0") << "\n";
     f << "font_size=" << prefFontSize << "\n";
     if (!fontPath.empty())
         f << "font_path=" << fontPath << "\n";
@@ -9680,7 +9797,15 @@ void Editor::renderDockedDocuments()
         renderDocumentWindow(t);
         if (focusing)
         {
-            ImGui::SetWindowFocus(windowLabelFor(t).c_str());
+            std::string lbl = windowLabelFor(t);
+            ImGui::SetWindowFocus(lbl.c_str());
+            // SetWindowFocus selects the dock tab but doesn't reliably bring an
+            // off-screen tab into view. Queue an explicit scroll on the owning
+            // dock node's tab bar so opening a file (nav click, Go-to-Definition,
+            // "Open Elsewhere") always reveals its tab.
+            if (ImGuiWindow *w = ImGui::FindWindowByName(lbl.c_str()))
+                if (w->DockNode && w->DockNode->TabBar)
+                    ImGui::TabBarQueueFocus(w->DockNode->TabBar, lbl.c_str());
         }
     }
 
