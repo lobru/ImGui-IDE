@@ -29,15 +29,23 @@ std::filesystem::path findUProject(const std::filesystem::path& searchStart)
 	{
 		if (std::filesystem::is_directory(cur, ec))
 		{
-			for (const auto& e : std::filesystem::directory_iterator(cur, ec))
+			// error_code overloads throughout: the throwing directory iterator
+			// increment / is_regular_file() abort the app on ONE unresolvable
+			// entry — walking up to C:\ hit a broken "C:\shadertoggler.ini" whose
+			// status query threw std::filesystem_error and crashed the editor.
+			std::error_code iec;
+			for (auto it = std::filesystem::directory_iterator(
+					 cur, std::filesystem::directory_options::skip_permission_denied, iec);
+				 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
 			{
-				if (!e.is_regular_file())
+				std::error_code fec;
+				if (!it->is_regular_file(fec) || fec)
 					continue;
-				auto ext = e.path().extension().string();
+				auto ext = it->path().extension().string();
 				std::transform(ext.begin(), ext.end(), ext.begin(),
 					[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 				if (ext == ".uproject")
-					return e.path();
+					return it->path();
 			}
 		}
 		if (!cur.has_parent_path() || cur.parent_path() == cur)
@@ -201,22 +209,32 @@ const std::vector<std::string>& descriptorWords(const std::filesystem::path& eng
 	auto addDirNames = [&](const std::filesystem::path& dir) {
 		if (!std::filesystem::is_directory(dir, ec))
 			return;
-		for (const auto& e : std::filesystem::directory_iterator(dir, ec))
-			if (e.is_directory())
-				w.push_back(e.path().filename().string());
+		std::error_code iec;
+		for (auto it = std::filesystem::directory_iterator(
+				 dir, std::filesystem::directory_options::skip_permission_denied, iec);
+			 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
+		{
+			std::error_code dec;
+			if (it->is_directory(dec) && !dec)
+				w.push_back(it->path().filename().string());
+		}
 	};
 
 	// Project modules + project plugin names.
 	addDirNames(projectDir / "Source");
 	{
 		auto plugins = projectDir / "Plugins";
+		std::error_code iec;
 		if (std::filesystem::is_directory(plugins, ec))
-			for (const auto& plug : std::filesystem::directory_iterator(plugins, ec))
+			for (auto it = std::filesystem::directory_iterator(
+					 plugins, std::filesystem::directory_options::skip_permission_denied, iec);
+				 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
 			{
-				if (!plug.is_directory())
+				std::error_code dec;
+				if (!it->is_directory(dec) || dec)
 					continue;
-				w.push_back(plug.path().filename().string());
-				addDirNames(plug.path() / "Source"); // plugin modules too
+				w.push_back(it->path().filename().string());
+				addDirNames(it->path() / "Source"); // plugin modules too
 			}
 	}
 
@@ -232,7 +250,7 @@ const std::vector<std::string>& descriptorWords(const std::filesystem::path& eng
 			int budget = 6000;
 			for (auto it = std::filesystem::recursive_directory_iterator(
 					 plugRoot, std::filesystem::directory_options::skip_permission_denied, ec);
-				 !ec && it != std::filesystem::recursive_directory_iterator(); ++it)
+				 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
 			{
 				if (--budget <= 0)
 					break;
@@ -241,7 +259,8 @@ const std::vector<std::string>& descriptorWords(const std::filesystem::path& eng
 					it.disable_recursion_pending();
 					continue;
 				}
-				if (it->is_regular_file(ec) && it->path().extension() == ".uplugin")
+				std::error_code fec;
+				if (it->is_regular_file(fec) && !fec && it->path().extension() == ".uplugin")
 					w.push_back(it->path().stem().string());
 			}
 		}
@@ -279,11 +298,15 @@ std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
 		// Direct join first (top-level headers / already-module-qualified includes).
 		if (auto p = sourceDir / inc; std::filesystem::is_regular_file(p, ec))
 			return p;
-		for (const auto& mod : std::filesystem::directory_iterator(sourceDir, ec))
+		std::error_code iec;
+		for (auto it = std::filesystem::directory_iterator(
+				 sourceDir, std::filesystem::directory_options::skip_permission_denied, iec);
+			 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
 		{
-			if (!mod.is_directory())
+			std::error_code dec;
+			if (!it->is_directory(dec) || dec)
 				continue;
-			if (auto hit = tryModule(mod.path()); !hit.empty())
+			if (auto hit = tryModule(it->path()); !hit.empty())
 				return hit;
 		}
 		return {};
@@ -298,12 +321,16 @@ std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
 	// 2. Project plugins: Plugins/<name>/Source/<module>/...
 	{
 		auto plugins = projDir / "Plugins";
+		std::error_code iec;
 		if (std::filesystem::is_directory(plugins, ec))
-			for (const auto& plug : std::filesystem::directory_iterator(plugins, ec))
+			for (auto it = std::filesystem::directory_iterator(
+					 plugins, std::filesystem::directory_options::skip_permission_denied, iec);
+				 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
 			{
-				if (!plug.is_directory())
+				std::error_code dec;
+				if (!it->is_directory(dec) || dec)
 					continue;
-				if (auto hit = trySourceTree(plug.path() / "Source"); !hit.empty())
+				if (auto hit = trySourceTree(it->path() / "Source"); !hit.empty())
 					return hit;
 			}
 	}
@@ -314,15 +341,21 @@ std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
 	{
 		auto wanted = inc.filename();
 		auto incRoot = projDir / "Intermediate" / "Build" / "Win64";
+		std::error_code iec;
 		if (std::filesystem::is_directory(incRoot, ec))
-			for (const auto& target : std::filesystem::directory_iterator(incRoot, ec))
+			for (auto ti = std::filesystem::directory_iterator(
+					 incRoot, std::filesystem::directory_options::skip_permission_denied, iec);
+				 !iec && ti != std::filesystem::directory_iterator(); ti.increment(iec))
 			{
-				auto incDir = target.path() / "Inc";
+				auto incDir = ti->path() / "Inc";
 				if (!std::filesystem::is_directory(incDir, ec))
 					continue;
-				for (const auto& mod : std::filesystem::directory_iterator(incDir, ec))
+				std::error_code mec;
+				for (auto mi = std::filesystem::directory_iterator(
+						 incDir, std::filesystem::directory_options::skip_permission_denied, mec);
+					 !mec && mi != std::filesystem::directory_iterator(); mi.increment(mec))
 				{
-					auto p = mod.path() / "UHT" / wanted;
+					auto p = mi->path() / "UHT" / wanted;
 					if (std::filesystem::is_regular_file(p, ec))
 						return p;
 				}
@@ -348,7 +381,7 @@ std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
 			int budget = 4000;
 			for (auto it = std::filesystem::recursive_directory_iterator(
 					 plugRoot, std::filesystem::directory_options::skip_permission_denied, ec);
-				 !ec && it != std::filesystem::recursive_directory_iterator(); ++it)
+				 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
 			{
 				if (--budget <= 0)
 					break;
