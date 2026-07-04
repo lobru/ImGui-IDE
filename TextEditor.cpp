@@ -7964,6 +7964,22 @@ void TextEditor::renderFindReplace(ImVec2 pos, float width)
 
 		ImGui::SameLine();
 
+		// "In selection" — captures the current selection as the scope when latched;
+		// findAll/replaceAll then only touch matches inside it (VSCode Alt+L).
+		{
+			bool before = findInSelection;
+			if (latchButton("\xe2\x8a\x82", &findInSelection, ImVec2(optionWidth, 0.0f))) // ⊂
+			{
+				findInSelection = before; // toggleFindInSelection flips it (+ captures scope)
+				toggleFindInSelection();
+				find();
+			}
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Find in selection");
+		}
+
+		ImGui::SameLine();
+
 		if (ImGui::Button("x", ImVec2(optionWidth, 0.0f)))
 		{
 			closeFindReplace();
@@ -8185,6 +8201,74 @@ void TextEditor::selectAllOccurrencesOf(const std::string_view& text, bool caseS
 
 
 //
+//	TextEditor::selectAllOccurrencesOfInRange
+//
+//	Like selectAllOccurrencesOf but only within [rangeStart, rangeEnd) — the
+//	"find in selection" scope. A match whose START is at/after rangeEnd is out.
+
+void TextEditor::selectAllOccurrencesOfInRange(const std::string_view& text, bool caseSensitive,
+	bool wholeWord, Coordinate rangeStart, Coordinate rangeEnd)
+{
+	Coordinate start, end;
+	bool any = false;
+
+	if (document.findText(rangeStart, text, caseSensitive, wholeWord, start, end))
+	{
+		// findText wraps around the document; a first hit past the scope means
+		// there is nothing inside it.
+		if (!(start < rangeEnd))
+		{
+			cursors.clearAdditional(true);
+			return;
+		}
+		cursors.setCursor(start, end);
+		any = true;
+
+		Coordinate firstStart = start, firstEnd = end;
+		bool done = false;
+		while (!done)
+		{
+			Coordinate nextStart, nextEnd;
+			document.findText(cursors.getCurrent().getSelectionEnd(), text, caseSensitive, wholeWord, nextStart, nextEnd);
+			if ((nextStart == firstStart && nextEnd == firstEnd) || !(nextStart < rangeEnd))
+				done = true; // wrapped back to the first hit, or ran past the scope
+			else
+				cursors.addCursor(nextStart, nextEnd);
+		}
+		makeCursorVisible();
+	}
+	if (!any)
+		cursors.clearAdditional(true);
+}
+
+
+//
+//	TextEditor::toggleFindInSelection
+//
+
+void TextEditor::toggleFindInSelection()
+{
+	findInSelection = !findInSelection;
+	if (findInSelection)
+	{
+		// Capture the current selection as the scope. With no (or a caret-only)
+		// selection, scope the whole document so the toggle is still meaningful.
+		auto& c = cursors.getCurrent();
+		if (c.hasSelection())
+		{
+			findScopeStart = c.getSelectionStart();
+			findScopeEnd = c.getSelectionEnd();
+		}
+		else
+		{
+			findScopeStart = Coordinate(0, 0);
+			findScopeEnd = Coordinate(document.lineCount(), 0);
+		}
+	}
+}
+
+
+//
 //	TextEditor::addNextOccurrence
 //
 
@@ -8396,7 +8480,10 @@ void TextEditor::findAll()
 {
 	if (findText.size())
 	{
-		selectAllOccurrencesOf(findText, caseSensitiveFind, wholeWordFind);
+		if (findInSelection)
+			selectAllOccurrencesOfInRange(findText, caseSensitiveFind, wholeWordFind, findScopeStart, findScopeEnd);
+		else
+			selectAllOccurrencesOf(findText, caseSensitiveFind, wholeWordFind);
 		focusOnEditor = true;
 		focusOnFind = false;
 	}
@@ -8432,7 +8519,10 @@ void TextEditor::replaceAll()
 {
 	if (findText.size())
 	{
-		selectAllOccurrencesOf(findText, caseSensitiveFind, wholeWordFind);
+		if (findInSelection)
+			selectAllOccurrencesOfInRange(findText, caseSensitiveFind, wholeWordFind, findScopeStart, findScopeEnd);
+		else
+			selectAllOccurrencesOf(findText, caseSensitiveFind, wholeWordFind);
 		replaceTextInAllCursors(replaceText);
 		focusOnEditor = true;
 		focusOnFind = false;

@@ -1756,6 +1756,14 @@ protected:
 	std::string replaceText;
 	bool caseSensitiveFind = false;
 	bool wholeWordFind = false;
+	// "Find in selection" (VSCode-style): when enabled, findAll/replaceAll are
+	// restricted to the range captured when the toggle was switched on.
+	bool findInSelection = false;
+	Coordinate findScopeStart;
+	Coordinate findScopeEnd;
+	void selectAllOccurrencesOfInRange(const std::string_view& text, bool caseSensitive, bool wholeWord,
+									   Coordinate rangeStart, Coordinate rangeEnd);
+	void toggleFindInSelection();
 	// Live match-count readout for the find bar (VSCode-style "3 of 12"). Cached
 	// and only recomputed when the search term / options / document version
 	// change, so it doesn't rescan the whole document every frame.
