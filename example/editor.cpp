@@ -10971,6 +10971,41 @@ void Editor::renderMenuBar()
                     }
                     if (ImGui::MenuItem("Open .uproject"))
                         openFile(ueProj.string());
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Install IDE plugin into project"))
+                    {
+                        // Copy the bundled source-code-accessor plugin into the game's
+                        // Plugins/ — UE compiles it on next editor start, then ImGui-IDE
+                        // is selectable in Editor Prefs > Source Code.
+                        std::error_code cec;
+                        std::filesystem::path src = get_module_path().parent_path() / "ue-plugins" / "ImGuiIDESourceCodeAccess";
+                        if (!std::filesystem::is_directory(src, cec))
+                        {
+                            auto self = findSelfRepoRoot(); // dev tree fallback
+                            if (!self.empty())
+                                src = self / "tools" / "ue-plugins" / "ImGuiIDESourceCodeAccess";
+                        }
+                        auto dst = ueProj.parent_path() / "Plugins" / "ImGuiIDESourceCodeAccess";
+                        if (!std::filesystem::is_directory(src, cec))
+                            showError("Bundled UE plugin not found next to the executable (ue-plugins/).");
+                        else
+                        {
+                            std::filesystem::create_directories(dst, cec);
+                            std::filesystem::copy(src, dst,
+                                                  std::filesystem::copy_options::recursive |
+                                                      std::filesystem::copy_options::overwrite_existing,
+                                                  cec);
+                            if (cec)
+                                showError("Plugin copy failed: " + cec.message());
+                            else
+                                pushToast("UE plugin installed \xe2\x80\x94 restart Unreal Editor, then pick "
+                                          "ImGui-IDE under Editor Prefs > Source Code",
+                                          IM_COL32(120, 200, 120, 255), 2);
+                        }
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Copies the ImGuiIDESourceCodeAccess plugin into %s",
+                                          (ueProj.parent_path() / "Plugins").string().c_str());
                     ImGui::EndMenu();
                 }
             }

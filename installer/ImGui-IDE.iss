@@ -46,6 +46,9 @@ Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\example\languages\*"; DestDir: "{app}\languages"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\example\app.ico";      DestDir: "{app}"; Flags: ignoreversion
 Source: "..\CHANGELOG.md";         DestDir: "{app}"; Flags: ignoreversion
+; UE source-code-accessor plugin — installed into a game's Plugins/ via
+; Project > Unreal Engine > "Install IDE plugin into project".
+Source: "..\tools\ue-plugins\*";   DestDir: "{app}\ue-plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}";            Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"

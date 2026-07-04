@@ -144,7 +144,12 @@ add_custom_command(TARGET example POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"${CMAKE_CURRENT_SOURCE_DIR}/../CHANGELOG.md"
 		"$<TARGET_FILE_DIR:example>/CHANGELOG.md"
-	COMMENT "Syncing languages/ + CHANGELOG.md next to example.exe")
+	# Bundle the UE source-code-accessor plugin so Project > Unreal Engine >
+	# "Install IDE plugin..." can copy it into a game's Plugins/ folder.
+	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+		"${CMAKE_CURRENT_SOURCE_DIR}/../tools/ue-plugins"
+		"$<TARGET_FILE_DIR:example>/ue-plugins"
+	COMMENT "Syncing languages/ + CHANGELOG.md + ue-plugins/ next to example.exe")
 
 # ── Headless logic self-test ─────────────────────────────────────────────
 # A tiny console executable that exercises the pure (non-UI) code paths —

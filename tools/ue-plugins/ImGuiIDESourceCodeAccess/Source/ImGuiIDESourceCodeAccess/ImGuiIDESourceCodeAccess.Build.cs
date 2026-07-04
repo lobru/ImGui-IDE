@@ -8,18 +8,14 @@ public class ImGuiIDESourceCodeAccess : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
+		// Deliberately minimal: the accessor only spawns a process and registers a
+		// modular feature. Extra deps are extra ways for the plugin build to break.
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"Core",
 				"SourceCodeAccess",
-				"DesktopPlatform",
 			}
 		);
-
-		if (Target.bBuildEditor)
-		{
-			PrivateDependencyModuleNames.Add("HotReload");
-		}
 	}
 }
