@@ -80,6 +80,7 @@ target_compile_options(lspclient PRIVATE
 add_executable(example
 	editor.cpp
 	updater.cpp
+	unreal.cpp
 	dejavu.cpp
 	main.cpp)
 

@@ -1,0 +1,21 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "ImGui-IDE Source Code Access",
+	"Description": "Use ImGui-IDE as the source code editor for Unreal Engine. Adds 'ImGui-IDE' to Editor Preferences > Source Code > Source Code Editor, so Open Source Code / double-clicking a C++ class opens ImGui-IDE (project-aware, with clangd intellisense via the generated compile database).",
+	"Category": "Programming",
+	"CreatedBy": "ImGui-IDE",
+	"CreatedByURL": "https://github.com/lobru/ImGui-IDE",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "ImGuiIDESourceCodeAccess",
+			"Type": "Developer",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64" ]
+		}
+	]
+}

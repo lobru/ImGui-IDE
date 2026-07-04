@@ -80,6 +80,7 @@
 
 #include "editor.h"
 #include "tsindex.h"
+#include "unreal.h"
 
 #include <chrono>
 
@@ -690,6 +691,22 @@ static std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std
             else if (ext == ".uproject" && uproject.empty())
                 uproject = entry.path();
         }
+        // A .uproject wins over everything else at this level: UE projects also
+        // carry a GENERATED .sln (C++, which `dotnet build` can't build), so the
+        // Unreal path must take precedence. Build the editor target through
+        // UnrealBuildTool — the same invocation the VS project generator emits.
+        if (!uproject.empty())
+        {
+            std::string assoc;
+            auto engine = unreal::findEngineRoot(uproject, assoc);
+            std::string ucmd = engine.empty() ? std::string()
+                                              : unreal::buildEditorCommand(engine, uproject);
+            if (ucmd.empty())
+                ucmd = "echo Unreal build unavailable: " +
+                       std::string(engine.empty() ? "engine not found (EngineAssociation=" + assoc + ")"
+                                                  : "Blueprint-only project (no Source/ directory)");
+            return {uproject.parent_path(), ucmd}; // directory form → runner cd's there
+        }
         // Prefer .sln (covers C# + C++ multi-project), then .csproj, then .vcxproj.
         // dotnet's CLI handles .sln, .csproj transparently; vcxproj needs msbuild.
         if (!sln.empty())
@@ -698,12 +715,6 @@ static std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std
             return {csproj, "dotnet build"};
         if (!vcxproj.empty())
             return {vcxproj, "msbuild"};
-        if (!uproject.empty())
-        {
-            // Unreal: run the engine's Build.bat / build script if we can find
-            // it; fall back to noop so the user can wire it themselves.
-            return {uproject, ""}; // "" → run directly via OS shell (won't work, but the user is signalled)
-        }
 
         // CMakeLists.txt → `cmake --build <buildDir>` if we can find one.
         if (std::filesystem::is_regular_file(cur / "CMakeLists.txt", ec))
@@ -2528,8 +2539,18 @@ void Editor::renderNavigationPanel()
         }
 
         // Row 2: Filters popup + collapse/expand. Filter box goes BELOW the separator.
-        if (ImGui::SmallButton("Filters"))
-            ImGui::OpenPopup("##navFilters");
+        // Compact: a single ☰ glyph; tinted when any non-default filter is active.
+        {
+            bool filtersActive = navShowDotFiles || navCodeOnly || navShowExcluded || navFlatFiles;
+            if (filtersActive)
+                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(170, 130, 250, 255));
+            if (ImGui::SmallButton("\xe2\x98\xb0")) // ☰
+                ImGui::OpenPopup("##navFilters");
+            if (filtersActive)
+                ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(filtersActive ? "Filters (active)" : "Filters");
+        }
         if (ImGui::BeginPopup("##navFilters", ImGuiWindowFlags_NoMove))
         {
             ImGui::Checkbox("Show dotfiles (.git, .env, ...)", &navShowDotFiles);
@@ -10683,6 +10704,58 @@ void Editor::renderMenuBar()
             {
                 runScriptForDoc();
             }
+
+            // ── Unreal Engine (shown when the project has a .uproject) ──────
+            {
+                // Cache the discovery per project root — directory walks + registry
+                // reads shouldn't run per frame while the menu is open.
+                static std::filesystem::path ueCachedRoot = std::filesystem::path("\x01");
+                static std::filesystem::path ueProj, ueEngine;
+                static std::string ueAssoc;
+                if (ueCachedRoot != projectRoot)
+                {
+                    ueCachedRoot = projectRoot;
+                    ueAssoc.clear();
+                    ueProj = projectRoot.empty() ? std::filesystem::path{}
+                                                 : unreal::findUProject(projectRoot);
+                    ueEngine = ueProj.empty() ? std::filesystem::path{}
+                                              : unreal::findEngineRoot(ueProj, ueAssoc);
+                }
+                if (!ueProj.empty() && ImGui::BeginMenu("Unreal Engine"))
+                {
+                    ImGui::TextDisabled("%s  \xc2\xb7  UE %s%s", ueProj.filename().string().c_str(),
+                                        ueAssoc.empty() ? "(source build)" : ueAssoc.c_str(),
+                                        ueEngine.empty() ? "  \xe2\x80\x94 engine NOT found" : "");
+                    ImGui::Separator();
+                    bool haveEngine = !ueEngine.empty();
+                    bool cpp = unreal::hasCppSource(ueProj);
+                    if (ImGui::MenuItem("Build Editor Target", "F6", false, haveEngine && cpp))
+                        runProjectBuild(); // the build resolver picks the UBT command
+                    if (ImGui::MenuItem("Generate IntelliSense DB (clangd)", nullptr, false, haveEngine && cpp))
+                    {
+                        // compile_commands.json lands in the project root; restart
+                        // C/C++ IntelliSense afterwards to pick it up.
+                        runCommandInOutputPanel(unreal::generateClangDbCommand(ueEngine, ueProj),
+                                                ueProj.parent_path());
+                        pushToast("Generating UE compile database \xe2\x80\x94 toggle C/C++ IntelliSense off/on when it finishes",
+                                  IM_COL32(170, 130, 250, 255), 2);
+                    }
+                    if (!cpp)
+                        ImGui::TextDisabled("(Blueprint-only project \xe2\x80\x94 no C++ Source/)");
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Launch Unreal Editor", nullptr, false,
+                                        haveEngine && !unreal::editorBinary(ueEngine).empty()))
+                    {
+                        runCommandInOutputPanel("\"" + unreal::editorBinary(ueEngine).string() + "\" \"" +
+                                                    ueProj.string() + "\"",
+                                                ueProj.parent_path());
+                    }
+                    if (ImGui::MenuItem("Open .uproject"))
+                        openFile(ueProj.string());
+                    ImGui::EndMenu();
+                }
+            }
+
             ImGui::Separator();
             if (ImGui::MenuItem("Open Project..."))
             {
