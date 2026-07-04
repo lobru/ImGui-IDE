@@ -126,7 +126,8 @@ class Editor {
 	// silently reloads a clean buffer or flags a conflict on a dirty one;
 	// reloadFromDisk() re-reads, preserving a clamped cursor.
 	void recordDiskMtime(TabDocument& t);
-	void reloadFromDisk(TabDocument& t);
+	void reloadFromDisk(TabDocument& t, bool quiet = false); // quiet: no change markers (log/non-code)
+	static bool isCodeExtension(const std::string& extLower); // source code vs log/data/text
 	void checkExternalChanges();
 	void markChangedLines(TabDocument& t, const std::string& oldText); // diff oldText vs the doc's current text
 	void clearChangeMarks(TabDocument& t);   // drop gutter markers + reply-dot decorator + ranges together

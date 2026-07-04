@@ -8426,7 +8426,22 @@ void Editor::recordDiskMtime(TabDocument &t)
 //  Re-read the file from disk into a clean buffer, preserving the cursor —
 //  CLAMPED into the reloaded document because an external edit may have shrunk
 //  the file (a stale out-of-range cursor is the classic assert source here).
-void Editor::reloadFromDisk(TabDocument &t)
+// Source code vs everything else (logs, text, data/markup, binaries). Drives the
+// "quiet reload" for non-code files: they update in place without toasts or gutter
+// change markers, so an appending .log doesn't spam.
+bool Editor::isCodeExtension(const std::string &extLower)
+{
+    static const std::unordered_set<std::string> code = {
+        ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".hh", ".inl", ".ipp", ".m", ".mm",
+        ".cs", ".java", ".kt", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+        ".py", ".pyw", ".lua", ".go", ".rs", ".as",
+        ".glsl", ".vert", ".frag", ".geom", ".comp", ".tesc", ".tese",
+        ".hlsl", ".hlsli", ".fx", ".fxh", ".addonfx", ".sql"
+    };
+    return code.count(extLower) != 0;
+}
+
+void Editor::reloadFromDisk(TabDocument &t, bool quiet)
 {
     std::ifstream stream(t.filename.c_str());
     if (!stream.is_open())
@@ -8447,7 +8462,10 @@ void Editor::reloadFromDisk(TabDocument &t)
     t.externalChange = false;
     recordDiskMtime(t);
     rememberRecentFile(t.filename);
-    markChangedLines(t, oldText); // gutter-highlight exactly what changed (widget diffs vs current text)
+    if (quiet)
+        clearChangeMarks(t); // non-code (log/data): update silently, no gutter markers
+    else
+        markChangedLines(t, oldText); // gutter-highlight exactly what changed (widget diffs vs current text)
 
     int total = (std::max)(t.editor.GetLineCount(), 1);
     line = (std::max)(0, (std::min)(line, total - 1));
@@ -8499,20 +8517,34 @@ void Editor::checkExternalChanges()
         }
 
         std::string fname = std::filesystem::path(t.filename).filename().string();
-        t.externallyTouched = true; // badge on the tab until the user views it
+        // Log / data / text files (e.g. a live crash log that keeps appending) update
+        // the view silently: no toast, no tab badge, no gutter markers, no activity
+        // feed — only code files announce external edits.
+        std::string cext = std::filesystem::path(t.filename).extension().string();
+        std::transform(cext.begin(), cext.end(), cext.begin(),
+                       [](unsigned char c) { return (char) std::tolower(c); });
+        bool code = isCodeExtension(cext);
+
+        t.externallyTouched = code; // badge only for code files
         if (!isDirtyTab(i))
         {
-            reloadFromDisk(t); // clean → take their version, highlight changes
-            pushToast("\xe2\x9c\x8e External edit:  " + fname + "  \xe2\x80\x94 reloaded",
-                      IM_COL32(170, 130, 250, 255));
-            logExternalChange(t.filename, "reloaded (clean)");
+            reloadFromDisk(t, /*quiet*/ !code); // clean → take their version
+            if (code)
+            {
+                pushToast("\xe2\x9c\x8e External edit:  " + fname + "  \xe2\x80\x94 reloaded",
+                          IM_COL32(170, 130, 250, 255));
+                logExternalChange(t.filename, "reloaded (clean)");
+            }
         }
         else
         {
             t.externalChange = true; // dirty → conflict, show the bar
-            pushToast("\xe2\x9a\xa0 External edit:  " + fname + "  \xe2\x80\x94 conflict (you have unsaved edits)",
-                      IM_COL32(240, 180, 70, 255));
-            logExternalChange(t.filename, "conflict (unsaved)");
+            if (code)
+            {
+                pushToast("\xe2\x9a\xa0 External edit:  " + fname + "  \xe2\x80\x94 conflict (you have unsaved edits)",
+                          IM_COL32(240, 180, 70, 255));
+                logExternalChange(t.filename, "conflict (unsaved)");
+            }
         }
     }
 }
