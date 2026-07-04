@@ -1,0 +1,10 @@
+name = Log
+extensions = .log
+case_sensitive = false
+double_quoted_strings = true
+# Severity classes drive the coloring: keywords = error class, declarations =
+# warning class, identifiers = info/success class. Covers generic, UE
+# ("LogTemp: Error:"), MSVC, and crash-handler vocabulary.
+keywords = error fatal failed failure exception assert assertion assertfailed crash crashed critical severe violation denied abort aborted unhandled panic terminate terminated stack callstack stacktrace segfault sigsegv
+declarations = warning warn deprecated timeout retry stale skipped missing leaked leak conflict busy blocked
+identifiers = info log display verbose debug trace success ok passed loaded started starting initialized initializing done complete completed ready saved shutdown

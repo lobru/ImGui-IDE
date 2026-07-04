@@ -10095,6 +10095,132 @@ void Editor::renderDocumentWindow(TabDocument &t)
             }
         }
 
+        // Log-file references: "path(123)" (MSVC), "path:123" (clang/gcc/UE
+        // callstacks), and UE crash "[File:...cpp] [Line: 123]" on the current
+        // line resolve to a project file + line — crash logs jump straight to
+        // code. Memoized like the include resolution (this re-runs per frame).
+        if (!isInclude)
+        {
+            std::string logKey = t.filename + "|" + std::to_string(line) + "|" + lineText;
+            if (logKey != ctxLogKey)
+            {
+                ctxLogKey = logKey;
+                ctxLogFile.clear();
+                ctxLogLabel.clear();
+                ctxLogLine = 0;
+
+                // Parse: scan for a run of path characters containing a '.',
+                // followed by "(digits)" or ":digits". Also UE's split form.
+                auto isPathChar = [](char c) {
+                    return std::isalnum((unsigned char)c) || c == '_' || c == '.' || c == '/' ||
+                           c == '\\' || c == '-' || c == '+' || c == '~';
+                };
+                std::string refFile;
+                int refLine = 0;
+                const std::string &s = lineText;
+                for (size_t i = 0; i < s.size() && refFile.empty(); ++i)
+                {
+                    if (!std::isdigit((unsigned char)s[i]))
+                        continue;
+                    size_t dEnd = i;
+                    while (dEnd < s.size() && std::isdigit((unsigned char)s[dEnd]))
+                        ++dEnd;
+                    // "(123)" or ":123" — the char before the digits.
+                    if (i == 0)
+                        continue;
+                    char sep = s[i - 1];
+                    if (sep == '(' && (dEnd >= s.size() || s[dEnd] != ')'))
+                        continue;
+                    if (sep != '(' && sep != ':')
+                        continue;
+                    size_t pEnd = i - 1; // exclusive end of the path
+                    size_t pBeg = pEnd;
+                    while (pBeg > 0 && isPathChar(s[pBeg - 1]))
+                        --pBeg;
+                    // Optional Windows drive prefix ("C:") directly before the path.
+                    if (pBeg >= 2 && s[pBeg - 1] == ':' && std::isalpha((unsigned char)s[pBeg - 2]) &&
+                        (pBeg == 2 || !isPathChar(s[pBeg - 3])))
+                        pBeg -= 2;
+                    std::string cand = s.substr(pBeg, pEnd - pBeg);
+                    // Must look like a file: has an extension dot that isn't leading.
+                    auto dot = cand.find_last_of('.');
+                    if (cand.size() < 3 || dot == std::string::npos || dot == 0 ||
+                        dot + 1 >= cand.size())
+                        continue;
+                    refFile = cand;
+                    refLine = std::atoi(s.substr(i, dEnd - i).c_str());
+                    i = dEnd;
+                }
+                // UE crash split form: [File:D:\...\x.cpp] ... [Line: 123]
+                if (refFile.empty())
+                {
+                    auto fp = s.find("[File:");
+                    auto lp = s.find("[Line:");
+                    if (fp != std::string::npos && lp != std::string::npos)
+                    {
+                        auto fe = s.find(']', fp);
+                        if (fe != std::string::npos)
+                        {
+                            refFile = s.substr(fp + 6, fe - fp - 6);
+                            refLine = std::atoi(s.c_str() + lp + 6);
+                        }
+                    }
+                }
+
+                if (!refFile.empty() && refLine > 0)
+                {
+                    // Resolve: absolute + exists wins; otherwise search the project
+                    // for the basename (bounded, like the include resolution).
+                    std::error_code lec;
+                    std::filesystem::path rp(refFile);
+                    if (rp.is_absolute() && std::filesystem::is_regular_file(rp, lec))
+                        ctxLogFile = rp.string();
+                    else if (!projectRoot.empty())
+                    {
+                        auto wanted = rp.filename().string();
+                        int budget = 50000;
+                        for (auto wit = std::filesystem::recursive_directory_iterator(
+                                 projectRoot, std::filesystem::directory_options::skip_permission_denied, lec);
+                             !lec && wit != std::filesystem::recursive_directory_iterator(); ++wit)
+                        {
+                            if (wit.depth() > 6)
+                            {
+                                wit.disable_recursion_pending();
+                                continue;
+                            }
+                            if (--budget <= 0)
+                                break;
+                            if (wit->is_regular_file(lec) && wit->path().filename().string() == wanted)
+                            {
+                                ctxLogFile = wit->path().string();
+                                break;
+                            }
+                        }
+                    }
+                    if (!ctxLogFile.empty())
+                    {
+                        ctxLogLine = refLine;
+                        ctxLogLabel = "Go to " + std::filesystem::path(refFile).filename().string() +
+                                      "(" + std::to_string(refLine) + ")";
+                    }
+                }
+            }
+            if (!ctxLogFile.empty() && ctxLogLine > 0)
+            {
+                if (ImGui::MenuItem(ctxLogLabel.c_str()))
+                {
+                    openFile(ctxLogFile);
+                    if (!tabs.empty() && doc().filename == ctxLogFile)
+                    {
+                        auto &e = doc().editor;
+                        e.SetCursor(ctxLogLine - 1, 0);
+                        e.SelectLine(ctxLogLine - 1);
+                        e.ScrollToLine(ctxLogLine - 1, TextEditor::Scroll::alignMiddle);
+                    }
+                }
+            }
+        }
+
         // On an #include / import line the only meaningful navigation is
         // "Go to File" (above). Suppress the symbol items (Go to
         // Definition / Declaration / Find References / Learn) — the word

@@ -750,6 +750,14 @@ private:
 	std::string  ctxIncludeResult;
 	bool         ctxIncludeFound = false;
 
+	// Same memo pattern for log-file references: "path(123)" / "path:123" /
+	// UE "[File:...] [Line: 123]" on the current line resolve to a project file
+	// + line so crash logs jump straight to code.
+	std::string  ctxLogKey;
+	std::string  ctxLogFile;     // resolved absolute path ("" = unresolved)
+	std::string  ctxLogLabel;    // menu label (file(line))
+	int          ctxLogLine = 0; // 1-based
+
 	// Find References results panel — project-wide. Each hit records the file
 	// it was found in so clicking opens that file and jumps to the line.
 	struct RefHit { std::string file; int line; std::string text; };
