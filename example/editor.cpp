@@ -2480,16 +2480,10 @@ void Editor::renderNavigationPanel()
         }
         else
         {
-        // Row 1: a small nameless folder-picker button on the LEFT, then the project
-        // path filling the rest. The path is right-aligned + truncated (tail kept) by
-        // default with the full path on hover; a setting switches to wrapping. Click
-        // the path to edit the root in place (type a folder + Enter); focus loss
-        // without committing reverts to the display.
-        if (ImGui::SmallButton("..."))
-            openProjectFolderPicker();
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Pick project folder");
-        ImGui::SameLine();
+        // Row 1: the project path fills the row (no picker button — click the path
+        // to edit it in place, or use File > Open Project). Right-aligned +
+        // truncated (tail kept) by default with the full path on hover; a setting
+        // switches to wrapping.
 
         if (navEditingPath)
         {
