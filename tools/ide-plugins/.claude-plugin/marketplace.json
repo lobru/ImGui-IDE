@@ -6,9 +6,9 @@
   "plugins": [
     {
       "name": "imgui-ide-bridge",
-      "description": "Open the current project in ImGui-IDE and send toasts to the running editor.",
+      "description": "Two-way ImGui-IDE bridge: open project, send toasts, auto-receive in-editor replies.",
       "category": "productivity",
-      "source": { "source": "local", "path": "./imgui-ide-bridge" }
+      "source": "./imgui-ide-bridge"
     }
   ]
 }

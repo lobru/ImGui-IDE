@@ -1,7 +1,7 @@
 {
   "name": "imgui-ide-bridge",
-  "version": "0.1.0",
-  "description": "Open the current Claude Code project in ImGui-IDE (like `code .`) and send toast notifications to the running editor.",
+  "version": "0.2.0",
+  "description": "Two-way bridge to ImGui-IDE: open the current project (like `code .`), send toasts to the running editor, and receive in-editor replies — a UserPromptSubmit hook auto-drains the reply outbox into context, closing the editor->Claude feedback loop.",
   "author": { "name": "Logan Brunet" },
-  "keywords": ["imgui-ide", "editor", "toast", "notifications"]
+  "keywords": ["imgui-ide", "editor", "toast", "notifications", "feedback"]
 }

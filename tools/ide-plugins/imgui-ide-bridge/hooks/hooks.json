@@ -1,0 +1,14 @@
+{
+	"hooks": {
+		"UserPromptSubmit": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/drain-replies-hook.ps1\""
+					}
+				]
+			}
+		]
+	}
+}

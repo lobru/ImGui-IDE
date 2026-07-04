@@ -8657,6 +8657,9 @@ bool TextEditor::Autocomplete::render(const TextEditor& editor, Document& docume
 			}
 			else
 			{
+				// Cursor left the word being completed → close the popup.
+				// (Comment added via the in-editor reply-to-Claude loop — you sent
+				// "[TextEditor.cpp:8660] if you see this add a comment" and it worked.)
 				requestDeactivation = true;
 			}
 		}
