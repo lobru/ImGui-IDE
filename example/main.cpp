@@ -206,19 +206,67 @@ int main(int argc, char** argv) {
 			filesArg.push_back(p);
 		}
 	}
+
+	// Per-project instance key: instances are ONE PER PROJECT. Same project → a
+	// second launch coalesces into the running window; different project → its
+	// own window. The key source is the project root when given, else the
+	// nearest project root ABOVE the first file (so opening a loose file that
+	// belongs to an already-open project joins that window rather than spawning
+	// a bare one), else "none" — so genuinely projectless launches stay single.
+	std::string keySource = projectArg;
+	if (keySource.empty() && !filesArg.empty()) {
+		std::error_code fec;
+		auto cur = std::filesystem::path(filesArg.front()).parent_path();
+		auto isRootMarker = [](const std::filesystem::path& d) {
+			std::error_code mec;
+			for (auto& e : std::filesystem::directory_iterator(d, mec)) {
+				if (mec) break;
+				auto ext = e.path().extension().string();
+				std::transform(ext.begin(), ext.end(), ext.begin(),
+					[](unsigned char c){ return (char) std::tolower(c); });
+				auto nm = e.path().filename().string();
+				if (ext == ".sln" || ext == ".csproj" || ext == ".vcxproj" ||
+					ext == ".uproject" || ext == ".uplugin" ||
+					nm == "CMakeLists.txt" || nm == ".git")
+					return true;
+			}
+			return false;
+		};
+		for (int depth = 0; depth < 30 && !cur.empty(); ++depth) {
+			if (isRootMarker(cur)) { keySource = cur.string(); break; }
+			auto parent = cur.parent_path();
+			if (parent == cur) break;
+			cur = parent;
+		}
+	}
+	std::string instanceKey = "none";
+	if (!keySource.empty()) {
+		std::error_code kec;
+		auto canon = std::filesystem::weakly_canonical(keySource, kec);
+		std::string s = kec ? keySource : canon.string();
 #ifdef _WIN32
-	// Single instance: if ImGui-IDE is already running, forward the requested
-	// project/files to it and exit — so a second launch (e.g. UE "Open Source
-	// Code", Explorer "Open with", a shell verb) reuses the existing window
-	// instead of spawning a duplicate. Opt out with --new.
+		std::transform(s.begin(), s.end(), s.begin(),
+			[](unsigned char c){ return (char) std::tolower(c); });
+#endif
+		instanceKey = std::to_string((unsigned long long) std::hash<std::string>{}(s));
+	}
+
+#ifdef _WIN32
+	// Single instance PER PROJECT: if an ImGui-IDE is already running ON THIS
+	// PROJECT, forward the requested project/files to it and exit — so a second
+	// launch of the same project (UE "Open Source Code", Explorer "Open with",
+	// a shell verb) reuses that window instead of spawning a duplicate. A launch
+	// for a DIFFERENT project falls through and opens its own window. Opt out of
+	// coalescing entirely with --new.
 	{
 		bool forceNew = false;
 		for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--new") forceNew = true;
 		if (!forceNew) {
-			HANDLE inst = CreateMutexA(nullptr, FALSE, "Local\\ImGuiIDE_SingleInstance");
+			std::string mutexName = "Local\\ImGuiIDE_Instance_" + instanceKey;
+			HANDLE inst = CreateMutexA(nullptr, FALSE, mutexName.c_str());
 			if (inst && GetLastError() == ERROR_ALREADY_EXISTS) {
 				std::error_code mec;
-				auto dir = Editor::userConfigDir() / "open";
+				auto dir = Editor::userConfigDir() / "open" / instanceKey;
 				std::filesystem::create_directories(dir, mec);
 				std::string body;
 				if (!projectArg.empty()) body += "project|" + projectArg + "\n";
@@ -227,9 +275,9 @@ int main(int argc, char** argv) {
 				auto name = dir / ("open_" + std::to_string((long long) std::time(nullptr)) + "_" +
 					std::to_string((unsigned long) GetCurrentProcessId()) + ".txt");
 				std::ofstream(name, std::ios::binary) << body;
-				return 0; // primary instance picks it up via pollOpenInbox()
+				return 0; // the instance owning this project picks it up via pollOpenInbox()
 			}
-			// else: we are the primary — hold `inst` for the process lifetime.
+			// else: we are the primary for this project — hold `inst` for the process lifetime.
 		}
 	}
 #endif
@@ -324,6 +372,7 @@ int main(int argc, char** argv) {
 	// Tell Editor to skip the demo doc when launched with files / project.
 	Editor::sSkipDemo = (!projectArg.empty() || !filesArg.empty());
 	Editor editor;
+	editor.setInstanceKey(instanceKey);   // route this project's open-inbox to us
 	updater::cleanupStaleUpdate(updater::runningExePath());   // drop any <exe>.old from a prior in-place update
 	if (!projectArg.empty()) editor.setProjectRoot(projectArg);
 	for (auto& p : filesArg) editor.openFile(p);

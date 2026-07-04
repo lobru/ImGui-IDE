@@ -8938,7 +8938,8 @@ void Editor::pollOpenInbox()
     nextPoll = now + 0.2;
 
     std::error_code ec;
-    auto dir = userConfigDir() / "open";
+    // Per-project inbox: only requests routed to THIS instance's project.
+    auto dir = userConfigDir() / "open" / instanceKey;
     if (!std::filesystem::exists(dir, ec))
         return;
 

@@ -65,6 +65,13 @@ class Editor {
 	// SDL window.
 	bool consumeRaiseRequest() { bool r = wantRaiseWindow; wantRaiseWindow = false; return r; }
 
+	// Per-project instance key (set once at startup by main.cpp). Instances are
+	// keyed by project so a second launch coalesces into the window ALREADY on
+	// that project, while a launch for a DIFFERENT project opens its own window.
+	// The single-instance open inbox lives under <configDir>/open/<key>/, so
+	// each instance only picks up requests routed to its project.
+	void setInstanceKey(const std::string &k) { instanceKey = k; }
+
 	private:
 	// per-document state — each doc is its own dockable window
 	struct TabDocument {
@@ -154,11 +161,13 @@ class Editor {
 	void renderToasts();
 	void writeToastReply(const std::string& text);   // -> <configDir>/replies/* (bridge outbox)
 
-	// Single-instance open inbox: a second launch writes its project/files to
-	// <configDir>/open/*; the primary instance polls + opens them here. Sets
-	// wantRaiseWindow so main.cpp surfaces the window.
+	// Single-instance open inbox: a second launch for THIS project writes its
+	// project/files to <configDir>/open/<instanceKey>/; the instance owning that
+	// project polls + opens them here. Sets wantRaiseWindow so main.cpp surfaces
+	// the window.
 	void pollOpenInbox();
 	bool wantRaiseWindow = false;
+	std::string instanceKey = "none"; // per-project routing key (main.cpp sets it)
 
 	// "Reply to Claude" feedback popup: type a message about a Claude/external change
 	// (or a toast) and either send it now or queue it for batch submission. All replies
