@@ -17,6 +17,8 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <fstream>
+#include <ctime>
 #include <string>
 #include <vector>
 #include "imgui.h"
@@ -204,6 +206,34 @@ int main(int argc, char** argv) {
 			filesArg.push_back(p);
 		}
 	}
+#ifdef _WIN32
+	// Single instance: if ImGui-IDE is already running, forward the requested
+	// project/files to it and exit — so a second launch (e.g. UE "Open Source
+	// Code", Explorer "Open with", a shell verb) reuses the existing window
+	// instead of spawning a duplicate. Opt out with --new.
+	{
+		bool forceNew = false;
+		for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--new") forceNew = true;
+		if (!forceNew) {
+			HANDLE inst = CreateMutexA(nullptr, FALSE, "Local\\ImGuiIDE_SingleInstance");
+			if (inst && GetLastError() == ERROR_ALREADY_EXISTS) {
+				std::error_code mec;
+				auto dir = Editor::userConfigDir() / "open";
+				std::filesystem::create_directories(dir, mec);
+				std::string body;
+				if (!projectArg.empty()) body += "project|" + projectArg + "\n";
+				for (auto& f : filesArg) body += "file|" + f + "\n";
+				body += "raise|\n";
+				auto name = dir / ("open_" + std::to_string((long long) std::time(nullptr)) + "_" +
+					std::to_string((unsigned long) GetCurrentProcessId()) + ".txt");
+				std::ofstream(name, std::ios::binary) << body;
+				return 0; // primary instance picks it up via pollOpenInbox()
+			}
+			// else: we are the primary — hold `inst` for the process lifetime.
+		}
+	}
+#endif
+
 	// setup SDL
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		printf("Error: SDL_Init(): %s\n", SDL_GetError());
@@ -334,6 +364,14 @@ int main(int argc, char** argv) {
 
 		// render editor
 		editor.render();
+
+		// A forwarded open request from a second launch (single-instance) asks us
+		// to surface the window.
+		if (editor.consumeRaiseRequest()) {
+			SDL_ShowWindow(window);
+			SDL_RaiseWindow(window);
+			SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);
+		}
 
 		// render to the screen
 		ImGui::Render();

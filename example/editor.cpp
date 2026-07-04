@@ -8777,6 +8777,59 @@ void Editor::writeToastReply(const std::string &text)
 //   or just the raw message. The file is deleted once shown. Polled at ~5 Hz so
 // it costs nothing per frame; this is the bridge other tools (e.g. a Claude Code
 // plugin) use to surface notifications in the IDE.
+// Single-instance open inbox — a second launch (single-instance forwarding in
+// main.cpp) drops "<verb>|<arg>" lines here; we open them in THIS window.
+void Editor::pollOpenInbox()
+{
+    static double nextPoll = 0.0;
+    double now = ImGui::GetTime();
+    if (now < nextPoll)
+        return;
+    nextPoll = now + 0.2;
+
+    std::error_code ec;
+    auto dir = userConfigDir() / "open";
+    if (!std::filesystem::exists(dir, ec))
+        return;
+
+    std::vector<std::filesystem::path> files;
+    for (auto &e : std::filesystem::directory_iterator(dir, ec))
+    {
+        if (ec)
+            break;
+        if (e.is_regular_file(ec))
+            files.push_back(e.path());
+        if (files.size() >= 32)
+            break;
+    }
+    std::sort(files.begin(), files.end());
+    for (auto &f : files)
+    {
+        std::ifstream in(f, std::ios::binary);
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        in.close();
+        std::filesystem::remove(f, ec);
+
+        std::istringstream ss(content);
+        std::string line;
+        while (std::getline(ss, line))
+        {
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+                line.pop_back();
+            auto bar = line.find('|');
+            if (bar == std::string::npos)
+                continue;
+            std::string verb = line.substr(0, bar), arg = line.substr(bar + 1);
+            if (verb == "project" && !arg.empty())
+                setProjectRoot(arg);
+            else if (verb == "file" && !arg.empty())
+                openFile(arg);
+            else if (verb == "raise")
+                wantRaiseWindow = true;
+        }
+    }
+}
+
 void Editor::pollToastInbox()
 {
     static double nextPoll = 0.0;
@@ -9248,6 +9301,7 @@ void Editor::render()
     ImGui::DockSpace(dockId, dockArea, ImGuiDockNodeFlags_PassthruCentralNode);
 
     checkExternalChanges(); // reload clean docs / flag conflicts when disk changes under us
+    pollOpenInbox();        // single-instance: <configDir>/open/* → open here + raise
     pollToastInbox();       // external toast API: <configDir>/toasts/* → on-screen toasts
     pollUpdates();          // GitHub release check (auto 12 h / manual) + download drain
     autoSaveTick();         // periodic save of dirty, on-disk documents (if enabled)

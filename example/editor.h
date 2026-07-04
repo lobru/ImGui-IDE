@@ -60,6 +60,11 @@ class Editor {
 	// render the editor
 	void render();
 
+	// True once (then reset) when a forwarded single-instance open request asked
+	// to surface the window — main.cpp raises the OS window. Public: main owns the
+	// SDL window.
+	bool consumeRaiseRequest() { bool r = wantRaiseWindow; wantRaiseWindow = false; return r; }
+
 	private:
 	// per-document state — each doc is its own dockable window
 	struct TabDocument {
@@ -147,6 +152,12 @@ class Editor {
 	void pushToast(const std::string& text, ImU32 accent, int action = 0);
 	void renderToasts();
 	void writeToastReply(const std::string& text);   // -> <configDir>/replies/* (bridge outbox)
+
+	// Single-instance open inbox: a second launch writes its project/files to
+	// <configDir>/open/*; the primary instance polls + opens them here. Sets
+	// wantRaiseWindow so main.cpp surfaces the window.
+	void pollOpenInbox();
+	bool wantRaiseWindow = false;
 
 	// "Reply to Claude" feedback popup: type a message about a Claude/external change
 	// (or a toast) and either send it now or queue it for batch submission. All replies
