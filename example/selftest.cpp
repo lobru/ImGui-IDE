@@ -1074,6 +1074,21 @@ int main()
 		fs::remove_all(root, ec);
 	}
 
+	// ── Unreal C++ type + macro highlighting ──────────────────────────────
+	{
+		auto cpp = TextEditor::Language::Cpp();
+		int typeCol = colorAt(cpp, "int i;\n", 0, 0);    // known base type
+		int kwCol = colorAt(cpp, "return x;\n", 0, 0);   // known keyword
+		int plainId = colorAt(cpp, "zqzq x;\n", 0, 0);   // unknown identifier (control)
+		CHECK(typeCol != plainId, "UE C++: (sanity) type color differs from plain identifier");
+		CHECK(colorAt(cpp, "int32 x;\n", 0, 0) == typeCol, "UE C++: int32 colored as a type");
+		CHECK(colorAt(cpp, "uint8 x;\n", 0, 0) == typeCol, "UE C++: uint8 colored as a type");
+		CHECK(colorAt(cpp, "FString s;\n", 0, 0) == typeCol, "UE C++: FString colored as a type");
+		CHECK(colorAt(cpp, "TArray<int> a;\n", 0, 0) == typeCol, "UE C++: TArray colored as a type");
+		CHECK(colorAt(cpp, "UCLASS()\n", 0, 0) == kwCol, "UE C++: UCLASS colored as a keyword");
+		CHECK(colorAt(cpp, "UE_LOG(x);\n", 0, 0) == kwCol, "UE C++: UE_LOG colored as a keyword");
+	}
+
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);
 		return 0;
