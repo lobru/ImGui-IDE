@@ -687,6 +687,32 @@ private:
 	void openImageFile(const std::string& path);
 	void renderImageWindows();
 
+	// PDF viewer — pages rendered lazily (visible pages only) by the OS PDF engine
+	// (pdfview.*) into GPU textures; an LRU cap keeps a long document from
+	// ballooning VRAM. Same texture lifecycle as ImageDoc.
+	struct PdfDoc {
+		std::string  path;
+		std::string  windowTitle;
+		bool         open = true;
+		bool         wantFocus = false;
+		bool         fitted = false;
+		float        zoom = 1.0f;
+		float        renderScale = 1.5f;      // texture supersampling vs natural 96-dpi size
+		int          pageCount = 0;
+		std::string  error;                   // load error (shown in-window)
+		std::vector<std::pair<float,float>> pageSizes; // natural DIP sizes (placeholders)
+		struct PageTex {
+			ImTextureData* tex = nullptr;
+			int    w = 0, h = 0;
+			bool   failed = false;            // render failed — don't retry every frame
+			double lastVisible = 0.0;         // for LRU eviction
+		};
+		std::vector<PageTex> pages;
+	};
+	std::vector<std::unique_ptr<PdfDoc>> pdfs;
+	void openPdfFile(const std::string& path);
+	void renderPdfWindows();
+
 	// Lazy thumbnail cache for nav-panel hover previews. One GPU texture per
 	// image path, loaded on first hover and reused; capped so a big image tree
 	// can't balloon VRAM. Drawn inside the file's hover tooltip.

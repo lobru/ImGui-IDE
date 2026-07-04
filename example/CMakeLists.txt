@@ -81,14 +81,16 @@ add_executable(example
 	editor.cpp
 	updater.cpp
 	unreal.cpp
+	pdfview.cpp
 	dejavu.cpp
 	main.cpp)
 
 target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
 
-# In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only).
+# In-app updater talks to GitHub over HTTPS via WinHTTP; the PDF viewer uses the
+# OS PDF engine via C++/WinRT (windowsapp). Both Windows only.
 if(WIN32)
-	target_link_libraries(example PRIVATE winhttp)
+	target_link_libraries(example PRIVATE winhttp windowsapp)
 endif()
 
 # Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
