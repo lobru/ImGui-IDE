@@ -2338,7 +2338,16 @@ void TextEditor::handleMouseInteractions()
 			int loLine = std::min(columnAnchor.line, cursorCoordinate.line);
 			int hiLine = std::max(columnAnchor.line, cursorCoordinate.line);
 			int anchorCol = columnAnchor.column;
-			int dragCol = cursorCoordinate.column;
+			// Drag column from the RAW mouse X as a virtual column (xToColumn
+			// returns columns past end-of-line), NOT the clamped
+			// cursorCoordinate.column. normalizeCoordinate pins the latter to the
+			// hovered line's end, so while the mouse is over a SHORT line the box's
+			// right edge couldn't reach past it — you couldn't select trailing
+			// characters on LONGER lines in the box without dragging onto a longer
+			// line (which changed the line range and dropped rows). Treating the
+			// empty space past a line end as selectable whitespace is the
+			// VSCode/Sublime behaviour the user expects.
+			int dragCol = xToColumn(cursorCoordinate.line, mousePos.x - textOffset);
 			int selLo = std::min(anchorCol, dragCol);
 			int selHi = std::max(anchorCol, dragCol);
 
@@ -2562,7 +2571,13 @@ void TextEditor::handleMouseInteractions()
 					if (startColumn)
 					{
 						columnSelecting = true;
-						columnAnchor = cursorCoordinate;
+						// Anchor in the SAME virtual-column space the drag edge uses
+						// (xToColumn, un-clamped) — not the EOL-clamped cursorCoordinate.
+						// Otherwise an Alt-click started past a short line's end would
+						// pin the box's left edge to that line's EOL while the right
+						// edge floats in virtual space, selecting columns never dragged.
+						columnAnchor = Coordinate(cursorCoordinate.line,
+							xToColumn(cursorCoordinate.line, mousePos.x - textOffset));
 						cursors.setCursor(cursorCoordinate);
 						autocomplete.cancel();
 					}
@@ -2835,6 +2850,12 @@ void TextEditor::copy() const
 	// empty cursors copy the entire line
 	std::string text;
 
+	// Also record one fragment per cursor so a later multi-cursor paste can
+	// distribute (fragment i -> cursor i) when the counts match. Iteration order
+	// here matches paste()'s (both walk cursors top-to-bottom), so fragments and
+	// cursors stay aligned.
+	lastCopyFragments.clear();
+
 	if (cursors.anyHasSelection())
 	{
 		for (auto& cursor : cursors)
@@ -2844,15 +2865,17 @@ void TextEditor::copy() const
 				text += "\n";
 			}
 
+			std::string fragment;
 			if (cursor.hasSelection())
 			{
-				text += document.getSectionText(cursor.getSelectionStart(), cursor.getSelectionEnd());
-
+				fragment = document.getSectionText(cursor.getSelectionStart(), cursor.getSelectionEnd());
 			}
 			else
 			{
-				text += document.getLineText(cursor.getSelectionStart().line);
+				fragment = document.getLineText(cursor.getSelectionStart().line);
 			}
+			text += fragment;
+			lastCopyFragments.push_back(std::move(fragment));
 		}
 
 	}
@@ -2860,10 +2883,13 @@ void TextEditor::copy() const
 	{
 		for (auto& cursor : cursors)
 		{
-			text += document.getLineText(cursor.getSelectionStart().line) + "\n";
+			auto line = document.getLineText(cursor.getSelectionStart().line);
+			text += line + "\n";
+			lastCopyFragments.push_back(std::move(line));
 		}
 	}
 
+	lastCopyString = text;
 	ImGui::SetClipboardText(text.c_str());
 }
 
@@ -2876,13 +2902,73 @@ void TextEditor::paste()
 {
 	// ignore non-text clipboard content
 	auto clipboard = ImGui::GetClipboardText();
-
-	if (clipboard)
+	if (!clipboard)
 	{
-		auto transaction = startTransaction();
-		insertTextIntoAllCursors(transaction, clipboard);
-		endTransaction(transaction);
+		return;
 	}
+	std::string text(clipboard);
+
+	// Multi-cursor distribution (Sublime/VSCode): with more than one cursor and
+	// a clipboard that splits into exactly as many fragments as there are
+	// cursors, paste fragment i into cursor i instead of the whole block into
+	// every cursor. Two sources of fragments, preferred in order:
+	//   1. the fragments WE recorded at the last copy() — exact, and correct
+	//      even when a per-cursor selection spanned multiple lines;
+	//   2. otherwise split the clipboard on newlines (covers text copied from
+	//      elsewhere: N lines -> N cursors).
+	std::vector<std::string> parts;
+	if (cursors.size() > 1)
+	{
+		if (text == lastCopyString && lastCopyFragments.size() == cursors.size())
+		{
+			parts = lastCopyFragments;
+		}
+		else
+		{
+			std::vector<std::string> lines;
+			size_t start = 0;
+			for (size_t i = 0; i <= text.size(); ++i)
+			{
+				if (i == text.size() || text[i] == '\n')
+				{
+					std::string line = text.substr(start, i - start);
+					if (!line.empty() && line.back() == '\r')
+					{
+						line.pop_back();
+					}
+					lines.push_back(std::move(line));
+					start = i + 1;
+				}
+			}
+			// A trailing newline yields a final empty element; drop ONE
+			// unconditionally so "a\nb\n" maps to {a,b} not {a,b,""}. Without
+			// this, a clipboard whose content-line count is cursorCount-1 (e.g.
+			// "a\nb\n" with 3 cursors, or a single line "a\n" with 2 cursors)
+			// would coincidentally split into cursorCount fragments and blank the
+			// last cursor. Guard size>1 so an empty clipboard isn't emptied more.
+			if (lines.size() > 1 && lines.back().empty())
+			{
+				lines.pop_back();
+			}
+			// Require at least 2 real fragments before distributing — a single
+			// logical line pastes whole into every cursor (Sublime behaviour).
+			if (lines.size() == cursors.size() && lines.size() > 1)
+			{
+				parts = std::move(lines);
+			}
+		}
+	}
+
+	auto transaction = startTransaction();
+	if (!parts.empty())
+	{
+		insertTextIntoAllCursorsDistributed(transaction, parts);
+	}
+	else
+	{
+		insertTextIntoAllCursors(transaction, text);
+	}
+	endTransaction(transaction);
 }
 
 
@@ -5173,6 +5259,32 @@ void TextEditor::insertTextIntoAllCursors(std::shared_ptr<Transaction> transacti
 	{
 		auto start = cursor->getSelectionStart();
 		auto end = insertText(transaction, start, text);
+		cursor->update(end, false);
+		cursors.adjustForInsert(cursor, start, end);
+	}
+}
+
+
+//
+//	TextEditor::insertTextIntoAllCursorsDistributed
+//
+
+void TextEditor::insertTextIntoAllCursorsDistributed(std::shared_ptr<Transaction> transaction, const std::vector<std::string>& parts)
+{
+	// delete any selection content first
+	deleteTextFromAllCursors(transaction);
+
+	// insert one fragment per cursor (fragment i -> cursor i), cursors walked
+	// top-to-bottom to match the order parts were captured in.
+	size_t i = 0;
+	for (auto cursor = cursors.begin(); cursor < cursors.end(); cursor++, i++)
+	{
+		if (i >= parts.size())
+		{
+			break;
+		}
+		auto start = cursor->getSelectionStart();
+		auto end = insertText(transaction, start, parts[i]);
 		cursor->update(end, false);
 		cursors.adjustForInsert(cursor, start, end);
 	}

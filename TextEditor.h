@@ -1669,6 +1669,7 @@ protected:
 	bool endTransaction(std::shared_ptr<Transaction> transaction);
 
 	void insertTextIntoAllCursors(std::shared_ptr<Transaction> transaction, const std::string_view& text);
+	void insertTextIntoAllCursorsDistributed(std::shared_ptr<Transaction> transaction, const std::vector<std::string>& parts);
 	void deleteTextFromAllCursors(std::shared_ptr<Transaction> transaction);
 	void autoIndentAllCursors(std::shared_ptr<Transaction> transaction);
 	Coordinate insertText(std::shared_ptr<Transaction> transaction, Coordinate start, const std::string_view& text);
@@ -1794,6 +1795,13 @@ protected:
 	// Column / box selection: Alt+Shift+drag, VSCode/Sublime style.
 	bool        columnSelecting   = false;
 	Coordinate  columnAnchor{};
+
+	// Multi-cursor copy fragments — one per cursor at the last copy(), so a
+	// paste with a matching cursor count can distribute one fragment per cursor
+	// (Sublime style). `lastCopyString` is exactly what we put on the clipboard,
+	// used to confirm the clipboard still holds our copy. Mutable: copy() const.
+	mutable std::vector<std::string> lastCopyFragments;
+	mutable std::string              lastCopyString;
 
 	// Set on left-mousedown over text / line numbers, cleared on release.
 	// Prevents drags that originated on the horizontal scrollbar (or any
