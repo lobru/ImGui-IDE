@@ -2466,14 +2466,25 @@ void Editor::renderNavigationPanel()
             navListDirty = false;
         }
 
+        // With no root at all (no project, no open doc), the picker/path/filter
+        // rows are dead controls — show a single clear entry point instead.
+        static bool navEditingPath = false;
+        static bool navPathFocus = false; // one-shot: focus the input on entry
+        static char navPathBuf[1024] = {0};
+        if (root.empty())
+        {
+            ImGui::Spacing();
+            if (ImGui::Button("Open Project\xe2\x80\xa6", ImVec2(-FLT_MIN, 0.0f)))
+                openProjectFolderPicker();
+            ImGui::TextDisabled("or open a file to root the\ntree at its folder");
+        }
+        else
+        {
         // Row 1: a small nameless folder-picker button on the LEFT, then the project
         // path filling the rest. The path is right-aligned + truncated (tail kept) by
         // default with the full path on hover; a setting switches to wrapping. Click
         // the path to edit the root in place (type a folder + Enter); focus loss
         // without committing reverts to the display.
-        static bool navEditingPath = false;
-        static bool navPathFocus = false; // one-shot: focus the input on entry
-        static char navPathBuf[1024] = {0};
         if (ImGui::SmallButton("..."))
             openProjectFolderPicker();
         if (ImGui::IsItemHovered())
@@ -2545,7 +2556,7 @@ void Editor::renderNavigationPanel()
             bool filtersActive = navShowDotFiles || navCodeOnly || navShowExcluded || navFlatFiles;
             if (filtersActive)
                 ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(170, 130, 250, 255));
-            if (ImGui::SmallButton("\xe2\x98\xb0")) // ☰
+            if (ImGui::SmallButton("\xe2\x89\xa1")) // ≡ (U+2261 — present in DejaVu; U+2630 was tofu)
                 ImGui::OpenPopup("##navFilters");
             if (filtersActive)
                 ImGui::PopStyleColor();
@@ -2577,6 +2588,7 @@ void Editor::renderNavigationPanel()
         // show (matching files keep their ancestor folders visible + auto-expand).
         ImGui::SetNextItemWidth(-FLT_MIN);
         ImGui::InputTextWithHint("##navFilter", "filter by name...", navFilterBuf, sizeof(navFilterBuf));
+        } // end has-root header
 
         navContextPath.clear();
         navVisibleOrder.clear(); // rebuilt this frame in render order (shift-range select)
@@ -2589,9 +2601,9 @@ void Editor::renderNavigationPanel()
                 renderDirNode(this, root, 0, navShowDotFiles,
                               navContextPath, navRenameTarget, navRenameBuf, navPendingDelete);
         }
-        else
+        else if (!root.empty())
         {
-            ImGui::TextDisabled("(no project root set)");
+            ImGui::TextDisabled("(folder not found: %s)", root.string().c_str());
         }
         navApplyRangeSelect(); // resolve a pending shift-click range now that order is known
         navSetAllOpen = -1;    // bulk open/close request consumed this frame
@@ -5954,9 +5966,9 @@ void Editor::renderDevTools()
                         ImGui::PushID((const void *)&rg);
                         char label[160];
                         if (rg.first == rg.second)
-                            std::snprintf(label, sizeof(label), "\xf0\x9f\x92\xac %s : line %d", fn.c_str(), rg.first + 1);
+                            std::snprintf(label, sizeof(label), "\xe2\x9c\x8e %s : line %d", fn.c_str(), rg.first + 1);
                         else
-                            std::snprintf(label, sizeof(label), "\xf0\x9f\x92\xac %s : lines %d-%d", fn.c_str(),
+                            std::snprintf(label, sizeof(label), "\xe2\x9c\x8e %s : lines %d-%d", fn.c_str(),
                                           rg.first + 1, rg.second + 1);
                         if (ImGui::Button(label))
                         {
@@ -12838,7 +12850,8 @@ void Editor::configureTabAutocomplete(TabDocument &t)
     // purple gutter dot on Claude-changed lines is the left-click equivalent; both
     // open the reply popup → <configDir>/replies outbox.
     t.editor.SetLineNumberContextMenuCallback([this, tptr](int line) {
-        if (ImGui::MenuItem("\xf0\x9f\x92\xac Reply to Claude about this line"))
+        // ✎ — U+270E, present in DejaVu (the 💬 emoji is not; it rendered as tofu).
+        if (ImGui::MenuItem("\xe2\x9c\x8e Reply to Claude about this line"))
             requestReply(tptr->filename, line, tptr->filename + ":" + std::to_string(line + 1));
     });
     TextEditor::AutoCompleteConfig config;
