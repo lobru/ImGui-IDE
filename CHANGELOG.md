@@ -7,6 +7,17 @@ read `tag-commits-gsha`.
 ## Unreleased
 
 ### Added
+- **Unreal Engine C++ + descriptor support**: UE types (`int32`, `FString`, `TArray`,
+  smart pointers, math types) and macros (`UCLASS`, `UPROPERTY`, `UE_LOG`, ...) are
+  syntax-highlighted; **Go to File** resolves module-relative engine includes
+  (`GameFramework/Actor.h`, `*.generated.h`); `.uproject`/`.uplugin` autocomplete the
+  schema, `Type`/`LoadingPhase` values, and discovered project/engine module + plugin
+  names; one-click "Install IDE plugin into project".
+- **`.log` language + jump-to-source**: crash/log files are severity-highlighted, and
+  right-clicking a log line with a `file(line)` / `file:line` / UE `[File:][Line:]`
+  reference jumps to that spot in the project.
+- **Find in selection**: latch the `⊂` button in the find bar to scope Find All /
+  Replace All to the current selection.
 - **Unreal Engine 5 integration**: F6 builds the editor target via UnrealBuildTool
   (engine auto-discovered from the `.uproject`), Project > Unreal Engine menu with
   Build / **Generate IntelliSense DB** (clangd compile database in the project root,
