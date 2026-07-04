@@ -165,4 +165,123 @@ std::filesystem::path editorBinary(const std::filesystem::path& engineRoot)
 	return std::filesystem::exists(exe, ec) ? exe : std::filesystem::path{};
 }
 
+std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
+									 const std::filesystem::path& uproject,
+									 const std::string& include)
+{
+	if (include.empty())
+		return {};
+	std::error_code ec;
+	std::filesystem::path inc(include);
+
+	// Try <moduleDir>/{Public,Classes,Private,.}/<include> — the four include
+	// roots UBT gives every module.
+	auto tryModule = [&](const std::filesystem::path& mod) -> std::filesystem::path {
+		for (const char* sub : { "Public", "Classes", "Private", "" })
+		{
+			auto p = *sub ? mod / sub / inc : mod / inc;
+			if (std::filesystem::is_regular_file(p, ec))
+				return p;
+		}
+		return {};
+	};
+	// Try every module under a Source/ dir.
+	auto trySourceTree = [&](const std::filesystem::path& sourceDir) -> std::filesystem::path {
+		if (!std::filesystem::is_directory(sourceDir, ec))
+			return {};
+		// Direct join first (top-level headers / already-module-qualified includes).
+		if (auto p = sourceDir / inc; std::filesystem::is_regular_file(p, ec))
+			return p;
+		for (const auto& mod : std::filesystem::directory_iterator(sourceDir, ec))
+		{
+			if (!mod.is_directory())
+				continue;
+			if (auto hit = tryModule(mod.path()); !hit.empty())
+				return hit;
+		}
+		return {};
+	};
+
+	auto projDir = uproject.parent_path();
+
+	// 1. The game's own modules.
+	if (auto hit = trySourceTree(projDir / "Source"); !hit.empty())
+		return hit;
+
+	// 2. Project plugins: Plugins/<name>/Source/<module>/...
+	{
+		auto plugins = projDir / "Plugins";
+		if (std::filesystem::is_directory(plugins, ec))
+			for (const auto& plug : std::filesystem::directory_iterator(plugins, ec))
+			{
+				if (!plug.is_directory())
+					continue;
+				if (auto hit = trySourceTree(plug.path() / "Source"); !hit.empty())
+					return hit;
+			}
+	}
+
+	// 3. UHT-generated headers ("Actor.generated.h"):
+	//    Intermediate/Build/Win64/<Target>/Inc/<Module>/UHT/<name>
+	if (include.find(".generated.h") != std::string::npos)
+	{
+		auto wanted = inc.filename();
+		auto incRoot = projDir / "Intermediate" / "Build" / "Win64";
+		if (std::filesystem::is_directory(incRoot, ec))
+			for (const auto& target : std::filesystem::directory_iterator(incRoot, ec))
+			{
+				auto incDir = target.path() / "Inc";
+				if (!std::filesystem::is_directory(incDir, ec))
+					continue;
+				for (const auto& mod : std::filesystem::directory_iterator(incDir, ec))
+				{
+					auto p = mod.path() / "UHT" / wanted;
+					if (std::filesystem::is_regular_file(p, ec))
+						return p;
+				}
+			}
+	}
+
+	if (engineRoot.empty())
+		return {};
+
+	// 4. Engine modules: Engine/Source/{Runtime,Editor,Developer,Programs}/<module>/...
+	for (const char* cat : { "Runtime", "Editor", "Developer", "Programs" })
+	{
+		if (auto hit = trySourceTree(engineRoot / "Engine" / "Source" / cat); !hit.empty())
+			return hit;
+	}
+
+	// 5. Engine plugins (bounded walk: Engine/Plugins/**/Source, depth-capped —
+	//    plugin folders nest one or two categories deep).
+	{
+		auto plugRoot = engineRoot / "Engine" / "Plugins";
+		if (std::filesystem::is_directory(plugRoot, ec))
+		{
+			int budget = 4000;
+			for (auto it = std::filesystem::recursive_directory_iterator(
+					 plugRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+				 !ec && it != std::filesystem::recursive_directory_iterator(); ++it)
+			{
+				if (--budget <= 0)
+					break;
+				if (it.depth() > 3 || !it->is_directory(ec))
+				{
+					if (it.depth() > 3)
+						it.disable_recursion_pending();
+					continue;
+				}
+				if (it->path().filename() == "Source")
+				{
+					it.disable_recursion_pending(); // don't descend into module trees
+					if (auto hit = trySourceTree(it->path()); !hit.empty())
+						return hit;
+				}
+			}
+		}
+	}
+
+	return {};
+}
+
 } // namespace unreal

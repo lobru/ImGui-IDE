@@ -43,4 +43,13 @@ std::string generateClangDbCommand(const std::filesystem::path& engineRoot, cons
 // Path to UnrealEditor.exe for launching the project (empty if absent).
 std::filesystem::path editorBinary(const std::filesystem::path& engineRoot);
 
+// Resolve a UE-style module-relative include ("GameFramework/Actor.h",
+// "CoreMinimal.h", "Actor.generated.h") against the project's and engine's module
+// include roots (<Module>/Public, <Module>/Classes, module root), project plugins,
+// engine plugins, and UHT-generated headers under Intermediate/. Empty if not found.
+// This is what makes "Go to File" work on engine headers.
+std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
+									 const std::filesystem::path& uproject,
+									 const std::string& include);
+
 } // namespace unreal

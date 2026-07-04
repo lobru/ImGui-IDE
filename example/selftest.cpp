@@ -18,6 +18,10 @@
 #include "tsindex.h"
 #include "lsp_protocol.h"
 #include "nav_history.h"
+#include "unreal.h"
+
+#include <filesystem>
+#include <fstream>
 
 static int gFailures = 0;
 static int gChecks = 0;
@@ -1012,6 +1016,47 @@ int main()
 		TextEditor ed2;
 		ed2.SetText("\tab\n");
 		CHECK(ed2.CaretColumnAtVisual(0, 0.2f) == 0, "CaretColumn: left edge of leading tab -> 0");
+	}
+
+	// ── Unreal include resolution (module-relative Go-to-File) ────────────
+	{
+		namespace fs = std::filesystem;
+		std::error_code ec;
+		auto root = fs::temp_directory_path(ec) / "imguiide_ue_selftest";
+		fs::remove_all(root, ec);
+
+		auto mk = [&](const fs::path& p) {
+			fs::create_directories(p.parent_path(), ec);
+			std::ofstream f(p);
+			f << "// test\n";
+		};
+		auto uproj = root / "FakeProj" / "FakeProj.uproject";
+		mk(uproj);
+		auto engine = root / "FakeEngine";
+		mk(engine / "Engine" / "Build" / "BatchFiles" / "Build.bat");
+		auto gameHdr = root / "FakeProj" / "Source" / "MyGame" / "Public" / "MyChar.h";
+		mk(gameHdr);
+		auto engHdr = engine / "Engine" / "Source" / "Runtime" / "Engine" / "Classes" /
+			"GameFramework" / "Actor.h";
+		mk(engHdr);
+		auto genHdr = root / "FakeProj" / "Intermediate" / "Build" / "Win64" /
+			"UnrealEditor" / "Inc" / "MyGame" / "UHT" / "MyChar.generated.h";
+		mk(genHdr);
+
+		CHECK(unreal::findUProject(gameHdr.parent_path()) == uproj,
+			"UE: findUProject walks up from Source/");
+		CHECK(unreal::targetName(uproj) == "FakeProjEditor", "UE: editor target name");
+		CHECK(unreal::hasCppSource(uproj), "UE: Source/ detected");
+		CHECK(unreal::resolveInclude(engine, uproj, "MyChar.h") == gameHdr,
+			"UE: game module Public header resolves");
+		CHECK(unreal::resolveInclude(engine, uproj, "GameFramework/Actor.h") == engHdr,
+			"UE: engine module Classes header resolves");
+		CHECK(unreal::resolveInclude(engine, uproj, "MyChar.generated.h") == genHdr,
+			"UE: UHT generated header resolves");
+		CHECK(unreal::resolveInclude(engine, uproj, "NoSuch/Header.h").empty(),
+			"UE: unknown include stays empty");
+
+		fs::remove_all(root, ec);
 	}
 
 	if (gFailures == 0) {

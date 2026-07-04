@@ -9946,7 +9946,7 @@ void Editor::renderDocumentWindow(TabDocument &t)
                                         continue;
                                     auto name = entry.path().filename().string();
                                     auto ext = entry.path().extension().string();
-                                    if (ext == ".sln" || ext == ".vcxproj" ||
+                                    if (ext == ".sln" || ext == ".vcxproj" || ext == ".uproject" ||
                                         name == "CMakeLists.txt" || name == ".git")
                                     {
                                         projectRoot = cur;
@@ -9999,6 +9999,29 @@ void Editor::renderDocumentWindow(TabDocument &t)
                                     candidate = p;
                                     found = true;
                                 }
+                            }
+                        }
+                    }
+
+                    // 3.5. Unreal Engine: UE includes are MODULE-relative
+                    // ("GameFramework/Actor.h" lives in Engine/Source/Runtime/
+                    // Engine/Classes/...), so neither the project walk nor the
+                    // system roots can find them. When a .uproject governs this
+                    // doc, resolve against the project's + engine's module
+                    // include roots (Public/Classes/Private), project + engine
+                    // plugins, and UHT-generated headers.
+                    if (!found)
+                    {
+                        auto uproj = unreal::findUProject(docDir);
+                        if (!uproj.empty())
+                        {
+                            std::string assoc;
+                            auto engine = unreal::findEngineRoot(uproj, assoc);
+                            auto hit = unreal::resolveInclude(engine, uproj, inc);
+                            if (!hit.empty())
+                            {
+                                candidate = hit;
+                                found = true;
                             }
                         }
                     }
