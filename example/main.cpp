@@ -213,42 +213,56 @@ int main(int argc, char** argv) {
 	// nearest project root ABOVE the first file (so opening a loose file that
 	// belongs to an already-open project joins that window rather than spawning
 	// a bare one), else "none" — so genuinely projectless launches stay single.
-	std::string keySource = projectArg;
-	if (keySource.empty() && !filesArg.empty()) {
-		std::error_code fec;
-		auto cur = std::filesystem::path(filesArg.front()).parent_path();
-		auto isRootMarker = [](const std::filesystem::path& d) {
-			std::error_code mec;
-			for (auto& e : std::filesystem::directory_iterator(d, mec)) {
-				if (mec) break;
-				auto ext = e.path().extension().string();
-				std::transform(ext.begin(), ext.end(), ext.begin(),
-					[](unsigned char c){ return (char) std::tolower(c); });
-				auto nm = e.path().filename().string();
-				if (ext == ".sln" || ext == ".csproj" || ext == ".vcxproj" ||
-					ext == ".uproject" || ext == ".uplugin" ||
-					nm == "CMakeLists.txt" || nm == ".git")
-					return true;
+	// Wrapped: std::filesystem::path::string() converts the native (wide) path to
+	// the ANSI code page and THROWS std::system_error on a filename with
+	// characters the ACP can't represent. This runs before the render loop, so an
+	// escape here aborts the process. A non-ANSI name in an ancestor directory of
+	// a file opened with no --project used to crash on startup — key resolution is
+	// best-effort, so on any failure just fall back to the projectless "none" key.
+	std::string instanceKey = "none";
+	try {
+		std::string keySource = projectArg;
+		if (keySource.empty() && !filesArg.empty()) {
+			auto cur = std::filesystem::path(filesArg.front()).parent_path();
+			// Compare extensions / names via path (native/wide) comparison — never
+			// path::string() — so a non-ANSI sibling doesn't throw. Markers are
+			// matched case-sensitively (conventionally lowercase); a missed match
+			// only means the launch uses the "none" bucket, never a crash.
+			auto isRootMarker = [](const std::filesystem::path& d) {
+				std::error_code mec;
+				for (auto it = std::filesystem::directory_iterator(
+						 d, std::filesystem::directory_options::skip_permission_denied, mec);
+					 !mec && it != std::filesystem::directory_iterator(); it.increment(mec)) {
+					auto ext = it->path().extension();
+					auto fn = it->path().filename();
+					if (ext == ".sln" || ext == ".csproj" || ext == ".vcxproj" ||
+						ext == ".uproject" || ext == ".uplugin" ||
+						fn == "CMakeLists.txt" || fn == ".git")
+						return true;
+				}
+				return false;
+			};
+			for (int depth = 0; depth < 30 && !cur.empty(); ++depth) {
+				if (isRootMarker(cur)) { keySource = cur.string(); break; }
+				auto parent = cur.parent_path();
+				if (parent == cur) break;
+				cur = parent;
 			}
-			return false;
-		};
-		for (int depth = 0; depth < 30 && !cur.empty(); ++depth) {
-			if (isRootMarker(cur)) { keySource = cur.string(); break; }
-			auto parent = cur.parent_path();
-			if (parent == cur) break;
-			cur = parent;
+		}
+		if (!keySource.empty()) {
+			std::error_code kec;
+			auto canon = std::filesystem::weakly_canonical(keySource, kec);
+			std::string s = kec ? keySource : canon.string();
+#ifdef _WIN32
+			std::transform(s.begin(), s.end(), s.begin(),
+				[](unsigned char c){ return (char) std::tolower(c); });
+#endif
+			instanceKey = std::to_string((unsigned long long) std::hash<std::string>{}(s));
 		}
 	}
-	std::string instanceKey = "none";
-	if (!keySource.empty()) {
-		std::error_code kec;
-		auto canon = std::filesystem::weakly_canonical(keySource, kec);
-		std::string s = kec ? keySource : canon.string();
-#ifdef _WIN32
-		std::transform(s.begin(), s.end(), s.begin(),
-			[](unsigned char c){ return (char) std::tolower(c); });
-#endif
-		instanceKey = std::to_string((unsigned long long) std::hash<std::string>{}(s));
+	catch (const std::exception& ex) {
+		std::fprintf(stderr, "instance-key resolution failed (%s) — using 'none'\n", ex.what());
+		instanceKey = "none";
 	}
 
 #ifdef _WIN32
