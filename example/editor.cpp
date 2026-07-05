@@ -1249,7 +1249,12 @@ void Editor::formatActiveDocument()
         std::ofstream cf(dir / ".clang-format", std::ios::trunc);
         cf << "BasedOnStyle: Microsoft\n"
            << "BreakBeforeBraces: " << (formatBraceNewLineForExt(ext) ? "Allman" : "Attach") << "\n"
-           << "ColumnLimit: 0\n"; // fix structure/spacing without reflowing to a width
+           << "ColumnLimit: 0\n"      // fix structure/spacing without reflowing to a width
+           << "SortIncludes: false\n"; // Microsoft style sorts #includes alphabetically, which
+                                       // reorders order-dependent headers (Windows.h, precompiled
+                                       // / first headers) and breaks the build. Use the boolean
+                                       // `false` (not `Never`) — the enum values are clang-format
+                                       // 13+, but `false` parses on 12 and 13+ alike.
         cf.close();
         int rc = run("clang-format " + q + " 2>nul");
         std::filesystem::remove(src, ec);
