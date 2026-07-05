@@ -9816,10 +9816,14 @@ void Editor::renderDockedDocuments()
             // SetWindowFocus selects the dock tab but doesn't reliably bring an
             // off-screen tab into view. Queue an explicit scroll on the owning
             // dock node's tab bar so opening a file (nav click, Go-to-Definition,
-            // "Open Elsewhere") always reveals its tab.
+            // "Open Elsewhere") always reveals its tab. MUST use the ImGuiTabItem*
+            // overload: TabBarQueueFocus(tab_bar, const char*) asserts it is NOT a
+            // dock-node tab bar (IM_ASSERT DockNode flag == 0), which aborted the
+            // app when opening any file into an existing dock node's tab bar.
             if (ImGuiWindow *w = ImGui::FindWindowByName(lbl.c_str()))
                 if (w->DockNode && w->DockNode->TabBar)
-                    ImGui::TabBarQueueFocus(w->DockNode->TabBar, lbl.c_str());
+                    if (ImGuiTabItem *tab = ImGui::TabBarFindTabByID(w->DockNode->TabBar, w->TabId))
+                        ImGui::TabBarQueueFocus(w->DockNode->TabBar, tab);
         }
     }
 
