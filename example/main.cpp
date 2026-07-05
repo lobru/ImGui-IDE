@@ -388,9 +388,17 @@ int main(int argc, char** argv) {
 	Editor editor;
 	editor.setInstanceKey(instanceKey);   // route this project's open-inbox to us
 	updater::cleanupStaleUpdate(updater::runningExePath());   // drop any <exe>.old from a prior in-place update
-	if (!projectArg.empty()) editor.setProjectRoot(projectArg);
-	for (auto& p : filesArg) editor.openFile(p);
-	if (focusArg) editor.setFocusMode(true);
+	// Startup project/file opens run BEFORE the render loop, so an exception here
+	// is uncaught and aborts the process (openFile guards itself, but this is a
+	// belt-and-suspenders net for setProjectRoot / focus and any future path).
+	try {
+		if (!projectArg.empty()) editor.setProjectRoot(projectArg);
+		for (auto& p : filesArg) editor.openFile(p);
+		if (focusArg) editor.setFocusMode(true);
+	}
+	catch (const std::exception& ex) {
+		std::fprintf(stderr, "startup open failed: %s\n", ex.what());
+	}
 	SDL_Event event;
 
 	while (!editor.isDone()) {

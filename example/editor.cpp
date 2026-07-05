@@ -8422,10 +8422,16 @@ void Editor::openFile(const std::string &path)
     try
     {
         std::ifstream stream(path.c_str());
+        if (!stream)
+            throw std::runtime_error("Cannot open file: " + path);
         std::string text;
         stream.seekg(0, std::ios::end);
-        text.reserve(stream.tellg());
+        auto endPos = stream.tellg();
         stream.seekg(0, std::ios::beg);
+        // tellg() returns -1 on a failed/odd stream; reserve((size_t)-1) throws
+        // std::length_error. Only pre-reserve on a valid, positive size.
+        if (endPos > 0)
+            text.reserve(static_cast<size_t>(endPos));
         text.assign((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
         stream.close();
 
@@ -12739,9 +12745,15 @@ void Editor::showConfirmQuit()
 
 void Editor::showError(const std::string &message)
 {
-    if (auto *vp = ImGui::GetWindowViewport())
-        dialogViewportId = vp->ID;
-    else
+    // GetWindowViewport() asserts (fires IM_ASSERT → abort) when there is no
+    // current window — which is the case when openFile() fails during STARTUP,
+    // before the first frame (e.g. a session-restored file that was since moved).
+    // Only ask for the window's viewport when a window is actually current;
+    // otherwise fall back to the main viewport, which is valid outside a frame.
+    ImGuiContext *ctx = ImGui::GetCurrentContext();
+    if (ctx && ctx->CurrentWindow)
+        dialogViewportId = ImGui::GetWindowViewport()->ID;
+    else if (ctx)
         dialogViewportId = ImGui::GetMainViewport()->ID;
     dialogNeedsPlacement = true;
     errorMessage = message;
