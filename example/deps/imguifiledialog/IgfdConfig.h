@@ -25,6 +25,12 @@
 #define okCancelButtonAlignement 1.0f
 #define invertOkAndCancelButtons true
 
+// Make the create-folder button in the path toolbar discoverable — the library
+// default is a bare "+" that reads as nothing in particular. Spell it out in
+// both the button label and its hover tooltip.
+#define createDirButtonString "+ Folder"
+#define buttonCreateDirString "Create a new folder in the current directory"
+
 // Enable the Places (bookmarks) feature and show its pane by default.
 // We populate it with the system drives and a persistent Favourites group
 // loaded from .claude/favorites.txt.
