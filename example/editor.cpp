@@ -2756,6 +2756,42 @@ void Editor::renderNavigationPanel()
                     mdPreviewVisible = true; // preview renders the active markdown doc
                 }
             }
+            // Create new file / folder. Target directory = the right-clicked
+            // folder itself, or the parent folder of a right-clicked file. The
+            // new entry is created with a unique default name and immediately
+            // dropped into the inline-rename editor (VSCode/Explorer style).
+            ImGui::Separator();
+            {
+                std::filesystem::path parent = isDir ? std::filesystem::path(ctxPath)
+                                                     : std::filesystem::path(ctxPath).parent_path();
+                auto createEntry = [&](bool folder) {
+                    std::error_code nec;
+                    std::filesystem::path target = parent / (folder ? "New Folder" : "New File.txt");
+                    for (int n = 2; std::filesystem::exists(target, nec); ++n)
+                        target = parent / (folder ? ("New Folder (" + std::to_string(n) + ")")
+                                                  : ("New File (" + std::to_string(n) + ").txt"));
+                    bool ok = false;
+                    if (folder)
+                        ok = std::filesystem::create_directory(target, nec) && !nec;
+                    else
+                    {
+                        std::ofstream f(target);
+                        ok = f.good();
+                    }
+                    if (ok)
+                    {
+                        navMarkListDirty();
+                        navRenameTarget = target.string();
+                        std::snprintf(navRenameBuf, sizeof(navRenameBuf), "%s",
+                                      target.filename().string().c_str());
+                    }
+                };
+                if (ImGui::MenuItem("New File"))
+                    createEntry(false);
+                if (ImGui::MenuItem("New Folder"))
+                    createEntry(true);
+            }
+
             // Shell/path actions — separated from the editor-open group above, since
             // "Open in Explorer" is a different meaning of "open" than "Open" (editor).
             ImGui::Separator();
