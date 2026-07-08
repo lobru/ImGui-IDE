@@ -845,6 +845,23 @@ private:
 	// Ctrl+S therefore prompts Save As.
 	void openLuaInNewTab(const std::string &text);
 
+	// ── UEVR Live bridge ──────────────────────────────────────────────────
+	// Drive a running UEVR game's Lua state from the standalone IDE over a
+	// file-inbox at %APPDATA%\UnrealVRMod\UEVR\ide_bridge\{cmd,out}\ — the IDE
+	// writes command files, the in-game companion plugin runs them via
+	// exec_lua_chunk and writes results back. Same pattern as the toast/open
+	// inboxes; safe (best-effort) whether or not a game is running.
+	bool uevrLiveVisible = false;
+	char uevrReplBuf[4096]  = {0};                 // REPL input
+	char uevrInspectBuf[256] = "uevr.api:get_local_pawn(0)"; // Inspect expression
+	std::vector<std::string> uevrOutputLog;        // REPL / run output (capped)
+	std::string uevrGlobals, uevrModules, uevrInspect; // dump-tab text
+	int uevrReqCounter = 0;
+	std::filesystem::path uevrBridgeDir(const char *sub) const; // <ide_bridge>/<sub>
+	void sendUevr(const std::string &kind, const std::string &payload); // write a cmd file
+	void pollUevrBridge();                         // drain the out inbox (~5 Hz)
+	void renderUevrLive();                          // the dockable panel
+
 	// Find in Files — project-wide text search with a query box + options.
 	bool                            findInFilesVisible = false;
 	bool                            findInFilesFocus   = false;   // focus the query box next frame

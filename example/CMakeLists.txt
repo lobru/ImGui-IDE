@@ -88,6 +88,7 @@ add_executable(example
 	pdfview.cpp
 	cppgen.cpp
 	blueprint_window.cpp
+	uevr_bridge.cpp
 	dejavu.cpp
 	main.cpp)
 

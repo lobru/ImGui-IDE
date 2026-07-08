@@ -9524,6 +9524,7 @@ void Editor::render()
     renderSymbolsPanel();
     renderFindInFilesPanel();
     renderBlueprintWindow(); // UEVR Blueprint visual scripting editor
+    renderUevrLive();        // UEVR Live bridge (REPL + globals/modules/inspect)
     renderDevTools();
     renderMarkdownPreview();
     renderGitDialogs();
@@ -11249,6 +11250,9 @@ void Editor::renderMenuBar()
             {
             }
             if (ImGui::MenuItem("Blueprint Editor (UEVR)", nullptr, &blueprintVisible))
+            {
+            }
+            if (ImGui::MenuItem("UEVR Live (bridge)", nullptr, &uevrLiveVisible))
             {
             }
             if (ImGui::MenuItem("C/C++ IntelliSense (clangd)", nullptr, &lspEnabled))

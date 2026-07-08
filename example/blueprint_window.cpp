@@ -115,6 +115,15 @@ void Editor::renderBlueprintWindow()
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Walk the graph into a UEVR Lua script and open it in a new tab");
 
+            if (ImGui::MenuItem("Run in UEVR"))
+            {
+                // Generate + send straight to a running game via the UEVR Live bridge.
+                sendUevr("run", BlueprintLua::GenerateScript(bp));
+                uevrLiveVisible = true; // surface the output
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Generate the script and run it in a running UEVR game (see UEVR Live)");
+
             ImGui::EndMenuBar();
         }
 
