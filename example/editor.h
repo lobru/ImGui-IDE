@@ -32,6 +32,10 @@
 #include "nav_history.h"
 #include "updater.h"
 
+// Blueprint visual scripting editor + UEVR Lua backend (reusable imgui widgets,
+// heavy headers — forward-declared here, included only in blueprint_window.cpp).
+class BlueprintEditor;
+
 
 //
 //	Editor
@@ -827,6 +831,19 @@ private:
 	int                             symbolsProjectGen = -1;        // index gen the two caches above are from
 	std::string                     symbolsFilterCache = std::string(1, '\x01'); // filter the matched-index cache is for (sentinel forces first build)
 	std::vector<int>                symbolsFilteredIdx;            // indices into symbolsProjectRows matching symbolsFilterCache
+
+	// Blueprint visual scripting editor (UEVR-focused node graph → Lua codegen).
+	// The heavy widget is heap-held + lazily created on first show. See
+	// example/blueprint_window.cpp.
+	std::unique_ptr<BlueprintEditor> blueprintEditor;
+	bool                            blueprintVisible = false;
+	std::string                     blueprintSnapshot;             // Graph > Save/Load Snapshot buffer
+	void renderBlueprintWindow();
+	// Open arbitrary text as a new, never-saved Lua editor tab (used by
+	// "Generate UEVR Lua" and could back other codegen). Sets Lua language so
+	// highlighting + UEVR-API autocomplete apply even though it is untitled;
+	// Ctrl+S therefore prompts Save As.
+	void openLuaInNewTab(const std::string &text);
 
 	// Find in Files — project-wide text search with a query box + options.
 	bool                            findInFilesVisible = false;

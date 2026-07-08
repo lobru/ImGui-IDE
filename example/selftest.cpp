@@ -20,6 +20,8 @@
 #include "nav_history.h"
 #include "unreal.h"
 #include "cppgen.h"
+#include "BlueprintEditor.h"
+#include "BlueprintLua.h"
 
 #include <filesystem>
 #include <fstream>
@@ -1239,6 +1241,46 @@ int main()
 			CHECK(declarationFromDefinition("void freeFunc(int x) {}").empty(),
 			      "cppgen: unqualified free function → no declaration");
 		}
+	}
+
+	// ── Blueprint → UEVR Lua codegen (pure; no ImGui context needed) ───────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+
+		// registry is populated with the UEVR API surface
+		CHECK(bp.GetRegistry().FindClass("UEVR") != nullptr, "blueprintlua: UEVR class registered");
+		CHECK(bp.GetRegistry().FindEvent("UEVR", "Pre Engine Tick") != nullptr,
+		      "blueprintlua: Pre Engine Tick event registered");
+		CHECK(bp.GetRegistry().FindFunction("UEVR_API", "Find UObject") != nullptr,
+		      "blueprintlua: uevr.api Find UObject registered");
+
+		// build a tiny graph: Pre Engine Tick -> Print, and generate a script
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto print = bp.AddCallFunctionNode("UEVR_API", "Print", ImVec2(320, 0));
+		CHECK(tick != 0 && print != 0, "blueprintlua: event + call nodes created");
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(print, "", false));
+
+		std::string lua = BlueprintLua::GenerateScript(bp);
+		CHECK(!lua.empty(), "blueprintlua: GenerateScript emits non-empty output");
+		CHECK(lua.find("uevr.sdk.callbacks.on_pre_engine_tick") != std::string::npos,
+		      "blueprintlua: event node becomes an on_pre_engine_tick callback");
+		CHECK(lua.find("print(") != std::string::npos,
+		      "blueprintlua: Print call node emits print(...)");
+
+		// empty graph still generates a valid (non-crashing) script
+		BlueprintEditor empty;
+		BlueprintLua::SetupUEVRRegistry(empty);
+		CHECK(BlueprintLua::GenerateScript(empty).size() >= 0, "blueprintlua: empty graph is safe");
+
+		// curated Lua-API autocomplete word list
+		const auto& api = BlueprintLua::LuaApiIdentifiers();
+		auto hasWord = [&](const char* w) {
+			for (auto& s : api) if (s == w) return true;
+			return false;
+		};
+		CHECK(!api.empty() && hasWord("find_uobject") && hasWord("on_pre_engine_tick") && hasWord("uevr"),
+		      "blueprintlua: LuaApiIdentifiers includes core UEVR tokens");
 	}
 
 	if (gFailures == 0) {

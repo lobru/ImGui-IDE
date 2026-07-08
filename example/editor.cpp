@@ -79,6 +79,8 @@
 #endif
 
 #include "editor.h"
+#include "../BlueprintEditor.h" // complete type for the unique_ptr<BlueprintEditor> member's dtor
+#include "../BlueprintLua.h"    // UEVR Lua codegen + curated Lua-API autocomplete words
 #include "cppgen.h"
 #include "pdfview.h"
 #include "tsindex.h"
@@ -9521,6 +9523,7 @@ void Editor::render()
     renderReferencesPanel();
     renderSymbolsPanel();
     renderFindInFilesPanel();
+    renderBlueprintWindow(); // UEVR Blueprint visual scripting editor
     renderDevTools();
     renderMarkdownPreview();
     renderGitDialogs();
@@ -10826,6 +10829,42 @@ void Editor::renderMenuBar()
             {
                 openProjectFolderPicker();
             }
+            // UEVR scripts — import/open Lua from the global UEVR scripts folder
+            // (%APPDATA%\UnrealVRMod\UEVR\Scripts), the same folder the UEVR Lua
+            // editor + "Generate UEVR Lua" target.
+            if (const char *appdata = std::getenv("APPDATA"))
+            {
+                std::filesystem::path uevrScripts =
+                    std::filesystem::path(appdata) / "UnrealVRMod" / "UEVR" / "Scripts";
+                std::error_code uec;
+                if (std::filesystem::is_directory(uevrScripts, uec) &&
+                    ImGui::BeginMenu("Open UEVR Script"))
+                {
+                    if (ImGui::MenuItem("Open Scripts Folder in Nav"))
+                        setProjectRoot(uevrScripts.string());
+                    ImGui::Separator();
+                    int shown = 0;
+                    std::error_code iec;
+                    for (auto it = std::filesystem::directory_iterator(
+                             uevrScripts, std::filesystem::directory_options::skip_permission_denied, iec);
+                         !iec && it != std::filesystem::directory_iterator() && shown < 200; it.increment(iec))
+                    {
+                        std::error_code fec;
+                        if (!it->is_regular_file(fec) || fec)
+                            continue;
+                        auto ext = it->path().extension();
+                        if (ext != ".lua" && ext != ".txt")
+                            continue;
+                        std::string leaf = it->path().filename().string();
+                        if (ImGui::MenuItem(leaf.c_str()))
+                            openFile(it->path().string());
+                        ++shown;
+                    }
+                    if (shown == 0)
+                        ImGui::TextDisabled("(no .lua scripts found)");
+                    ImGui::EndMenu();
+                }
+            }
             // Recent lists: show the FILENAME as the menu label (full absolute
             // paths made the submenu hundreds of px wide, overflowing back over
             // the parent menu). The full path goes in a hover tooltip.
@@ -11207,6 +11246,9 @@ void Editor::renderMenuBar()
             {
             }
             if (ImGui::MenuItem("Symbols", nullptr, &symbolsPanelVisible))
+            {
+            }
+            if (ImGui::MenuItem("Blueprint Editor (UEVR)", nullptr, &blueprintVisible))
             {
             }
             if (ImGui::MenuItem("C/C++ IntelliSense (clangd)", nullptr, &lspEnabled))
@@ -13746,6 +13788,13 @@ void Editor::buildAutocompleteTrie(TabDocument &t)
             t.trie.insert(word);
         for (auto &word : language->identifiers)
             t.trie.insert(word);
+        // Lua docs (real .lua files AND generated "untitled" Lua tabs) also
+        // complete the UEVR scripting API — namespaces, sdk callbacks, api/vr
+        // methods, UObject accessors. Keyed on the language, not the extension,
+        // so "Generate UEVR Lua" tabs get it too.
+        if (language->name == "Lua")
+            for (const auto &word : BlueprintLua::LuaApiIdentifiers())
+                t.trie.insert(word);
     }
     t.editor.IterateIdentifiers([&](const std::string &id) { t.trie.insert(id); });
 

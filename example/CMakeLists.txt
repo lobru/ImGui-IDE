@@ -28,7 +28,11 @@ add_library(TextEditorLib ${TEXTEDITOR_LIB_TYPE}
 	../TextEditor.h
 	../TextDiff.cpp
 	../TextDiff.h
-	../dtl.h)
+	../dtl.h
+	../BlueprintEditor.cpp
+	../BlueprintEditor.h
+	../BlueprintLua.cpp
+	../BlueprintLua.h)
 
 target_include_directories(TextEditorLib PUBLIC ..)
 target_link_libraries(TextEditorLib PUBLIC imguifd)
@@ -83,6 +87,7 @@ add_executable(example
 	unreal.cpp
 	pdfview.cpp
 	cppgen.cpp
+	blueprint_window.cpp
 	dejavu.cpp
 	main.cpp)
 
