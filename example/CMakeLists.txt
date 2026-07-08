@@ -89,6 +89,7 @@ add_executable(example
 	cppgen.cpp
 	blueprint_window.cpp
 	uevr_bridge.cpp
+	plugin_registry.cpp
 	dejavu.cpp
 	main.cpp)
 

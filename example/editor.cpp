@@ -411,6 +411,12 @@ Editor::Editor()
     if (!fontPath.empty())
         applyFont();
 
+    // Construct the in-process plugins compiled into this build and let them
+    // register (e.g. augment the shared C++ language) BEFORE the first document
+    // — the demo tab below opens as C++. enabled() reads flags loaded above.
+    registerBuiltinPlugins(pluginRegistry);
+    pluginRegistry.registerAll(*this);
+
     // Skip the demo when this is a second-or-later launch (settings file
     // already exists) OR when main.cpp told us to (via --project or
     // positional file arguments). On a true first run, fall through to the
@@ -804,6 +810,23 @@ void Editor::runCommandInOutputPanel(const std::string &cmd, const std::filesyst
             scriptCtx->output += "\n[exit " + std::to_string(rc) + "]\n";
         scriptCtx->running = false; })
         .detach();
+}
+
+// PluginHost::hostRunCommand — run a plugin-provided command in the Output panel.
+void Editor::hostRunCommand(const PluginBuildCommand &cmd)
+{
+    try
+    {
+        std::string scriptPath = cmd.script.string(); // may throw on a non-ANSI path
+        std::string full = cmd.interpreter.empty()
+                               ? scriptPath
+                               : (cmd.interpreter + " \"" + scriptPath + "\"");
+        runCommandInOutputPanel(full);
+    }
+    catch (const std::exception &)
+    {
+        pushToast("Plugin command has an unrepresentable path", IM_COL32(220, 80, 80, 255), 0);
+    }
 }
 
 void Editor::runProjectBuild()
@@ -9525,6 +9548,7 @@ void Editor::render()
     renderFindInFilesPanel();
     renderBlueprintWindow(); // UEVR Blueprint visual scripting editor
     renderUevrLive();        // UEVR Live bridge (REPL + globals/modules/inspect)
+    pluginRegistry.frame(*this); // in-process plugins: dockable windows + polling
     renderDevTools();
     renderMarkdownPreview();
     renderGitDialogs();

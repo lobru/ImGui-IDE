@@ -31,6 +31,7 @@
 #include "lsp_client.h"
 #include "nav_history.h"
 #include "updater.h"
+#include "plugin_registry.h"
 
 // Blueprint visual scripting editor + UEVR Lua backend (reusable imgui widgets,
 // heavy headers — forward-declared here, included only in blueprint_window.cpp).
@@ -41,7 +42,7 @@ class BlueprintEditor;
 //	Editor
 //
 
-class Editor {
+class Editor : public PluginHost {
 	public:
 	// constructor
 	Editor();
@@ -76,7 +77,33 @@ class Editor {
 	// each instance only picks up requests routed to its project.
 	void setInstanceKey(const std::string &k) { instanceKey = k; }
 
+	// ── PluginHost — services exposed to in-process plugins (plugin_api.h) ──
+	// Domain features (Unreal, UEVR/Blueprint) live in plugins and only touch
+	// the editor through these; each delegates to an existing Editor facility.
+	std::filesystem::path hostProjectRoot() const override { return projectRoot; }
+	void hostSetProjectRoot(const std::string &path) override { setProjectRoot(path); }
+	void hostOpenFile(const std::string &path) override { openFile(path); }
+	void hostOpenLuaTab(const std::string &text) override { openLuaInNewTab(text); }
+	std::string hostActiveText() const override { return tabs.empty() ? std::string() : doc().editor.GetText(); }
+	std::string hostActiveSelection() const override {
+		if (tabs.empty() || !doc().editor.AnyCursorHasSelection()) return {};
+		return doc().editor.GetCurrentSelectionText();
+	}
+	void hostToast(const std::string &text) override { pushToast(text, IM_COL32(80, 160, 255, 255), 0); }
+	void hostRunCommand(const PluginBuildCommand &cmd) override;
+	bool hostGetFlag(const std::string &key, bool def) const override {
+		auto it = pluginFlags.find(key);
+		return it == pluginFlags.end() ? def : it->second;
+	}
+	void hostSetFlag(const std::string &key, bool value) override { pluginFlags[key] = value; }
+
 	private:
+	// In-process plugins compiled into this build + their persisted key->bool
+	// store. registerBuiltinPlugins() fills it in the ctor; hooks fan out at the
+	// extension points. Empty in a core build (all IMGUIIDE_PLUGIN_* off).
+	PluginRegistry pluginRegistry;
+	std::unordered_map<std::string, bool> pluginFlags;
+
 	// per-document state — each doc is its own dockable window
 	struct TabDocument {
 		TextEditor editor;
