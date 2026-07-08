@@ -7173,6 +7173,12 @@ void Editor::loadSettings()
             if (k == "seen_first_run")
                 seenFirstRun = (v == "1" || v == "true");
         }
+        else if (section == "plugins")
+        {
+            // generic key -> bool store for plugins (enable toggles etc.);
+            // read before registerAll() so plugins pick up their saved state.
+            pluginFlags[k] = (v == "1" || v == "true");
+        }
         else if (section == "recent_files")
         {
             if (!v.empty() &&
@@ -7289,6 +7295,13 @@ void Editor::saveSettings()
     f << "\n";
     f << "[state]\n";
     f << "seen_first_run=1\n\n";
+    if (!pluginFlags.empty())
+    {
+        f << "[plugins]\n";
+        for (auto &[k, v] : pluginFlags)
+            f << k << "=" << (v ? "1" : "0") << "\n";
+        f << "\n";
+    }
     f << "[recent_files]\n";
     for (auto &p : recentFiles)
         f << "path=" << p << "\n";
@@ -7609,6 +7622,27 @@ void Editor::renderSettings()
                             ImGui::PopStyleColor();
                         }
                     }
+                }
+                ImGui::EndTabItem();
+            }
+            // Only present when at least one feature plugin is compiled in
+            // (IMGUIIDE_PLUGIN_*). A core build has none, so no tab appears.
+            if (!pluginRegistry.all().empty() && ImGui::BeginTabItem("Plugins"))
+            {
+                ImGui::TextDisabled("Feature plugins compiled into this build. Disabling one removes its\n"
+                                    "menus, windows and language extras at runtime (no restart needed).");
+                ImGui::Separator();
+                for (auto &p : pluginRegistry.all())
+                {
+                    bool on = p->enabled();
+                    std::string label = std::string(p->displayName()) + "##plugin_" + p->id();
+                    if (ImGui::Checkbox(label.c_str(), &on))
+                    {
+                        pluginRegistry.setEnabled(*this, *p, on);
+                        saveSettings();
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(%s)", p->id());
                 }
                 ImGui::EndTabItem();
             }

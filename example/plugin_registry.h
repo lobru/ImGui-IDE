@@ -11,6 +11,8 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "plugin_api.h"
@@ -26,11 +28,31 @@ public:
 
     const std::vector<std::unique_ptr<EditorPlugin>> &all() const { return plugins; }
 
-    // one-time registration (language augmentation, etc.)
+    // settings key a plugin's persisted enabled flag lives under.
+    static std::string enabledKey(const std::string &id) { return "plugin." + id + ".enabled"; }
+
+    // one-time registration. Loads each plugin's persisted enabled flag (default
+    // on), then runs onRegister only for the enabled ones — a plugin disabled at
+    // startup does not augment shared state (e.g. C++ language keywords) until
+    // enabled. Call after the host's settings have loaded.
     void registerAll(PluginHost &host)
     {
         for (auto &p : plugins)
-            p->onRegister(host);
+        {
+            p->setEnabled(host.hostGetFlag(enabledKey(p->id()), true));
+            if (p->enabled() && registered.insert(p->id()).second)
+                p->onRegister(host);
+        }
+    }
+
+    // flip a plugin's enabled state at runtime, persist it through the host, and
+    // lazily run its one-time onRegister the first time it becomes enabled.
+    void setEnabled(PluginHost &host, EditorPlugin &plugin, bool value)
+    {
+        plugin.setEnabled(value);
+        host.hostSetFlag(enabledKey(plugin.id()), value);
+        if (value && registered.insert(plugin.id()).second)
+            plugin.onRegister(host);
     }
 
     // per-frame windows + polling
@@ -91,6 +113,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<EditorPlugin>> plugins;
+    std::unordered_set<std::string> registered; // ids whose onRegister already ran
 };
 
 // Constructs the plugins compiled into this build (guarded by IMGUIIDE_PLUGIN_*).

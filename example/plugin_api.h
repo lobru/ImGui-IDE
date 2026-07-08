@@ -102,9 +102,11 @@ public:
     virtual const char *id() const = 0;          // stable identifier ("unreal", "uevr")
     virtual const char *displayName() const = 0; // shown in Settings
 
-    // runtime enable/disable (persisted by the host via hostGetFlag/SetFlag)
-    virtual bool enabled() const { return true; }
-    virtual void setEnabled(bool) {}
+    // runtime enable/disable. The registry loads/persists this through the host's
+    // flag store and gates every hook on it (a disabled plugin contributes
+    // nothing — no menus, windows, autocomplete, language extras).
+    virtual bool enabled() const { return enabledState; }
+    virtual void setEnabled(bool value) { enabledState = value; }
 
     // one-time, at Editor construction (e.g. augment a shared language definition)
     virtual void onRegister(PluginHost &) {}
@@ -127,4 +129,7 @@ public:
 
     // extra read-only source root to expose in the nav panel for this project
     virtual std::optional<PluginSourceRoot> extraSourceRoot(const std::filesystem::path &) { return std::nullopt; }
+
+protected:
+    bool enabledState = true; // backs enabled()/setEnabled(); persisted by the registry
 };

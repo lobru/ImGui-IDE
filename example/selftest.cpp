@@ -10,6 +10,7 @@
 //	Exit code 0 = all pass, 1 = a failure (printed to stderr).
 
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -19,6 +20,7 @@
 #include "lsp_protocol.h"
 #include "nav_history.h"
 #include "cppgen.h"
+#include "plugin_registry.h"
 #ifdef IMGUIIDE_PLUGIN_UNREAL
 #include "unreal.h"
 #include "unreal_plugin.h"
@@ -1172,6 +1174,85 @@ int main()
 		CHECK(colorAt(cpp, "Total x;\n", 0, 0) == plainId, "UE C++: normal CamelCase (Total) not a type");
 	}
 #endif // IMGUIIDE_PLUGIN_UNREAL
+
+	// ── Plugin registry: runtime enable/disable + persistence ─────────────
+	// Config-independent (uses a private test plugin, not a compiled-in one), so
+	// this runs in a core build too. Verifies the flag store loads/persists the
+	// per-plugin enabled state and gates the hooks.
+	{
+		struct FlagHost : PluginHost {
+			std::unordered_map<std::string, bool> flags;
+			std::filesystem::path hostProjectRoot() const override { return {}; }
+			void hostSetProjectRoot(const std::string&) override {}
+			void hostOpenFile(const std::string&) override {}
+			void hostOpenLuaTab(const std::string&) override {}
+			std::string hostActiveText() const override { return {}; }
+			std::string hostActiveSelection() const override { return {}; }
+			void hostToast(const std::string&) override {}
+			void hostError(const std::string&) override {}
+			void hostRunInDir(const std::string&, const std::filesystem::path&) override {}
+			void hostRunProjectBuild() override {}
+			std::filesystem::path hostExeDir() const override { return {}; }
+			std::filesystem::path hostRepoRoot() const override { return {}; }
+			bool hostPanInverted() const override { return false; }
+			bool hostGetFlag(const std::string& k, bool d) const override
+			{
+				auto it = flags.find(k);
+				return it == flags.end() ? d : it->second;
+			}
+			void hostSetFlag(const std::string& k, bool v) override { flags[k] = v; }
+		};
+		struct CountPlugin : EditorPlugin {
+			int registers = 0, frames = 0;
+			const char* id() const override { return "selftest.count"; }
+			const char* displayName() const override { return "Selftest counter"; }
+			void onRegister(PluginHost&) override { ++registers; }
+			void onFrame(PluginHost&) override { ++frames; }
+		};
+		const std::string key = PluginRegistry::enabledKey("selftest.count");
+
+		// Default (no saved flag): enabled → onRegister once, onFrame dispatches.
+		{
+			FlagHost host;
+			PluginRegistry reg;
+			auto up = std::make_unique<CountPlugin>();
+			CountPlugin* raw = up.get();
+			reg.add(std::move(up));
+			reg.registerAll(host);
+			CHECK(raw->enabled(), "plugin: default enabled after registerAll");
+			CHECK(raw->registers == 1, "plugin: onRegister ran once when enabled");
+			reg.frame(host);
+			CHECK(raw->frames == 1, "plugin: enabled plugin gets onFrame");
+		}
+
+		// Persisted-off: registerAll skips onRegister and frame() is gated off;
+		// enabling at runtime persists the flag and lazily runs onRegister once.
+		{
+			FlagHost host;
+			host.flags[key] = false;
+			PluginRegistry reg;
+			auto up = std::make_unique<CountPlugin>();
+			CountPlugin* raw = up.get();
+			reg.add(std::move(up));
+			reg.registerAll(host);
+			CHECK(!raw->enabled(), "plugin: persisted-off flag disables at registerAll");
+			CHECK(raw->registers == 0, "plugin: disabled plugin does not onRegister");
+			reg.frame(host);
+			CHECK(raw->frames == 0, "plugin: disabled plugin gets no onFrame");
+
+			reg.setEnabled(host, *raw, true);
+			CHECK(raw->enabled(), "plugin: setEnabled(true) enables");
+			CHECK(host.flags[key], "plugin: enable persisted to flag store");
+			CHECK(raw->registers == 1, "plugin: lazy onRegister on first enable");
+			reg.frame(host);
+			CHECK(raw->frames == 1, "plugin: re-enabled plugin resumes onFrame");
+
+			reg.setEnabled(host, *raw, false);
+			CHECK(!host.flags[key], "plugin: disable persisted to flag store");
+			reg.setEnabled(host, *raw, true);
+			CHECK(raw->registers == 1, "plugin: onRegister not repeated on re-enable");
+		}
+	}
 
 	// ── C++ definition / declaration generation ───────────────────────────
 	{
