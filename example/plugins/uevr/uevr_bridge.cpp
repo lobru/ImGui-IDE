@@ -18,6 +18,7 @@
 
 #define _CRT_SECURE_NO_WARNINGS // std::getenv("APPDATA") for the bridge folder
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -25,24 +26,16 @@
 
 #include <imgui.h>
 
-#include "editor.h"
+#include "uevr_plugin.h"
 
-//
-//  Editor::uevrBridgeDir
-//
-
-std::filesystem::path Editor::uevrBridgeDir(const char *sub) const
+std::filesystem::path UevrPlugin::uevrBridgeDir(const char *sub) const
 {
     const char *appdata = std::getenv("APPDATA");
     std::filesystem::path base = appdata ? std::filesystem::path(appdata) : std::filesystem::path(".");
     return base / "UnrealVRMod" / "UEVR" / "ide_bridge" / sub;
 }
 
-//
-//  Editor::sendUevr
-//
-
-void Editor::sendUevr(const std::string &kind, const std::string &payload)
+void UevrPlugin::sendUevr(const std::string &kind, const std::string &payload)
 {
     std::error_code ec;
     auto dir = uevrBridgeDir("cmd");
@@ -55,11 +48,7 @@ void Editor::sendUevr(const std::string &kind, const std::string &payload)
         f << kind << "\n" << payload;
 }
 
-//
-//  Editor::pollUevrBridge — drain the out inbox (~5 Hz), route results.
-//
-
-void Editor::pollUevrBridge()
+void UevrPlugin::pollUevrBridge()
 {
     static double nextPoll = 0.0;
     double now = ImGui::GetTime();
@@ -115,11 +104,7 @@ void Editor::pollUevrBridge()
     }
 }
 
-//
-//  Editor::renderUevrLive
-//
-
-void Editor::renderUevrLive()
+void UevrPlugin::renderUevrLive(PluginHost &host)
 {
     if (!uevrLiveVisible)
         return;
@@ -148,18 +133,24 @@ void Editor::renderUevrLive()
         sendUevr("run", uevrReplBuf);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Run Active Doc") && !tabs.empty())
+    if (ImGui::Button("Run Active Doc"))
     {
-        std::string src = doc().editor.GetText();
-        uevrOutputLog.push_back("> [run active document]");
-        sendUevr("run", src);
+        std::string src = host.hostActiveText();
+        if (!src.empty())
+        {
+            uevrOutputLog.push_back("> [run active document]");
+            sendUevr("run", src);
+        }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Run Selection") && !tabs.empty() && doc().editor.AnyCursorHasSelection())
+    if (ImGui::Button("Run Selection"))
     {
-        std::string sel = doc().editor.GetCurrentSelectionText();
-        uevrOutputLog.push_back("> [run selection]");
-        sendUevr("run", sel);
+        std::string sel = host.hostActiveSelection();
+        if (!sel.empty())
+        {
+            uevrOutputLog.push_back("> [run selection]");
+            sendUevr("run", sel);
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear"))

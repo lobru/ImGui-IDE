@@ -33,10 +33,6 @@
 #include "updater.h"
 #include "plugin_registry.h"
 
-// Blueprint visual scripting editor + UEVR Lua backend (reusable imgui widgets,
-// heavy headers — forward-declared here, included only in blueprint_window.cpp).
-class BlueprintEditor;
-
 
 //
 //	Editor
@@ -91,6 +87,7 @@ class Editor : public PluginHost {
 	}
 	void hostToast(const std::string &text) override { pushToast(text, IM_COL32(80, 160, 255, 255), 0); }
 	void hostRunCommand(const PluginBuildCommand &cmd) override;
+	bool hostPanInverted() const override { return prefInvertPan; }
 	bool hostGetFlag(const std::string &key, bool def) const override {
 		auto it = pluginFlags.find(key);
 		return it == pluginFlags.end() ? def : it->second;
@@ -859,35 +856,12 @@ private:
 	std::string                     symbolsFilterCache = std::string(1, '\x01'); // filter the matched-index cache is for (sentinel forces first build)
 	std::vector<int>                symbolsFilteredIdx;            // indices into symbolsProjectRows matching symbolsFilterCache
 
-	// Blueprint visual scripting editor (UEVR-focused node graph → Lua codegen).
-	// The heavy widget is heap-held + lazily created on first show. See
-	// example/blueprint_window.cpp.
-	std::unique_ptr<BlueprintEditor> blueprintEditor;
-	bool                            blueprintVisible = false;
-	std::string                     blueprintSnapshot;             // Graph > Save/Load Snapshot buffer
-	void renderBlueprintWindow();
-	// Open arbitrary text as a new, never-saved Lua editor tab (used by
-	// "Generate UEVR Lua" and could back other codegen). Sets Lua language so
-	// highlighting + UEVR-API autocomplete apply even though it is untitled;
-	// Ctrl+S therefore prompts Save As.
+	// Open arbitrary text as a new, never-saved Lua editor tab. A host facility
+	// (PluginHost::hostOpenLuaTab) used by the UEVR plugin's "Generate UEVR Lua"
+	// and available to any codegen. Sets Lua language so highlighting +
+	// UEVR-API autocomplete apply even though it is untitled; Ctrl+S therefore
+	// prompts Save As.
 	void openLuaInNewTab(const std::string &text);
-
-	// ── UEVR Live bridge ──────────────────────────────────────────────────
-	// Drive a running UEVR game's Lua state from the standalone IDE over a
-	// file-inbox at %APPDATA%\UnrealVRMod\UEVR\ide_bridge\{cmd,out}\ — the IDE
-	// writes command files, the in-game companion plugin runs them via
-	// exec_lua_chunk and writes results back. Same pattern as the toast/open
-	// inboxes; safe (best-effort) whether or not a game is running.
-	bool uevrLiveVisible = false;
-	char uevrReplBuf[4096]  = {0};                 // REPL input
-	char uevrInspectBuf[256] = "uevr.api:get_local_pawn(0)"; // Inspect expression
-	std::vector<std::string> uevrOutputLog;        // REPL / run output (capped)
-	std::string uevrGlobals, uevrModules, uevrInspect; // dump-tab text
-	int uevrReqCounter = 0;
-	std::filesystem::path uevrBridgeDir(const char *sub) const; // <ide_bridge>/<sub>
-	void sendUevr(const std::string &kind, const std::string &payload); // write a cmd file
-	void pollUevrBridge();                         // drain the out inbox (~5 Hz)
-	void renderUevrLive();                          // the dockable panel
 
 	// Find in Files — project-wide text search with a query box + options.
 	bool                            findInFilesVisible = false;

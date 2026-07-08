@@ -28,11 +28,7 @@ add_library(TextEditorLib ${TEXTEDITOR_LIB_TYPE}
 	../TextEditor.h
 	../TextDiff.cpp
 	../TextDiff.h
-	../dtl.h
-	../BlueprintEditor.cpp
-	../BlueprintEditor.h
-	../BlueprintLua.cpp
-	../BlueprintLua.h)
+	../dtl.h)
 
 target_include_directories(TextEditorLib PUBLIC ..)
 target_link_libraries(TextEditorLib PUBLIC imguifd)
@@ -87,13 +83,29 @@ add_executable(example
 	unreal.cpp
 	pdfview.cpp
 	cppgen.cpp
-	blueprint_window.cpp
-	uevr_bridge.cpp
 	plugin_registry.cpp
 	dejavu.cpp
 	main.cpp)
 
 target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
+
+# ── In-process plugins ────────────────────────────────────────────────────
+# Domain-specific features live in plugins, each behind its own flag (default
+# ON). A core build with every flag OFF compiles none of their code. See
+# example/plugin_api.h.
+option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin" ON)
+
+if(IMGUIIDE_PLUGIN_UEVR)
+	# BlueprintEditor/BlueprintLua are used ONLY by this plugin, so they compile
+	# with it (not in TextEditorLib) — a core build omits them entirely.
+	target_sources(example PRIVATE
+		plugins/uevr/uevr_plugin.cpp
+		plugins/uevr/blueprint_window.cpp
+		plugins/uevr/uevr_bridge.cpp
+		../BlueprintEditor.cpp
+		../BlueprintLua.cpp)
+	target_compile_definitions(example PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
+endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP; the PDF viewer uses the
 # OS PDF engine via C++/WinRT (windowsapp). Both Windows only.
@@ -166,6 +178,12 @@ add_custom_command(TARGET example POST_BUILD
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
 add_executable(selftest selftest.cpp unreal.cpp cppgen.cpp)
 target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto)
+# Blueprint→Lua codegen tests are gated on the UEVR plugin flag; compile the
+# (now plugin-owned) widgets into selftest when it's on so they still run.
+if(IMGUIIDE_PLUGIN_UEVR)
+	target_sources(selftest PRIVATE ../BlueprintEditor.cpp ../BlueprintLua.cpp)
+	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
+endif()
 target_compile_options(selftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)

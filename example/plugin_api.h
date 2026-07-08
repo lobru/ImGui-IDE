@@ -66,6 +66,9 @@ public:
     virtual void hostToast(const std::string &text) = 0;
     virtual void hostRunCommand(const PluginBuildCommand &cmd) = 0; // run in the Output panel
 
+    // shared UI preferences a plugin's own surfaces must honor
+    virtual bool hostPanInverted() const = 0; // invert-pan setting (every pan surface honors it)
+
     // small persisted key -> bool store (runtime enable toggles, etc.)
     virtual bool hostGetFlag(const std::string &key, bool def) const = 0;
     virtual void hostSetFlag(const std::string &key, bool value) = 0;

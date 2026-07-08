@@ -1,42 +1,21 @@
 //
-//  blueprint_window.cpp — ImGui-IDE integration of the Blueprint visual
-//  scripting editor (BlueprintEditor) + its UEVR Lua backend (BlueprintLua).
+//  blueprint_window.cpp — the dockable "Blueprint Editor" window.
 //
-//  A dockable "Blueprint Editor" window whose body is the node-graph widget.
-//  Its registry is seeded with the UEVR Lua scripting API, so the palette
-//  offers UEVR nodes and "Generate UEVR Lua" walks the graph into a runnable
-//  script, opened as a new Lua editor tab. Being a normal dockable window, it
-//  inherits the app's multi-viewport docking for free; the canvas pan honors
-//  the app's invert-pan setting.
+//  Its body is the BlueprintEditor node-graph widget, its registry seeded with
+//  the UEVR Lua scripting API so the palette offers UEVR nodes and "Generate
+//  UEVR Lua" walks the graph into a runnable script opened as a new Lua tab.
+//  Being a normal dockable window it inherits the app's multi-viewport docking;
+//  the canvas pan honors the host's invert-pan setting.
 //
 
 #include <imgui.h>
 
-#include "editor.h"
+#include "BlueprintEditor.h"
+#include "BlueprintLua.h"
 
-#include "../BlueprintEditor.h"
-#include "../BlueprintLua.h"
+#include "uevr_plugin.h"
 
-//
-//  Editor::openLuaInNewTab
-//
-
-void Editor::openLuaInNewTab(const std::string &text)
-{
-    auto &t = newTab(); // untitled → Ctrl+S prompts Save As (correct for generated content)
-    t.editor.SetText(text);
-    t.editor.SetLanguage(TextEditor::Language::Lua());
-    t.wantFocus = true;
-    // originalText stays empty, so the tab reads as unsaved (dirty) — expected
-    // for freshly generated code the user hasn't chosen a path for yet.
-    buildAutocompleteTrie(t);
-}
-
-//
-//  Editor::renderBlueprintWindow
-//
-
-void Editor::renderBlueprintWindow()
+void UevrPlugin::renderBlueprintWindow(PluginHost &host)
 {
     if (!blueprintVisible)
         return;
@@ -50,7 +29,7 @@ void Editor::renderBlueprintWindow()
         blueprintEditor->SetBlueprint("UEVRScript", "UEVR");
     }
     auto &bp = *blueprintEditor;
-    bp.SetPanInverted(prefInvertPan); // every pan surface honors the app setting
+    bp.SetPanInverted(host.hostPanInverted()); // every pan surface honors the app setting
 
     ImGui::SetNextWindowSize(ImVec2(1100.0f, 680.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Blueprint Editor###blueprintEditor", &blueprintVisible, ImGuiWindowFlags_MenuBar))
@@ -110,7 +89,7 @@ void Editor::renderBlueprintWindow()
             if (ImGui::MenuItem("Generate UEVR Lua"))
             {
                 std::string lua = BlueprintLua::GenerateScript(bp);
-                openLuaInNewTab(lua);
+                host.hostOpenLuaTab(lua);
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Walk the graph into a UEVR Lua script and open it in a new tab");

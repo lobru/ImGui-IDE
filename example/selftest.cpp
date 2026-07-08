@@ -20,8 +20,10 @@
 #include "nav_history.h"
 #include "unreal.h"
 #include "cppgen.h"
+#ifdef IMGUIIDE_PLUGIN_UEVR
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
+#endif
 
 #include <filesystem>
 #include <fstream>
@@ -1244,6 +1246,8 @@ int main()
 	}
 
 	// ── Blueprint → UEVR Lua codegen (pure; no ImGui context needed) ───────
+	// Gated on the UEVR plugin: the widgets it exercises ship only with it.
+#ifdef IMGUIIDE_PLUGIN_UEVR
 	{
 		BlueprintEditor bp;
 		BlueprintLua::SetupUEVRRegistry(bp);
@@ -1282,6 +1286,7 @@ int main()
 		CHECK(!api.empty() && hasWord("find_uobject") && hasWord("on_pre_engine_tick") && hasWord("uevr"),
 		      "blueprintlua: LuaApiIdentifiers includes core UEVR tokens");
 	}
+#endif // IMGUIIDE_PLUGIN_UEVR
 
 	if (gFailures == 0) {
 		std::printf("selftest: all %d checks passed\n", gChecks);

@@ -79,8 +79,6 @@
 #endif
 
 #include "editor.h"
-#include "../BlueprintEditor.h" // complete type for the unique_ptr<BlueprintEditor> member's dtor
-#include "../BlueprintLua.h"    // UEVR Lua codegen + curated Lua-API autocomplete words
 #include "cppgen.h"
 #include "pdfview.h"
 #include "tsindex.h"
@@ -476,6 +474,24 @@ Editor::TabDocument &Editor::newTab()
         configureTabAutocomplete(*tabs.back());
     return *tabs.back();
 }
+
+//
+//  Editor::openLuaInNewTab — PluginHost::hostOpenLuaTab. Open arbitrary text as
+//  a new, never-saved Lua editor tab (used by the UEVR plugin's "Generate UEVR
+//  Lua"). Untitled → Ctrl+S prompts Save As, which is correct for generated
+//  content.
+//
+void Editor::openLuaInNewTab(const std::string &text)
+{
+    auto &t = newTab();
+    t.editor.SetText(text);
+    t.editor.SetLanguage(TextEditor::Language::Lua());
+    t.wantFocus = true;
+    // originalText stays empty, so the tab reads as unsaved (dirty) — expected
+    // for freshly generated code the user hasn't chosen a path for yet.
+    buildAutocompleteTrie(t);
+}
+
 Editor::TabDocument &Editor::newTab(const std::string &path, bool split, int index)
 {
     auto t = std::make_unique<TabDocument>();
@@ -9546,8 +9562,6 @@ void Editor::render()
     renderReferencesPanel();
     renderSymbolsPanel();
     renderFindInFilesPanel();
-    renderBlueprintWindow(); // UEVR Blueprint visual scripting editor
-    renderUevrLive();        // UEVR Live bridge (REPL + globals/modules/inspect)
     pluginRegistry.frame(*this); // in-process plugins: dockable windows + polling
     renderDevTools();
     renderMarkdownPreview();
@@ -10854,42 +10868,8 @@ void Editor::renderMenuBar()
             {
                 openProjectFolderPicker();
             }
-            // UEVR scripts — import/open Lua from the global UEVR scripts folder
-            // (%APPDATA%\UnrealVRMod\UEVR\Scripts), the same folder the UEVR Lua
-            // editor + "Generate UEVR Lua" target.
-            if (const char *appdata = std::getenv("APPDATA"))
-            {
-                std::filesystem::path uevrScripts =
-                    std::filesystem::path(appdata) / "UnrealVRMod" / "UEVR" / "Scripts";
-                std::error_code uec;
-                if (std::filesystem::is_directory(uevrScripts, uec) &&
-                    ImGui::BeginMenu("Open UEVR Script"))
-                {
-                    if (ImGui::MenuItem("Open Scripts Folder in Nav"))
-                        setProjectRoot(uevrScripts.string());
-                    ImGui::Separator();
-                    int shown = 0;
-                    std::error_code iec;
-                    for (auto it = std::filesystem::directory_iterator(
-                             uevrScripts, std::filesystem::directory_options::skip_permission_denied, iec);
-                         !iec && it != std::filesystem::directory_iterator() && shown < 200; it.increment(iec))
-                    {
-                        std::error_code fec;
-                        if (!it->is_regular_file(fec) || fec)
-                            continue;
-                        auto ext = it->path().extension();
-                        if (ext != ".lua" && ext != ".txt")
-                            continue;
-                        std::string leaf = it->path().filename().string();
-                        if (ImGui::MenuItem(leaf.c_str()))
-                            openFile(it->path().string());
-                        ++shown;
-                    }
-                    if (shown == 0)
-                        ImGui::TextDisabled("(no .lua scripts found)");
-                    ImGui::EndMenu();
-                }
-            }
+            // Plugins contribute File-menu items here (e.g. UEVR "Open Script").
+            pluginRegistry.menu(*this, PluginMenu::File);
             // Recent lists: show the FILENAME as the menu label (full absolute
             // paths made the submenu hundreds of px wide, overflowing back over
             // the parent menu). The full path goes in a hover tooltip.
@@ -11273,12 +11253,8 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("Symbols", nullptr, &symbolsPanelVisible))
             {
             }
-            if (ImGui::MenuItem("Blueprint Editor (UEVR)", nullptr, &blueprintVisible))
-            {
-            }
-            if (ImGui::MenuItem("UEVR Live (bridge)", nullptr, &uevrLiveVisible))
-            {
-            }
+            // Plugins contribute their window toggles here (Blueprint, UEVR Live).
+            pluginRegistry.menu(*this, PluginMenu::View);
             if (ImGui::MenuItem("C/C++ IntelliSense (clangd)", nullptr, &lspEnabled))
             {
                 if (lspEnabled)
@@ -13816,13 +13792,6 @@ void Editor::buildAutocompleteTrie(TabDocument &t)
             t.trie.insert(word);
         for (auto &word : language->identifiers)
             t.trie.insert(word);
-        // Lua docs (real .lua files AND generated "untitled" Lua tabs) also
-        // complete the UEVR scripting API — namespaces, sdk callbacks, api/vr
-        // methods, UObject accessors. Keyed on the language, not the extension,
-        // so "Generate UEVR Lua" tabs get it too.
-        if (language->name == "Lua")
-            for (const auto &word : BlueprintLua::LuaApiIdentifiers())
-                t.trie.insert(word);
     }
     t.editor.IterateIdentifiers([&](const std::string &id) { t.trie.insert(id); });
 
@@ -13845,5 +13814,17 @@ void Editor::buildAutocompleteTrie(TabDocument &t)
             for (const auto &word : unreal::descriptorWords(engine, projDir))
                 t.trie.insert(word);
         }
+    }
+
+    // Plugins contribute language/descriptor-specific completion words (e.g. the
+    // UEVR Lua API for Lua docs).
+    {
+        PluginDocInfo info;
+        info.filename = t.filename;
+        info.extLower = std::filesystem::path(t.filename).extension().string();
+        std::transform(info.extLower.begin(), info.extLower.end(), info.extLower.begin(),
+                       [](unsigned char c) { return (char)std::tolower(c); });
+        info.languageName = language ? language->name : std::string();
+        pluginRegistry.autocomplete(*this, info, [&](const std::string &w) { t.trie.insert(w); });
     }
 }
