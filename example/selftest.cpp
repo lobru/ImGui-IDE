@@ -18,8 +18,11 @@
 #include "tsindex.h"
 #include "lsp_protocol.h"
 #include "nav_history.h"
-#include "unreal.h"
 #include "cppgen.h"
+#ifdef IMGUIIDE_PLUGIN_UNREAL
+#include "unreal.h"
+#include "unreal_plugin.h"
+#endif
 #ifdef IMGUIIDE_PLUGIN_UEVR
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
@@ -1062,6 +1065,7 @@ int main()
 		CHECK(ed2.CaretColumnAtVisual(0, 0.2f) == 0, "CaretColumn: left edge of leading tab -> 0");
 	}
 
+#ifdef IMGUIIDE_PLUGIN_UNREAL
 	// ── Unreal include resolution (module-relative Go-to-File) ────────────
 	{
 		namespace fs = std::filesystem;
@@ -1120,6 +1124,29 @@ int main()
 
 	// ── Unreal C++ type + macro highlighting ──────────────────────────────
 	{
+		// The UE vocabulary is added by the Unreal plugin at registration (in the
+		// app, Editor's ctor). Apply it here through the plugin so the shared C++
+		// language matches a running editor. onRegister ignores the host, but the
+		// signature needs one — a no-op stub suffices.
+		struct StubHost : PluginHost {
+			std::filesystem::path hostProjectRoot() const override { return {}; }
+			void hostSetProjectRoot(const std::string&) override {}
+			void hostOpenFile(const std::string&) override {}
+			void hostOpenLuaTab(const std::string&) override {}
+			std::string hostActiveText() const override { return {}; }
+			std::string hostActiveSelection() const override { return {}; }
+			void hostToast(const std::string&) override {}
+			void hostError(const std::string&) override {}
+			void hostRunInDir(const std::string&, const std::filesystem::path&) override {}
+			void hostRunProjectBuild() override {}
+			std::filesystem::path hostExeDir() const override { return {}; }
+			std::filesystem::path hostRepoRoot() const override { return {}; }
+			bool hostGetFlag(const std::string&, bool d) const override { return d; }
+			void hostSetFlag(const std::string&, bool) override {}
+			bool hostPanInverted() const override { return false; }
+		} stub;
+		UnrealPlugin().onRegister(stub);
+
 		auto cpp = TextEditor::Language::Cpp();
 		int typeCol = colorAt(cpp, "int i;\n", 0, 0);    // known base type
 		int kwCol = colorAt(cpp, "return x;\n", 0, 0);   // known keyword
@@ -1144,6 +1171,7 @@ int main()
 		CHECK(colorAt(cpp, "TESTING x;\n", 0, 0) == plainId, "UE C++: SCREAMING_CASE not treated as a type");
 		CHECK(colorAt(cpp, "Total x;\n", 0, 0) == plainId, "UE C++: normal CamelCase (Total) not a type");
 	}
+#endif // IMGUIIDE_PLUGIN_UNREAL
 
 	// ── C++ definition / declaration generation ───────────────────────────
 	{

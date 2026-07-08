@@ -80,7 +80,6 @@ target_compile_options(lspclient PRIVATE
 add_executable(example
 	editor.cpp
 	updater.cpp
-	unreal.cpp
 	pdfview.cpp
 	cppgen.cpp
 	plugin_registry.cpp
@@ -93,7 +92,16 @@ target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imgu
 # Domain-specific features live in plugins, each behind its own flag (default
 # ON). A core build with every flag OFF compiles none of their code. See
 # example/plugin_api.h.
+option(IMGUIIDE_PLUGIN_UNREAL "Build the Unreal Engine integration plugin" ON)
 option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin" ON)
+
+if(IMGUIIDE_PLUGIN_UNREAL)
+	target_sources(example PRIVATE
+		plugins/unreal/unreal_plugin.cpp
+		plugins/unreal/unreal.cpp)
+	target_include_directories(example PRIVATE plugins/unreal)
+	target_compile_definitions(example PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
+endif()
 
 if(IMGUIIDE_PLUGIN_UEVR)
 	# BlueprintEditor/BlueprintLua are used ONLY by this plugin, so they compile
@@ -104,6 +112,7 @@ if(IMGUIIDE_PLUGIN_UEVR)
 		plugins/uevr/uevr_bridge.cpp
 		../BlueprintEditor.cpp
 		../BlueprintLua.cpp)
+	target_include_directories(example PRIVATE plugins/uevr)
 	target_compile_definitions(example PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
 endif()
 
@@ -176,10 +185,15 @@ add_custom_command(TARGET example POST_BUILD
 # colorizer, fold detection — with no SDL/GPU/ImGui context. It links the same
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
-add_executable(selftest selftest.cpp unreal.cpp cppgen.cpp)
+add_executable(selftest selftest.cpp cppgen.cpp)
 target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto)
-# Blueprint→Lua codegen tests are gated on the UEVR plugin flag; compile the
-# (now plugin-owned) widgets into selftest when it's on so they still run.
+# The UE + Blueprint tests are gated on their plugin flags; compile the (now
+# plugin-owned) sources into selftest when the flag is on so they still run.
+if(IMGUIIDE_PLUGIN_UNREAL)
+	target_sources(selftest PRIVATE plugins/unreal/unreal.cpp plugins/unreal/unreal_plugin.cpp)
+	target_include_directories(selftest PRIVATE plugins/unreal)
+	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
+endif()
 if(IMGUIIDE_PLUGIN_UEVR)
 	target_sources(selftest PRIVATE ../BlueprintEditor.cpp ../BlueprintLua.cpp)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UEVR=1)

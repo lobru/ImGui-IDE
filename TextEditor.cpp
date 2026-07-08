@@ -11752,25 +11752,6 @@ const TextEditor::Language* TextEditor::Language::C()
 //	TextEditor::Language::Cpp
 //
 
-// Unreal / COM-style type-name convention: a prefix in {F,U,A,T,E,I,S} followed by
-// an uppercase letter, and CamelCase (has a lowercase char — so SCREAMING_CASE macros
-// like FILE/TRUE aren't miscolored). Covers the thousands of UE types that can't be
-// enumerated (FMyStruct, UMyComponent, AMyActor, TMyTemplate, EMyEnum, IMyInterface).
-static bool cppUnrealTypeLike(const std::string& id)
-{
-	if (id.size() < 3)
-		return false;
-	char c0 = id[0], c1 = id[1];
-	if (c0 != 'F' && c0 != 'U' && c0 != 'A' && c0 != 'T' && c0 != 'E' && c0 != 'I' && c0 != 'S')
-		return false;
-	if (c1 < 'A' || c1 > 'Z')
-		return false;
-	for (char c : id)
-		if (c >= 'a' && c <= 'z')
-			return true; // CamelCase → a type, not an all-caps macro
-	return false;
-}
-
 const TextEditor::Language* TextEditor::Language::Cpp()
 {
 	static bool initialized = false;
@@ -11804,39 +11785,8 @@ const TextEditor::Language* TextEditor::Language::Cpp()
 			"virtual", "void", "volatile", "wchar_t"
 		};
 
-		// Unreal Engine fundamental types, containers, smart pointers, math and
-		// string types — colored as types (declarations). UE aliases int32/uint8/
-		// FString/TArray/... that the base C++ set doesn't know, so "int32 X;" went
-		// uncolored. Harmless in non-UE C++ (these names simply don't appear there).
-		static const char* const ueTypes[] = {
-			"int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
-			"TCHAR", "ANSICHAR", "WIDECHAR", "UTF8CHAR", "UCS2CHAR", "CHAR8", "CHAR16", "CHAR32",
-			"SIZE_T", "SSIZE_T", "PTRINT", "UPTRINT",
-			"FString", "FName", "FText", "FStringView", "FAnsiStringView",
-			"TArray", "TArrayView", "TMap", "TMultiMap", "TSet", "TQueue", "TStaticArray",
-			"TSharedPtr", "TSharedRef", "TWeakPtr", "TUniquePtr", "TWeakObjectPtr", "TStrongObjectPtr",
-			"TObjectPtr", "TSoftObjectPtr", "TSoftClassPtr", "TSubclassOf", "TScriptInterface",
-			"TOptional", "TFunction", "TUniqueFunction", "TTuple", "TPair", "TVariant", "TEnumAsByte",
-			"FVector", "FVector2D", "FVector4", "FRotator", "FQuat", "FTransform", "FMatrix",
-			"FColor", "FLinearColor", "FIntPoint", "FIntVector", "FBox", "FBox2D", "FGuid",
-			"FDateTime", "FTimespan", "FDelegateHandle"
-		};
-		// UE reflection + logging + assertion macros — colored as keywords.
-		static const char* const ueMacros[] = {
-			"UCLASS", "UPROPERTY", "UFUNCTION", "USTRUCT", "UENUM", "UINTERFACE", "UDELEGATE", "UPARAM",
-			"UMETA", "GENERATED_BODY", "GENERATED_UCLASS_BODY", "GENERATED_USTRUCT_BODY",
-			"DECLARE_DYNAMIC_MULTICAST_DELEGATE", "DECLARE_MULTICAST_DELEGATE", "DECLARE_DELEGATE",
-			"UE_LOG", "UE_LOGFMT", "UE_CLOG", "checkf", "checkNoEntry", "checkNoReentry", "checkSlow",
-			"ensureMsgf", "ensureAlways", "verifyf", "unimplemented",
-			"FORCEINLINE", "FORCENOINLINE", "UE_DEPRECATED", "UE_NODISCARD",
-			"LOCTEXT", "NSLOCTEXT", "TEXT", "INVTEXT", "PURE_VIRTUAL"
-		};
-
 		for (auto& keyword : keywords) { language.keywords.insert(keyword); }
 		for (auto& declaration : declarations) { language.declarations.insert(declaration); }
-		for (auto& t : ueTypes) { language.declarations.insert(t); }
-		for (auto& m : ueMacros) { language.keywords.insert(m); }
-		language.isTypeLike = cppUnrealTypeLike; // catch unlisted F*/U*/A*/T*/E*/I*/S* types
 
 		language.isPunctuation = isCStylePunctuation;
 		language.getIdentifier = getCStyleIdentifier;
@@ -11845,6 +11795,13 @@ const TextEditor::Language* TextEditor::Language::Cpp()
 	}
 
 	return &language;
+}
+
+// Same singleton as Cpp(), handed back mutable so a plugin can augment it once
+// (e.g. add Unreal's type/macro vocabulary + isTypeLike).
+TextEditor::Language* TextEditor::Language::CppMutable()
+{
+	return const_cast<TextEditor::Language*>(Cpp());
 }
 
 

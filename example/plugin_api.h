@@ -38,11 +38,22 @@ struct PluginDocInfo
     std::string languageName; // TextEditor language name, e.g. "Lua", "C++" (may be empty)
 };
 
-// A build/run command a project-type provider can return.
+// A build/run command a project-type provider returns. Mirrors the editor's
+// internal build-command pair: `path` is either a script FILE (run
+// `command "path"` in its parent dir) or a DIRECTORY (run `command` cd'd into
+// it); `command` is the interpreter or the full command string.
 struct PluginBuildCommand
 {
-    std::filesystem::path script;      // file/command to run
-    std::string           interpreter; // interpreter/launcher, or "" to run directly
+    std::filesystem::path path;
+    std::string           command;
+};
+
+// An extra read-only source root a plugin exposes in the navigation panel
+// (e.g. a UE project's engine Source/ tree).
+struct PluginSourceRoot
+{
+    std::string           label; // shown in the nav tree + Filters checkbox
+    std::filesystem::path path;  // directory to browse
 };
 
 //
@@ -64,7 +75,13 @@ public:
 
     // feedback + running
     virtual void hostToast(const std::string &text) = 0;
-    virtual void hostRunCommand(const PluginBuildCommand &cmd) = 0; // run in the Output panel
+    virtual void hostError(const std::string &message) = 0;                                     // modal error dialog
+    virtual void hostRunInDir(const std::string &command, const std::filesystem::path &dir) = 0; // run in the Output panel
+    virtual void hostRunProjectBuild() = 0;                                                     // the F6 build resolver
+
+    // executable + repo locations (for locating bundled assets / dev-tree fallback)
+    virtual std::filesystem::path hostExeDir() const = 0;
+    virtual std::filesystem::path hostRepoRoot() const = 0;
 
     // shared UI preferences a plugin's own surfaces must honor
     virtual bool hostPanInverted() const = 0; // invert-pan setting (every pan surface honors it)
@@ -107,4 +124,7 @@ public:
 
     // go-to-file resolver: map an #include/require to an on-disk path
     virtual std::optional<std::filesystem::path> resolveInclude(const std::filesystem::path &, const std::string &) { return std::nullopt; }
+
+    // extra read-only source root to expose in the nav panel for this project
+    virtual std::optional<PluginSourceRoot> extraSourceRoot(const std::filesystem::path &) { return std::nullopt; }
 };

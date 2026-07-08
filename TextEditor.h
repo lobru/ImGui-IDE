@@ -664,6 +664,10 @@ public:
 		// predefined language definitions
 		static const Language* C();
 		static const Language* Cpp();
+		// Mutable handle to the shared C++ language (same singleton as Cpp()), so a
+		// plugin can augment it once at startup — e.g. add Unreal's type/macro
+		// vocabulary and set the isTypeLike fallback. Core ships plain C++.
+		static Language* CppMutable();
 		static const Language* Cs();
 		static const Language* AngelScript();
 		static const Language* Lua();

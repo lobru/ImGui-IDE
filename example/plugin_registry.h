@@ -79,6 +79,16 @@ public:
         return std::nullopt;
     }
 
+    // first plugin that offers an extra nav source root for this project wins
+    std::optional<PluginSourceRoot> extraSourceRoot(const std::filesystem::path &projectRoot)
+    {
+        for (auto &p : plugins)
+            if (p->enabled())
+                if (auto root = p->extraSourceRoot(projectRoot))
+                    return root;
+        return std::nullopt;
+    }
+
 private:
     std::vector<std::unique_ptr<EditorPlugin>> plugins;
 };

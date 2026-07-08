@@ -82,7 +82,6 @@
 #include "cppgen.h"
 #include "pdfview.h"
 #include "tsindex.h"
-#include "unreal.h"
 
 #include <chrono>
 
@@ -666,7 +665,7 @@ void Editor::renderScriptOutputWindow()
 // On Windows we prefer `build.bat`/`build.cmd` first (most projects ship one),
 // then `build.ps1`, then a Makefile / CMakeLists.txt at the same level. The
 // search is capped at 8 levels up to avoid recursing into the filesystem root.
-static std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std::filesystem::path start)
+std::pair<std::filesystem::path, std::string> Editor::findProjectBuildCommand(std::filesystem::path start)
 {
     std::error_code ec;
     struct Candidate
@@ -699,8 +698,14 @@ static std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std
             }
         }
 
+        // A project-type plugin (e.g. Unreal) claims this level first: UE
+        // projects also carry a GENERATED .sln that `dotnet build` can't build,
+        // so the plugin's build command must take precedence over .sln here.
+        if (auto pc = pluginRegistry.buildCommand(cur))
+            return {pc->path, pc->command};
+
         // Project files at this level — scan once, pick the most specific.
-        std::filesystem::path sln, csproj, vcxproj, uproject;
+        std::filesystem::path sln, csproj, vcxproj;
         for (auto &entry : std::filesystem::directory_iterator(cur, ec))
         {
             if (!entry.is_regular_file())
@@ -714,24 +719,6 @@ static std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std
                 csproj = entry.path();
             else if (ext == ".vcxproj" && vcxproj.empty())
                 vcxproj = entry.path();
-            else if (ext == ".uproject" && uproject.empty())
-                uproject = entry.path();
-        }
-        // A .uproject wins over everything else at this level: UE projects also
-        // carry a GENERATED .sln (C++, which `dotnet build` can't build), so the
-        // Unreal path must take precedence. Build the editor target through
-        // UnrealBuildTool — the same invocation the VS project generator emits.
-        if (!uproject.empty())
-        {
-            std::string assoc;
-            auto engine = unreal::findEngineRoot(uproject, assoc);
-            std::string ucmd = engine.empty() ? std::string()
-                                              : unreal::buildEditorCommand(engine, uproject);
-            if (ucmd.empty())
-                ucmd = "echo Unreal build unavailable: " +
-                       std::string(engine.empty() ? "engine not found (EngineAssociation=" + assoc + ")"
-                                                  : "Blueprint-only project (no Source/ directory)");
-            return {uproject.parent_path(), ucmd}; // directory form → runner cd's there
         }
         // Prefer .sln (covers C# + C++ multi-project), then .csproj, then .vcxproj.
         // dotnet's CLI handles .sln, .csproj transparently; vcxproj needs msbuild.
@@ -828,21 +815,11 @@ void Editor::runCommandInOutputPanel(const std::string &cmd, const std::filesyst
         .detach();
 }
 
-// PluginHost::hostRunCommand — run a plugin-provided command in the Output panel.
-void Editor::hostRunCommand(const PluginBuildCommand &cmd)
+// PluginHost::hostExeDir — the directory the executable lives in (for locating
+// bundled assets like ue-plugins/). get_module_path() is file-local here.
+std::filesystem::path Editor::hostExeDir() const
 {
-    try
-    {
-        std::string scriptPath = cmd.script.string(); // may throw on a non-ANSI path
-        std::string full = cmd.interpreter.empty()
-                               ? scriptPath
-                               : (cmd.interpreter + " \"" + scriptPath + "\"");
-        runCommandInOutputPanel(full);
-    }
-    catch (const std::exception &)
-    {
-        pushToast("Plugin command has an unrepresentable path", IM_COL32(220, 80, 80, 255), 0);
-    }
+    return get_module_path().parent_path();
 }
 
 void Editor::runProjectBuild()
@@ -2612,7 +2589,7 @@ void Editor::renderNavigationPanel()
             ImGui::Checkbox("Flat view (no folder nesting)", &navFlatFiles);
             ImGui::Checkbox("Wrap project path", &navPathWrap);
             if (!ueSourceDir.empty())
-                ImGui::Checkbox("Show Unreal Engine source", &navShowUeSource);
+                ImGui::Checkbox(("Show " + ueSourceLabel).c_str(), &navShowUeSource);
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -2649,12 +2626,12 @@ void Editor::renderNavigationPanel()
             ImGui::TextDisabled("(folder not found: %s)", root.string().c_str());
         }
 
-        // ── Unreal Engine source ─────────────────────────────────────────────
-        // For UE projects, expose the engine's Source tree as a second root so
-        // engine headers are browsable. Resolving .uproject → engine walks the
-        // filesystem, so memoize per workspace root. The tree is lazy (only an
-        // expanded folder lists its children), so a collapsed node is cheap even
-        // though engine source is huge; hide it entirely via Filters for speed.
+        // ── Plugin-provided extra source root ────────────────────────────────
+        // A project-type plugin (e.g. Unreal) can expose a second read-only root
+        // — the engine's Source tree — so its headers are browsable. Resolving it
+        // walks the filesystem, so memoize per workspace root. The tree is lazy
+        // (an expanded folder lists its children), so a collapsed node is cheap
+        // even for a huge tree; hide it entirely via Filters for speed.
         if (!root.empty())
         {
             std::string rk = root.string();
@@ -2662,25 +2639,21 @@ void Editor::renderNavigationPanel()
             {
                 ueSourceKey = rk;
                 ueSourceDir.clear();
-                std::error_code uec;
-                auto uproj = unreal::findUProject(root);
-                if (!uproj.empty())
+                ueSourceLabel.clear();
+                if (auto extra = pluginRegistry.extraSourceRoot(root))
                 {
-                    std::string assoc;
-                    auto engine = unreal::findEngineRoot(uproj, assoc);
-                    if (!engine.empty())
+                    std::error_code uec;
+                    if (std::filesystem::is_directory(extra->path, uec))
                     {
-                        auto src = engine / "Engine" / "Source";
-                        if (std::filesystem::is_directory(src, uec))
-                            ueSourceDir = src.string();
+                        ueSourceDir = extra->path.string();
+                        ueSourceLabel = extra->label;
                     }
                 }
             }
             if (!ueSourceDir.empty() && navShowUeSource)
             {
                 ImGui::Separator();
-                if (ImGui::TreeNodeEx("Unreal Engine Source",
-                                      ImGuiTreeNodeFlags_SpanAvailWidth))
+                if (ImGui::TreeNodeEx(ueSourceLabel.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
                 {
                     renderDirNode(this, std::filesystem::path(ueSourceDir), 1, navShowDotFiles,
                                   navContextPath, navRenameTarget, navRenameBuf, navPendingDelete);
@@ -10322,26 +10295,17 @@ void Editor::renderDocumentWindow(TabDocument &t)
                         }
                     }
 
-                    // 3.5. Unreal Engine: UE includes are MODULE-relative
-                    // ("GameFramework/Actor.h" lives in Engine/Source/Runtime/
-                    // Engine/Classes/...), so neither the project walk nor the
-                    // system roots can find them. When a .uproject governs this
-                    // doc, resolve against the project's + engine's module
-                    // include roots (Public/Classes/Private), project + engine
-                    // plugins, and UHT-generated headers.
+                    // 3.5. Project-type plugins (e.g. Unreal): UE includes are
+                    // MODULE-relative ("GameFramework/Actor.h" lives in Engine/
+                    // Source/Runtime/Engine/Classes/...), so neither the project
+                    // walk nor the system roots can find them. The plugin resolves
+                    // against its module/plugin/generated include roots.
                     if (!found)
                     {
-                        auto uproj = unreal::findUProject(docDir);
-                        if (!uproj.empty())
+                        if (auto hit = pluginRegistry.resolveInclude(docDir, inc))
                         {
-                            std::string assoc;
-                            auto engine = unreal::findEngineRoot(uproj, assoc);
-                            auto hit = unreal::resolveInclude(engine, uproj, inc);
-                            if (!hit.empty())
-                            {
-                                candidate = hit;
-                                found = true;
-                            }
+                            candidate = *hit;
+                            found = true;
                         }
                     }
 
@@ -11429,91 +11393,8 @@ void Editor::renderMenuBar()
                 runScriptForDoc();
             }
 
-            // ── Unreal Engine (shown when the project has a .uproject) ──────
-            {
-                // Cache the discovery per project root — directory walks + registry
-                // reads shouldn't run per frame while the menu is open.
-                static std::filesystem::path ueCachedRoot = std::filesystem::path("\x01");
-                static std::filesystem::path ueProj, ueEngine;
-                static std::string ueAssoc;
-                if (ueCachedRoot != projectRoot)
-                {
-                    ueCachedRoot = projectRoot;
-                    ueAssoc.clear();
-                    ueProj = projectRoot.empty() ? std::filesystem::path{}
-                                                 : unreal::findUProject(projectRoot);
-                    ueEngine = ueProj.empty() ? std::filesystem::path{}
-                                              : unreal::findEngineRoot(ueProj, ueAssoc);
-                }
-                if (!ueProj.empty() && ImGui::BeginMenu("Unreal Engine"))
-                {
-                    ImGui::TextDisabled("%s  \xc2\xb7  UE %s%s", ueProj.filename().string().c_str(),
-                                        ueAssoc.empty() ? "(source build)" : ueAssoc.c_str(),
-                                        ueEngine.empty() ? "  \xe2\x80\x94 engine NOT found" : "");
-                    ImGui::Separator();
-                    bool haveEngine = !ueEngine.empty();
-                    bool cpp = unreal::hasCppSource(ueProj);
-                    if (ImGui::MenuItem("Build Editor Target", "F6", false, haveEngine && cpp))
-                        runProjectBuild(); // the build resolver picks the UBT command
-                    if (ImGui::MenuItem("Generate IntelliSense DB (clangd)", nullptr, false, haveEngine && cpp))
-                    {
-                        // compile_commands.json lands in the project root; restart
-                        // C/C++ IntelliSense afterwards to pick it up.
-                        runCommandInOutputPanel(unreal::generateClangDbCommand(ueEngine, ueProj),
-                                                ueProj.parent_path());
-                        pushToast("Generating UE compile database \xe2\x80\x94 toggle C/C++ IntelliSense off/on when it finishes",
-                                  IM_COL32(170, 130, 250, 255), 2);
-                    }
-                    if (!cpp)
-                        ImGui::TextDisabled("(Blueprint-only project \xe2\x80\x94 no C++ Source/)");
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Launch Unreal Editor", nullptr, false,
-                                        haveEngine && !unreal::editorBinary(ueEngine).empty()))
-                    {
-                        runCommandInOutputPanel("\"" + unreal::editorBinary(ueEngine).string() + "\" \"" +
-                                                    ueProj.string() + "\"",
-                                                ueProj.parent_path());
-                    }
-                    if (ImGui::MenuItem("Open .uproject"))
-                        openFile(ueProj.string());
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Install IDE plugin into project"))
-                    {
-                        // Copy the bundled source-code-accessor plugin into the game's
-                        // Plugins/ — UE compiles it on next editor start, then ImGui-IDE
-                        // is selectable in Editor Prefs > Source Code.
-                        std::error_code cec;
-                        std::filesystem::path src = get_module_path().parent_path() / "ue-plugins" / "ImGuiIDESourceCodeAccess";
-                        if (!std::filesystem::is_directory(src, cec))
-                        {
-                            auto self = findSelfRepoRoot(); // dev tree fallback
-                            if (!self.empty())
-                                src = self / "tools" / "ue-plugins" / "ImGuiIDESourceCodeAccess";
-                        }
-                        auto dst = ueProj.parent_path() / "Plugins" / "ImGuiIDESourceCodeAccess";
-                        if (!std::filesystem::is_directory(src, cec))
-                            showError("Bundled UE plugin not found next to the executable (ue-plugins/).");
-                        else
-                        {
-                            std::filesystem::create_directories(dst, cec);
-                            std::filesystem::copy(src, dst,
-                                                  std::filesystem::copy_options::recursive |
-                                                      std::filesystem::copy_options::overwrite_existing,
-                                                  cec);
-                            if (cec)
-                                showError("Plugin copy failed: " + cec.message());
-                            else
-                                pushToast("UE plugin installed \xe2\x80\x94 restart Unreal Editor, then pick "
-                                          "ImGui-IDE under Editor Prefs > Source Code",
-                                          IM_COL32(120, 200, 120, 255), 2);
-                        }
-                    }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("Copies the ImGuiIDESourceCodeAccess plugin into %s",
-                                          (ueProj.parent_path() / "Plugins").string().c_str());
-                    ImGui::EndMenu();
-                }
-            }
+            // Project-type plugins (e.g. Unreal) contribute their submenu here.
+            pluginRegistry.menu(*this, PluginMenu::Project);
 
             ImGui::Separator();
             if (ImGui::MenuItem("Open Project..."))
@@ -13795,29 +13676,8 @@ void Editor::buildAutocompleteTrie(TabDocument &t)
     }
     t.editor.IterateIdentifiers([&](const std::string &id) { t.trie.insert(id); });
 
-    // .uproject / .uplugin descriptors: complete the UE schema (keys, module Type /
-    // LoadingPhase values) plus DISCOVERED plugin + module names from the project
-    // and its engine, so dependency/plugin fields complete against what exists.
-    {
-        std::string ext = std::filesystem::path(t.filename).extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(),
-                       [](unsigned char c) { return (char)std::tolower(c); });
-        if (ext == ".uproject" || ext == ".uplugin")
-        {
-            auto docDir = std::filesystem::path(t.filename).parent_path();
-            auto uproj = unreal::findUProject(docDir);
-            std::filesystem::path engine;
-            std::string assoc;
-            if (!uproj.empty())
-                engine = unreal::findEngineRoot(uproj, assoc);
-            auto projDir = uproj.empty() ? docDir : uproj.parent_path();
-            for (const auto &word : unreal::descriptorWords(engine, projDir))
-                t.trie.insert(word);
-        }
-    }
-
     // Plugins contribute language/descriptor-specific completion words (e.g. the
-    // UEVR Lua API for Lua docs).
+    // UEVR Lua API for Lua docs, or UE .uproject/.uplugin schema tokens).
     {
         PluginDocInfo info;
         info.filename = t.filename;

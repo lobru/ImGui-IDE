@@ -86,7 +86,11 @@ class Editor : public PluginHost {
 		return doc().editor.GetCurrentSelectionText();
 	}
 	void hostToast(const std::string &text) override { pushToast(text, IM_COL32(80, 160, 255, 255), 0); }
-	void hostRunCommand(const PluginBuildCommand &cmd) override;
+	void hostError(const std::string &message) override { showError(message); }
+	void hostRunInDir(const std::string &command, const std::filesystem::path &dir) override { runCommandInOutputPanel(command, dir); }
+	void hostRunProjectBuild() override { runProjectBuild(); }
+	std::filesystem::path hostExeDir() const override;                 // exe's directory (get_module_path)
+	std::filesystem::path hostRepoRoot() const override { return findSelfRepoRoot(); }
 	bool hostPanInverted() const override { return prefInvertPan; }
 	bool hostGetFlag(const std::string &key, bool def) const override {
 		auto it = pluginFlags.find(key);
@@ -427,6 +431,10 @@ private:
 	// F6: walk up from the active doc to find a project build script
 	// (build.bat / build.ps1 / build.sh / Makefile / CMakeLists.txt) and run it.
 	void runProjectBuild();
+	// Resolve {path, command} for the project rooted at/above `start`: build
+	// scripts, .sln/.csproj/.vcxproj, CMakeLists, or a plugin project type
+	// (e.g. Unreal). path may be a script file or a directory to cd into.
+	std::pair<std::filesystem::path, std::string> findProjectBuildCommand(std::filesystem::path start);
 
 	// ── LSP (clangd) — real intellisense for C/C++; tree-sitter stays the
 	// instant fallback + Symbols outline. Off unless clangd is found.
@@ -510,10 +518,12 @@ private:
 	bool         navShowUeSource = true;    // UE projects: show the engine Source tree (collapsed; lazy)
 	int          navSetAllOpen   = -1;      // one-shot bulk tree open/close: -1 none, 0 collapse all, 1 expand all
 
-	// Memo for the UE-engine-source nav section — resolving the .uproject → engine
-	// root walks the filesystem, so cache it per workspace root.
+	// Memo for the plugin-provided extra nav source root (e.g. a UE project's
+	// engine Source/ tree) — resolving it walks the filesystem, so cache it per
+	// workspace root. The label comes from the contributing plugin.
 	std::string  ueSourceKey;               // workspace root the cache was computed for
-	std::string  ueSourceDir;               // resolved <engine>/Engine/Source ("" = not a UE project)
+	std::string  ueSourceDir;               // resolved extra source root ("" = none for this project)
+	std::string  ueSourceLabel;             // plugin's label for it (e.g. "Unreal Engine Source")
 	std::unordered_map<std::string, bool> navExcluded; // abs path → true = hidden in tree
 	std::unordered_set<std::string> navSelected;       // canonical abs paths multi-selected in the tree
 	std::string  navClipboardPath;          // last "Copy" target — used by Paste
