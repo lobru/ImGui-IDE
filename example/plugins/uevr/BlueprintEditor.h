@@ -266,6 +266,11 @@ public:
 	bool RemoveVariable(const std::string& name);
 	inline const std::vector<Variable>& GetVariables() const { return variables; }
 
+	// A graph-space position for programmatically-added nodes (e.g. from a sidebar):
+	// near the top-left of the currently visible canvas, cascading so successive
+	// spawns don't stack. Valid once the graph has rendered at least once.
+	ImVec2 NextSpawnPos();
+
 	// build a graph programmatically (all functions return the new node's ID or 0 on failure)
 	ID AddEventNode(const std::string& className, const std::string& eventName, const ImVec2& pos);
 	ID AddCustomEventNode(const std::string& name, const ImVec2& pos);
@@ -476,6 +481,7 @@ private:
 	// view state
 	ImVec2 scrolling = ImVec2(0.0f, 0.0f);
 	float zoom = 1.0f;
+	int spawnCascade = 0; // cascades NextSpawnPos() so sidebar-added nodes don't stack
 	bool showGrid = true;
 	bool contextSensitive = true;
 	bool panInverted = false;

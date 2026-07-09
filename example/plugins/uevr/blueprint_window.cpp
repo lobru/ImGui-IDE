@@ -52,6 +52,112 @@ BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
     return *blueprintEditor;
 }
 
+namespace
+{
+// The basic Lua-typed variables the sidebar can create, in combo order.
+BlueprintEditor::PinType sidebarVarPinType(int idx)
+{
+    using PK = BlueprintEditor::PinKind;
+    switch (idx)
+    {
+    case 0: return BlueprintEditor::PinType(PK::String);
+    case 1: return BlueprintEditor::PinType(PK::Float); // Lua "number"
+    case 2: return BlueprintEditor::PinType(PK::Boolean);
+    case 3: return BlueprintEditor::PinType(PK::Vector);
+    case 4: return BlueprintEditor::PinType(PK::Integer);
+    case 5: return BlueprintEditor::PinType(PK::Object, "UObject");
+    default: return BlueprintEditor::PinType(PK::Wildcard);
+    }
+}
+
+const char *pinKindLabel(BlueprintEditor::PinKind k)
+{
+    using PK = BlueprintEditor::PinKind;
+    switch (k)
+    {
+    case PK::String: return "string";
+    case PK::Float: return "number";
+    case PK::Integer: return "int";
+    case PK::Boolean: return "bool";
+    case PK::Vector: return "vector";
+    case PK::Object: return "object";
+    default: return "?";
+    }
+}
+} // namespace
+
+void UevrPlugin::renderBlueprintSidebar(PluginHost &, BlueprintEditor &bp)
+{
+    ImGui::BeginChild("##bpSidebar", ImVec2(210.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
+
+    // ── UEVR SDK callbacks: click to drop the event node ──────────────────
+    if (ImGui::CollapsingHeader("Callbacks", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        if (const BlueprintEditor::Class *uevrClass = bp.GetRegistry().FindClass("UEVR"))
+        {
+            for (const auto &ev : uevrClass->events)
+            {
+                if (ImGui::Selectable(ev.name.c_str()))
+                    bp.AddEventNode("UEVR", ev.name, bp.NextSpawnPos());
+                if (ImGui::IsItemHovered() && !ev.tooltip.empty())
+                    ImGui::SetTooltip("%s", ev.tooltip.c_str());
+            }
+        }
+    }
+
+    // ── Variables: typed at creation, click Get/Set to drop a node ─────────
+    if (ImGui::CollapsingHeader("Variables", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        if (ImGui::SmallButton("+ Variable"))
+            ImGui::OpenPopup("##addVar");
+
+        if (ImGui::BeginPopup("##addVar"))
+        {
+            ImGui::SetNextItemWidth(150.0f);
+            if (ImGui::IsWindowAppearing())
+                ImGui::SetKeyboardFocusHere();
+            bool enter = ImGui::InputTextWithHint("##vn", "name", sidebarVarName, sizeof(sidebarVarName),
+                                                  ImGuiInputTextFlags_EnterReturnsTrue);
+            const char *types[] = {"String", "Number", "Boolean", "Vector", "Integer", "Object"};
+            ImGui::SetNextItemWidth(150.0f);
+            ImGui::Combo("##vt", &sidebarVarType, types, IM_ARRAYSIZE(types));
+            if ((ImGui::Button("Add") || enter) && sidebarVarName[0])
+            {
+                bp.AddVariable(sidebarVarName, sidebarVarPinType(sidebarVarType), "");
+                sidebarVarName[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::Separator();
+        std::string toRemove;
+        for (const auto &var : bp.GetVariables())
+        {
+            ImGui::PushID(var.name.c_str());
+            ImGui::TextUnformatted(var.name.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s)", pinKindLabel(var.type.kind));
+            if (ImGui::SmallButton("Get"))
+                bp.AddVariableGetNode(var.name, bp.NextSpawnPos());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Set"))
+                bp.AddVariableSetNode(var.name, bp.NextSpawnPos());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x"))
+                toRemove = var.name;
+            ImGui::PopID();
+        }
+        if (!toRemove.empty())
+            bp.RemoveVariable(toRemove);
+
+        if (bp.GetVariables().empty())
+            ImGui::TextDisabled("(no variables yet)");
+    }
+
+    ImGui::EndChild();
+}
+
 void UevrPlugin::renderBlueprintWindow(PluginHost &host)
 {
     if (!blueprintVisible)
@@ -269,6 +375,8 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
             ImGui::EndMenuBar();
         }
 
+        renderBlueprintSidebar(host, bp);
+        ImGui::SameLine();
         bp.Render("BlueprintCanvas");
     }
     ImGui::End();

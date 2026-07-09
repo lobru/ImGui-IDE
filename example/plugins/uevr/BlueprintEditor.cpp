@@ -641,6 +641,16 @@ bool BlueprintEditor::RemoveVariable(const std::string& name) {
 	return false;
 }
 
+ImVec2 BlueprintEditor::NextSpawnPos() {
+	// top-left of the visible canvas (canvasPos is set during Render), cascaded so
+	// repeated sidebar clicks fan out instead of stacking.
+	ImVec2 pos = screenToGraph(ImVec2(canvasPos.x + 40.0f, canvasPos.y + 40.0f));
+	pos.x += static_cast<float>(spawnCascade) * 28.0f;
+	pos.y += static_cast<float>(spawnCascade) * 28.0f;
+	spawnCascade = (spawnCascade + 1) % 8;
+	return pos;
+}
+
 const BlueprintEditor::Variable* BlueprintEditor::findVariable(const std::string& name) const {
 	for (auto& variable : variables) {
 		if (variable.name == name) {

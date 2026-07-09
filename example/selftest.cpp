@@ -1695,6 +1695,32 @@ int main(int argc, char** argv)
 		CHECK(eax != nullptr && eax->values.size() == 4 && eax->values[0] == "X",
 		      "sdk enum lua: enum values captured in order");
 	}
+
+	// ── Variables: typed vars drive Get/Set codegen + round-trip ───────────
+	{
+		using PK = BlueprintEditor::PinKind;
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		CHECK(bp.AddVariable("Health", BlueprintEditor::PinType(PK::Float), "100"), "variables: add typed variable");
+		CHECK(bp.GetVariables().size() == 1 && bp.GetVariables()[0].name == "Health", "variables: variable registered");
+
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto setN = bp.AddVariableSetNode("Health", ImVec2(300, 0));
+		CHECK(setN != 0, "variables: Set node created");
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(setN, "", false));
+		CHECK(BlueprintLua::GenerateScript(bp).find("Health") != std::string::npos,
+		      "variables: variable name appears in generated script");
+
+		CHECK(bp.AddVariableGetNode("Health", ImVec2(0, 200)) != 0, "variables: Get node created");
+
+		std::string saved = bp.SaveToString();
+		BlueprintEditor reloaded;
+		CHECK(reloaded.LoadFromString(saved) && reloaded.GetVariables().size() == 1 &&
+		          reloaded.GetVariables()[0].name == "Health",
+		      "variables: survive save/load");
+
+		CHECK(bp.RemoveVariable("Health") && bp.GetVariables().empty(), "variables: remove");
+	}
 #endif // IMGUIIDE_PLUGIN_UEVR
 
 	if (gFailures == 0) {

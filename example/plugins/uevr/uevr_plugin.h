@@ -43,6 +43,12 @@ private:
     std::string blueprintSnapshot;                    // Graph > Save/Load Snapshot buffer
     void renderBlueprintWindow(PluginHost &host);
 
+    // "My Blueprint"-style left panel: UEVR SDK callbacks + user variables (typed
+    // at creation), click to drop Event / Get / Set nodes onto the canvas.
+    void renderBlueprintSidebar(PluginHost &host, BlueprintEditor &bp);
+    char sidebarVarName[128] = {0};
+    int  sidebarVarType = 0;
+
     // Lazily creates/returns the Blueprint editor. Shared by renderBlueprintWindow and
     // insertLiveValueAsNode so an "insert as node" click works even if the Blueprint
     // window was never opened this session.
