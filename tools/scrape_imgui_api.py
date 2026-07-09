@@ -79,8 +79,8 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "BlueprintImGuiNames.h",
-        help="output header path (default: BlueprintImGuiNames.h next to BlueprintLua.cpp)",
+        default=Path(__file__).resolve().parent.parent / "example" / "plugins" / "uevr" / "BlueprintImGuiNames.h",
+        help="output header path (default: example/plugins/uevr/BlueprintImGuiNames.h, next to BlueprintLua.cpp)",
     )
     args = parser.parse_args()
 

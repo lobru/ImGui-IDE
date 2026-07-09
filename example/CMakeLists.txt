@@ -138,16 +138,16 @@ endif()
 
 if(IMGUIIDE_PLUGIN_UEVR)
 	# BlueprintEditor/BlueprintLua/Import are used ONLY by this plugin, so they
-	# compile into its DLL (not TextEditorLib) — a core build omits them entirely.
+	# live in plugins/uevr and compile into its DLL (not TextEditorLib).
 	imguiide_add_plugin(imguiide_uevr createUevrPlugin
 		plugins/uevr/uevr_plugin.cpp
 		plugins/uevr/blueprint_window.cpp
 		plugins/uevr/blueprint_templates.cpp
 		plugins/uevr/uevr_bridge.cpp
-		../BlueprintEditor.cpp
-		../BlueprintLua.cpp
-		../BlueprintLuaImport.cpp
-		../BlueprintRegistryJson.cpp)
+		plugins/uevr/BlueprintEditor.cpp
+		plugins/uevr/BlueprintLua.cpp
+		plugins/uevr/BlueprintLuaImport.cpp
+		plugins/uevr/BlueprintRegistryJson.cpp)
 	target_include_directories(imguiide_uevr PRIVATE plugins/uevr)
 	target_link_libraries(imguiide_uevr PRIVATE nlohmann_json) # BlueprintRegistryJson parses/emits SDK JSON
 	target_compile_definitions(imguiide_uevr PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
@@ -245,8 +245,9 @@ if(IMGUIIDE_PLUGIN_UNREAL)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
 endif()
 if(IMGUIIDE_PLUGIN_UEVR)
-	target_sources(selftest PRIVATE ../BlueprintEditor.cpp ../BlueprintLua.cpp ../BlueprintLuaImport.cpp
-		../BlueprintRegistryJson.cpp plugins/uevr/blueprint_templates.cpp)
+	target_sources(selftest PRIVATE
+		plugins/uevr/BlueprintEditor.cpp plugins/uevr/BlueprintLua.cpp plugins/uevr/BlueprintLuaImport.cpp
+		plugins/uevr/BlueprintRegistryJson.cpp plugins/uevr/blueprint_templates.cpp)
 	target_include_directories(selftest PRIVATE plugins/uevr)
 	target_link_libraries(selftest PRIVATE nlohmann_json)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
