@@ -226,6 +226,17 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
     ImGui::SameLine();
     if (ImGui::Button("Clear"))
         uevrOutputLog.clear();
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Scripts"))
+    {
+        // Tell the running game to reload all its UEVR Lua scripts (game-side calls
+        // param->functions->reset_lua_scripts). Clears stale globals/hooks/callbacks
+        // left over from earlier Run commands or a since-edited script.
+        uevrOutputLog.push_back("> [reset scripts]");
+        sendUevr("reset", "");
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Reload all UEVR Lua scripts in the running game (like UEVR's own Reset scripts)");
 
     // ── result tabs ───────────────────────────────────────────────────────
     ImGui::Separator();
