@@ -15,6 +15,8 @@
 #pragma once
 
 
+#include <filesystem>
+#include <functional>
 #include <string>
 
 #include "BlueprintEditor.h"
@@ -27,6 +29,21 @@ namespace BlueprintRegistryJson {
 	// Merge the classes + enums described by `jsonText` INTO `registry` (additive:
 	// existing entries are left in place, described ones are appended -- FindClass
 	// keeps first-wins, so import extends the palette rather than replacing it).
+	// Auto-detects the format: this module's own Save() schema, OR a UEVR Class
+	// Browser reflection dump ({classes|scriptstructs:[{name,super,properties,
+	// functions:[{name,flag_names,params:[{name,type,flag_names}]}]}]}, where type
+	// is a UE property-type string and ReturnParm/OutParm flags mark outputs).
 	// Returns false with a human-readable reason in `error` on malformed JSON.
 	bool Load(BlueprintEditor::TypeRegistry& registry, const std::string& jsonText, std::string& error);
+
+	// Parse the enums out of a UE4SS-style Lua annotation file (---@enum Name /
+	// Name = { Key = value, ... }) and add them to the registry. Non-enum content
+	// (---@class annotations, etc.) is ignored. Returns the number of enums added.
+	int LoadEnumLua(BlueprintEditor::TypeRegistry& registry, const std::string& luaText);
+
+	// Recursively load a UEVR sdk_dump directory: every *.json (classes /
+	// scriptstructs) and every enum-bearing *.lua under it. `log` (optional)
+	// receives one line per file loaded / skipped. Returns the class count added.
+	int LoadSdkDir(BlueprintEditor::TypeRegistry& registry, const std::filesystem::path& dir,
+	               const std::function<void(const std::string&)>& log = {});
 }

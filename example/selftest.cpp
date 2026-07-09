@@ -62,8 +62,26 @@ static size_t foldCount(const TextEditor::Language* lang, const std::string& src
 	return ed.GetFoldCount();
 }
 
-int main()
+int main(int argc, char** argv)
 {
+#ifdef IMGUIIDE_PLUGIN_UEVR
+	// Dev helper: `selftest <sdk_dump_dir>` loads a real UEVR SDK dump through the
+	// same importer the plugin uses and reports counts — a headless way to sanity
+	// -check real dumps without launching the app. Exits without running the suite.
+	if (argc > 1) {
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		size_t classesBefore = bp.GetRegistry().GetClasses().size();
+		int added = BlueprintRegistryJson::LoadSdkDir(bp.GetRegistry(), argv[1], {});
+		std::printf("LoadSdkDir(%s): +%d classes; registry now classes=%zu enums=%zu\n",
+		            argv[1], added, bp.GetRegistry().GetClasses().size(), bp.GetRegistry().GetEnums().size());
+		return classesBefore == bp.GetRegistry().GetClasses().size() ? 1 : 0;
+	}
+#else
+	(void)argc;
+	(void)argv;
+#endif
+
 	const int kComment = static_cast<int>(TextEditor::Color::comment);
 
 	// ── Lua comments (regression: block comment opener vs single-line "--") ──
@@ -1595,6 +1613,87 @@ int main()
 		std::string cerr;
 		CHECK(!BlueprintRegistryJson::Load(c.GetRegistry(), "{ not valid", cerr) && !cerr.empty(),
 		      "registry json: malformed input reports an error");
+	}
+
+	// ── SDK import: UEVR Class Browser reflection dump + enum .lua ──────────
+	{
+		// A trimmed slice of a real UEVR classes/*.json reflection dump.
+		std::string dump = R"JSON({
+		  "classes": [
+		    {
+		      "full_name": "Class /Script/IKRig.IKRetargetPinBoneController",
+		      "name": "IKRetargetPinBoneController",
+		      "super": "IKRetargetOpControllerBase",
+		      "properties": [],
+		      "functions": [
+		        {
+		          "name": "SetBonePair",
+		          "flag_names": ["Final","Native","Public","BlueprintCallable"],
+		          "params": [
+		            {"name":"InBoneToCopyFrom","type":"NameProperty","flag_names":["ConstParm","Parm"]},
+		            {"name":"InBoneToCopyTo","type":"NameProperty","flag_names":["ConstParm","Parm"]}
+		          ]
+		        },
+		        {
+		          "name": "GetSettings",
+		          "flag_names": ["Final","Native","Public","BlueprintCallable","BlueprintPure"],
+		          "params": [
+		            {"name":"ReturnValue","type":"StructProperty","flag_names":["Parm","OutParm","ReturnParm"]}
+		          ]
+		        }
+		      ]
+		    }
+		  ]
+		})JSON";
+
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		size_t before = bp.GetRegistry().GetClasses().size();
+		std::string err;
+		CHECK(BlueprintRegistryJson::Load(bp.GetRegistry(), dump, err), "sdk dump: UEVR reflection dump imports");
+		CHECK(bp.GetRegistry().GetClasses().size() == before + 1, "sdk dump: adds the dumped class");
+
+		const auto* cls = bp.GetRegistry().FindClass("IKRetargetPinBoneController");
+		CHECK(cls != nullptr && cls->parentName == "IKRetargetOpControllerBase", "sdk dump: class parent (super) mapped");
+
+		const auto* setPair = bp.GetRegistry().FindFunction("IKRetargetPinBoneController", "SetBonePair");
+		int inCount = 0, outCount = 0;
+		if (setPair)
+			for (auto& p : setPair->parameters)
+				(p.isOutput ? outCount : inCount)++;
+		CHECK(setPair != nullptr && inCount == 2 && outCount == 0, "sdk dump: input params mapped, no phantom outputs");
+
+		const auto* getSettings = bp.GetRegistry().FindFunction("IKRetargetPinBoneController", "GetSettings");
+		bool hasReturn = false;
+		if (getSettings)
+			for (auto& p : getSettings->parameters)
+				if (p.isOutput)
+					hasReturn = true;
+		CHECK(getSettings != nullptr && getSettings->isPure, "sdk dump: BlueprintPure -> pure node");
+		CHECK(hasReturn, "sdk dump: ReturnParm -> Return Value output");
+
+		CHECK(bp.AddCallFunctionNode("IKRetargetPinBoneController", "SetBonePair", ImVec2(0, 0)) != 0,
+		      "sdk dump: imported function spawns a node");
+
+		// Enum .lua (UE4SS annotation) parsing; the ---@class line must be ignored.
+		std::string enumLua =
+			"---@meta\n"
+			"---@enum EAxis\n"
+			"EAxis = {\n"
+			"    X = 1,\n"
+			"    Y = 2,\n"
+			"    Z = 3,\n"
+			"    EAxis_MAX = 4,\n"
+			"}\n"
+			"---@class Actor : Object\n"
+			"Actor = {}\n";
+		size_t enumsBefore = bp.GetRegistry().GetEnums().size();
+		int added = BlueprintRegistryJson::LoadEnumLua(bp.GetRegistry(), enumLua);
+		CHECK(added == 1, "sdk enum lua: exactly one enum parsed (class annotation ignored)");
+		CHECK(bp.GetRegistry().GetEnums().size() == enumsBefore + 1, "sdk enum lua: enum added to registry");
+		const auto* eax = bp.GetRegistry().FindEnum("EAxis");
+		CHECK(eax != nullptr && eax->values.size() == 4 && eax->values[0] == "X",
+		      "sdk enum lua: enum values captured in order");
 	}
 #endif // IMGUIIDE_PLUGIN_UEVR
 

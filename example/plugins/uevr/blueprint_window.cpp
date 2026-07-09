@@ -8,8 +8,12 @@
 //  the canvas pan honors the host's invert-pan setting.
 //
 
+#define _CRT_SECURE_NO_WARNINGS // std::getenv("APPDATA") for the Import Game SDK menu
+
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <string>
 #include <system_error>
 
 #include <imgui.h>
@@ -24,26 +28,12 @@
 
 void UevrPlugin::loadSdkDefinitions(BlueprintEditor &bp)
 {
-    // Merge every <exe>/sdk/*.json API definition into the registry at create time.
-    // Malformed files are skipped (these are optional user-supplied SDK dumps); the
-    // interactive Import path surfaces parse errors to the user instead.
-    std::error_code ec;
-    if (sdkDir.empty() || !std::filesystem::is_directory(sdkDir, ec))
-        return;
-
-    // Non-throwing iteration (directory_iterator's range-for operator++ throws even
-    // when constructed with an error_code — see plugin_loader.cpp).
-    for (auto it = std::filesystem::directory_iterator(sdkDir, ec);
-         !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
-    {
-        std::error_code fec;
-        if (!it->is_regular_file(fec) || fec || it->path().extension() != ".json")
-            continue;
-        std::ifstream in(it->path(), std::ios::binary);
-        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        std::string error;
-        BlueprintRegistryJson::Load(bp.GetRegistry(), text, error);
-    }
+    // Merge the whole <exe>/sdk tree into the registry at create time: this module's
+    // own exported JSON, and dropped-in UEVR sdk_dump trees (classes/*.json +
+    // enums/*.lua). LoadSdkDir is recursive and non-throwing; malformed files are
+    // skipped (optional data — the interactive Import path surfaces errors instead).
+    if (!sdkDir.empty())
+        BlueprintRegistryJson::LoadSdkDir(bp.GetRegistry(), sdkDir);
 }
 
 BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
@@ -139,19 +129,65 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                 ImGui::Separator();
                 if (ImGui::MenuItem("Import SDK (Active Doc)"))
                 {
-                    // Merge a JSON API definition (open in the editor) into the live
-                    // registry — the palette rebuilds from it on its next open.
+                    // Merge the active document into the live registry — the palette
+                    // rebuilds from it on next open. Accepts this module's own JSON,
+                    // a UEVR reflection dump (.json), or a UE4SS enum annotation (.lua).
                     std::string text = host.hostActiveText();
+                    size_t firstNonSpace = text.find_first_not_of(" \t\r\n");
                     std::string error;
-                    if (text.empty())
-                        host.hostToast("Open an SDK .json in the editor first, then import it");
-                    else if (!BlueprintRegistryJson::Load(bp.GetRegistry(), text, error))
-                        host.hostError("SDK import failed: " + error);
+                    if (firstNonSpace == std::string::npos)
+                        host.hostToast("Open an SDK .json (or enum .lua) in the editor first, then import it");
+                    else if (text[firstNonSpace] == '{')
+                    {
+                        if (!BlueprintRegistryJson::Load(bp.GetRegistry(), text, error))
+                            host.hostError("SDK import failed: " + error);
+                        else
+                            host.hostToast("Imported SDK nodes into the palette");
+                    }
+                    else if (text.find("---@enum") != std::string::npos)
+                    {
+                        int n = BlueprintRegistryJson::LoadEnumLua(bp.GetRegistry(), text);
+                        host.hostToast("Imported " + std::to_string(n) + " enum(s) into the palette");
+                    }
                     else
-                        host.hostToast("Imported SDK nodes into the palette");
+                        host.hostError("Unrecognized SDK document (expected a JSON dump or a ---@enum .lua)");
                 }
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Merge a JSON API definition (the active document) into the node palette at runtime");
+                    ImGui::SetTooltip("Merge the active document (JSON dump or enum .lua) into the node palette at runtime");
+                if (const char *appdata = std::getenv("APPDATA"))
+                {
+                    // Import a game's dumped SDK straight from where UEVR writes it:
+                    // %APPDATA%/UnrealVRMod/<game>/sdk_dump.
+                    std::filesystem::path uevrRoot = std::filesystem::path(appdata) / "UnrealVRMod";
+                    std::error_code uec;
+                    if (std::filesystem::is_directory(uevrRoot, uec) && ImGui::BeginMenu("Import Game SDK"))
+                    {
+                        int shown = 0;
+                        std::error_code iec;
+                        for (auto git = std::filesystem::directory_iterator(
+                                 uevrRoot, std::filesystem::directory_options::skip_permission_denied, iec);
+                             !iec && git != std::filesystem::directory_iterator() && shown < 100; git.increment(iec))
+                        {
+                            std::error_code dec;
+                            if (!git->is_directory(dec) || dec)
+                                continue;
+                            std::filesystem::path dump = git->path() / "sdk_dump";
+                            std::error_code sec;
+                            if (!std::filesystem::is_directory(dump, sec))
+                                continue;
+                            std::string game = git->path().filename().string();
+                            if (ImGui::MenuItem(game.c_str()))
+                            {
+                                int n = BlueprintRegistryJson::LoadSdkDir(bp.GetRegistry(), dump);
+                                host.hostToast("Imported " + std::to_string(n) + " classes from " + game);
+                            }
+                            ++shown;
+                        }
+                        if (shown == 0)
+                            ImGui::TextDisabled("(no <game>/sdk_dump found)");
+                        ImGui::EndMenu();
+                    }
+                }
                 if (ImGui::MenuItem("Export API to sdk/uevr_api.json"))
                 {
                     // Dump the live API to editable JSON: edit it and re-import, or
