@@ -49,6 +49,14 @@ private:
     char sidebarVarName[128] = {0};
     int  sidebarVarType = 0;
 
+    // Autosave + crash recovery: the dirty graph is periodically written to a tmp
+    // file; on first open, if one is found (e.g. after a crash) recovery is offered.
+    std::filesystem::path blueprintAutosavePath() const; // <temp>/ImGuiIDE/blueprint_autosave.bp
+    void autosaveBlueprint();
+    double      nextBlueprintAutosave = 0.0;
+    bool        blueprintRecoveryAvailable = false;
+    std::string blueprintRecoveryData;
+
     // Lazily creates/returns the Blueprint editor. Shared by renderBlueprintWindow and
     // insertLiveValueAsNode so an "insert as node" click works even if the Blueprint
     // window was never opened this session.

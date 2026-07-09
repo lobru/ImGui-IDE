@@ -48,8 +48,41 @@ BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
         BlueprintLua::SetupUEVRRegistry(*blueprintEditor);
         loadSdkDefinitions(*blueprintEditor); // merge any <exe>/sdk/*.json SDK dumps
         blueprintEditor->SetBlueprint("UEVRScript", "UEVR");
+
+        // Offer to restore an autosave from a previous (possibly crashed) session.
+        std::error_code ec;
+        auto path = blueprintAutosavePath();
+        if (std::filesystem::exists(path, ec) && std::filesystem::file_size(path, ec) > 0)
+        {
+            std::ifstream in(path, std::ios::binary);
+            blueprintRecoveryData.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            blueprintRecoveryAvailable = !blueprintRecoveryData.empty();
+        }
     }
     return *blueprintEditor;
+}
+
+std::filesystem::path UevrPlugin::blueprintAutosavePath() const
+{
+    std::error_code ec;
+    std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / "ImGuiIDE";
+    std::filesystem::create_directories(dir, ec);
+    return dir / "blueprint_autosave.bp";
+}
+
+void UevrPlugin::autosaveBlueprint()
+{
+    if (!blueprintEditor)
+        return;
+    double now = ImGui::GetTime();
+    if (now < nextBlueprintAutosave)
+        return;
+    nextBlueprintAutosave = now + 15.0; // ~every 15s while there are unsaved edits
+    if (!blueprintEditor->IsDirty())
+        return;
+    std::ofstream out(blueprintAutosavePath(), std::ios::binary | std::ios::trunc);
+    if (out)
+        out << blueprintEditor->SaveToString();
 }
 
 namespace
@@ -375,9 +408,31 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
             ImGui::EndMenuBar();
         }
 
+        if (blueprintRecoveryAvailable)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 200, 90, 255));
+            ImGui::TextUnformatted("\xe2\x9a\xa0 Autosave from a previous session found.");
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Recover"))
+            {
+                bp.LoadFromString(blueprintRecoveryData);
+                blueprintRecoveryAvailable = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Discard"))
+            {
+                std::error_code ec;
+                std::filesystem::remove(blueprintAutosavePath(), ec);
+                blueprintRecoveryAvailable = false;
+            }
+            ImGui::Separator();
+        }
+
         renderBlueprintSidebar(host, bp);
         ImGui::SameLine();
         bp.Render("BlueprintCanvas");
+        autosaveBlueprint(); // periodic tmp-file autosave while dirty
     }
     ImGui::End();
 }
