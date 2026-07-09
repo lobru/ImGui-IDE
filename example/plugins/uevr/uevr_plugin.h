@@ -30,6 +30,7 @@ public:
     const char *id() const override { return "uevr"; }
     const char *displayName() const override { return "UEVR / Blueprint tools"; }
 
+    void onRegister(PluginHost &host) override;
     void onFrame(PluginHost &host) override;
     void onMenu(PluginHost &host, PluginMenu which) override;
     void contributeAutocomplete(PluginHost &host, const PluginDocInfo &doc,
@@ -46,6 +47,15 @@ private:
     // insertLiveValueAsNode so an "insert as node" click works even if the Blueprint
     // window was never opened this session.
     BlueprintEditor &ensureBlueprintEditor();
+
+    // ── Data-driven SDK registry ────────────────────────────────────────────
+    // <exe>/sdk holds optional JSON API definitions (see BlueprintRegistryJson).
+    // Any *.json there is merged into the node registry at editor-create time, so
+    // dropping in a game's SDK dump adds its nodes without a rebuild. sdkDir is
+    // captured in onRegister; the Blueprint window's Graph menu also imports the
+    // active document and exports the live API here.
+    std::filesystem::path sdkDir;
+    void loadSdkDefinitions(BlueprintEditor &bp); // merge every sdkDir/*.json
 
     // ── UEVR Live bridge (file-inbox IPC) ──────────────────────────────────
     bool uevrLiveVisible = false;

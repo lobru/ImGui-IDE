@@ -8,14 +8,43 @@
 //  the canvas pan honors the host's invert-pan setting.
 //
 
+#include <fstream>
+#include <iterator>
+#include <system_error>
+
 #include <imgui.h>
 
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
 #include "BlueprintLuaImport.h"
+#include "BlueprintRegistryJson.h"
 #include "blueprint_templates.h"
 
 #include "uevr_plugin.h"
+
+void UevrPlugin::loadSdkDefinitions(BlueprintEditor &bp)
+{
+    // Merge every <exe>/sdk/*.json API definition into the registry at create time.
+    // Malformed files are skipped (these are optional user-supplied SDK dumps); the
+    // interactive Import path surfaces parse errors to the user instead.
+    std::error_code ec;
+    if (sdkDir.empty() || !std::filesystem::is_directory(sdkDir, ec))
+        return;
+
+    // Non-throwing iteration (directory_iterator's range-for operator++ throws even
+    // when constructed with an error_code — see plugin_loader.cpp).
+    for (auto it = std::filesystem::directory_iterator(sdkDir, ec);
+         !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+    {
+        std::error_code fec;
+        if (!it->is_regular_file(fec) || fec || it->path().extension() != ".json")
+            continue;
+        std::ifstream in(it->path(), std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string error;
+        BlueprintRegistryJson::Load(bp.GetRegistry(), text, error);
+    }
+}
 
 BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
 {
@@ -27,6 +56,7 @@ BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
     {
         blueprintEditor = std::make_unique<BlueprintEditor>();
         BlueprintLua::SetupUEVRRegistry(*blueprintEditor);
+        loadSdkDefinitions(*blueprintEditor); // merge any <exe>/sdk/*.json SDK dumps
         blueprintEditor->SetBlueprint("UEVRScript", "UEVR");
     }
     return *blueprintEditor;
@@ -106,6 +136,42 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Send the active document to Claude to restructure/clean/port when structural import can't");
+                ImGui::Separator();
+                if (ImGui::MenuItem("Import SDK (Active Doc)"))
+                {
+                    // Merge a JSON API definition (open in the editor) into the live
+                    // registry — the palette rebuilds from it on its next open.
+                    std::string text = host.hostActiveText();
+                    std::string error;
+                    if (text.empty())
+                        host.hostToast("Open an SDK .json in the editor first, then import it");
+                    else if (!BlueprintRegistryJson::Load(bp.GetRegistry(), text, error))
+                        host.hostError("SDK import failed: " + error);
+                    else
+                        host.hostToast("Imported SDK nodes into the palette");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Merge a JSON API definition (the active document) into the node palette at runtime");
+                if (ImGui::MenuItem("Export API to sdk/uevr_api.json"))
+                {
+                    // Dump the live API to editable JSON: edit it and re-import, or
+                    // leave it in sdk/ to auto-load on the next launch.
+                    std::error_code ec;
+                    std::filesystem::create_directories(sdkDir, ec);
+                    std::filesystem::path path = sdkDir / "uevr_api.json";
+                    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+                    if (out)
+                    {
+                        out << BlueprintRegistryJson::Save(bp.GetRegistry());
+                        out.close();
+                        host.hostOpenFile(path.string());
+                        host.hostToast("Exported API to " + path.string());
+                    }
+                    else
+                        host.hostError("Could not write " + path.string());
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Dump the live node API to editable JSON (data-driven: edit it, then Import, or drop files into sdk/)");
                 ImGui::EndMenu();
             }
 

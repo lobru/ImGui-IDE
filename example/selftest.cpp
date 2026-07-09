@@ -29,6 +29,7 @@
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
 #include "BlueprintLuaImport.h"
+#include "BlueprintRegistryJson.h"
 #include "blueprint_templates.h"
 #endif
 
@@ -1559,6 +1560,41 @@ int main()
 		std::string p = BlueprintLua::GenerateScript(pawn);
 		CHECK(p.find("get_local_pawn") != std::string::npos && p.find("get_full_name") != std::string::npos,
 		      "template log-pawn: data links carry pawn:get_full_name() into print");
+	}
+
+	// ── Registry JSON: data-driven API export/import round-trips ────────────
+	{
+		BlueprintEditor a;
+		BlueprintLua::SetupUEVRRegistry(a);
+		std::string js = BlueprintRegistryJson::Save(a.GetRegistry());
+		CHECK(js.find("UEVR_API") != std::string::npos && js.find("on_pre_engine_tick") != std::string::npos,
+		      "registry json: save emits class names + metadata");
+
+		BlueprintEditor b;
+		b.GetRegistry().Clear(); // start empty so counts compare exactly
+		std::string error;
+		CHECK(BlueprintRegistryJson::Load(b.GetRegistry(), js, error), "registry json: reloads without error");
+		CHECK(a.GetRegistry().GetClasses().size() == b.GetRegistry().GetClasses().size(),
+		      "registry json: class count round-trips");
+		CHECK(a.GetRegistry().GetEnums().size() == b.GetRegistry().GetEnums().size(),
+		      "registry json: enum count round-trips");
+
+		const auto* pf = b.GetRegistry().FindFunction("UEVR_API", "Print");
+		CHECK(pf != nullptr && pf->metadata.find("print(") != std::string::npos,
+		      "registry json: function metadata (Lua template) round-trips");
+
+		// The reloaded registry must still drive codegen identically.
+		auto tick = b.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto print = b.AddCallFunctionNode("UEVR_API", "Print", ImVec2(300, 0));
+		b.AddLink(b.FindPinID(tick, "", true), b.FindPinID(print, "", false));
+		std::string script = BlueprintLua::GenerateScript(b);
+		CHECK(script.find("uevr.sdk.callbacks.on_pre_engine_tick") != std::string::npos && script.find("print(") != std::string::npos,
+		      "registry json: reloaded registry generates the same script");
+
+		BlueprintEditor c;
+		std::string cerr;
+		CHECK(!BlueprintRegistryJson::Load(c.GetRegistry(), "{ not valid", cerr) && !cerr.empty(),
+		      "registry json: malformed input reports an error");
 	}
 #endif // IMGUIIDE_PLUGIN_UEVR
 

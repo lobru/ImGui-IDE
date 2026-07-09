@@ -146,8 +146,10 @@ if(IMGUIIDE_PLUGIN_UEVR)
 		plugins/uevr/uevr_bridge.cpp
 		../BlueprintEditor.cpp
 		../BlueprintLua.cpp
-		../BlueprintLuaImport.cpp)
+		../BlueprintLuaImport.cpp
+		../BlueprintRegistryJson.cpp)
 	target_include_directories(imguiide_uevr PRIVATE plugins/uevr)
+	target_link_libraries(imguiide_uevr PRIVATE nlohmann_json) # BlueprintRegistryJson parses/emits SDK JSON
 	target_compile_definitions(imguiide_uevr PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
 endif()
 
@@ -231,8 +233,9 @@ if(IMGUIIDE_PLUGIN_UNREAL)
 endif()
 if(IMGUIIDE_PLUGIN_UEVR)
 	target_sources(selftest PRIVATE ../BlueprintEditor.cpp ../BlueprintLua.cpp ../BlueprintLuaImport.cpp
-		plugins/uevr/blueprint_templates.cpp)
+		../BlueprintRegistryJson.cpp plugins/uevr/blueprint_templates.cpp)
 	target_include_directories(selftest PRIVATE plugins/uevr)
+	target_link_libraries(selftest PRIVATE nlohmann_json)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
 endif()
 target_compile_options(selftest PRIVATE

@@ -25,6 +25,13 @@ std::unique_ptr<EditorPlugin> createUevrPlugin()
     return std::make_unique<UevrPlugin>();
 }
 
+void UevrPlugin::onRegister(PluginHost &host)
+{
+    // Remember where startup/imported SDK definitions live so ensureBlueprintEditor
+    // can merge them and the Graph menu can export back to the same folder.
+    sdkDir = host.hostExeDir() / "sdk";
+}
+
 void UevrPlugin::onFrame(PluginHost &host)
 {
     renderBlueprintWindow(host);
