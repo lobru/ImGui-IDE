@@ -161,7 +161,11 @@ endif()
 
 # Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
 # build scripts / object paths are unchanged) — only the produced file is renamed.
-set_target_properties(example PROPERTIES OUTPUT_NAME "ImGui-IDE")
+# Overridable so a dev/test build can emit a different file (e.g.
+# -DIMGUIIDE_EXE_NAME=ImGui-IDE-run) and never have to overwrite — or wait on — a
+# separately-running ImGui-IDE.exe.
+set(IMGUIIDE_EXE_NAME "ImGui-IDE" CACHE STRING "Base name of the produced app executable")
+set_target_properties(example PROPERTIES OUTPUT_NAME "${IMGUIIDE_EXE_NAME}")
 
 # The example executable owns main(); the editor library doesn't.
 target_compile_definitions(example PRIVATE STANDALONE=1)
