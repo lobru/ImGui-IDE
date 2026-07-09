@@ -3542,7 +3542,12 @@ bool BlueprintEditor::paletteActionMatchesPin(const PaletteAction& paletteAction
 //
 
 void BlueprintEditor::renderGraphContextMenu() {
-	ImGui::SetNextWindowSizeConstraints(ImVec2(340.0f, 0.0f), ImVec2(FLT_MAX, FLT_MAX));
+	// Fixed width. This popup right-aligns its "Context Sensitive" checkbox relative to the
+	// content region; in an auto-resizing window (max width FLT_MAX) that feeds the window's
+	// own width back into its content, so the checkbox's right edge lands a few px past the
+	// current width and the menu grows every frame without limit until it's unusable. Pinning
+	// min == max removes the free dimension and breaks the loop.
+	ImGui::SetNextWindowSizeConstraints(ImVec2(460.0f, 0.0f), ImVec2(460.0f, FLT_MAX));
 
 	if (ImGui::BeginPopup("##BlueprintGraphMenu")) {
 		const Pin* pending = findPin(pendingLinkPin);
@@ -3554,7 +3559,8 @@ void BlueprintEditor::renderGraphContextMenu() {
 			ImGui::TextDisabled("All Actions for this Blueprint");
 		}
 
-		ImGui::SameLine(ImGui::GetContentRegionAvail().x - 110.0f);
+		float checkboxWidth = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize("Context Sensitive").x;
+		ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x - checkboxWidth));
 		ImGui::Checkbox("Context Sensitive", &contextSensitive);
 
 		if (paletteFocusSearch) {
