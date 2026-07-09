@@ -196,7 +196,8 @@ public:
 		VariableSet,
 		FlowControl,
 		Reroute,
-		Comment
+		Comment,
+		CustomLua
 	};
 
 	struct Pin {
@@ -220,8 +221,9 @@ public:
 		std::string subtitle;
 		bool pure = false;
 		ImVec2 pos;                             // graph space
-		ImVec2 commentSize = ImVec2(0.0f, 0.0f); // comments only, graph space
+		ImVec2 commentSize = ImVec2(0.0f, 0.0f); // comments and CustomLua nodes only, graph space
 		std::vector<Pin> pins;
+		std::string customCode; // CustomLua nodes only: the node's hand-written Lua source
 
 		// runtime state (managed by the editor while rendering)
 		ImVec2 size; // graph space, computed during rendering
@@ -275,9 +277,20 @@ public:
 	ID AddFlowControlNode(const std::string& name, const ImVec2& pos); // "Branch", "Sequence", "For Loop", ...
 	ID AddRerouteNode(const PinType& type, const ImVec2& pos);
 	ID AddCommentNode(const std::string& text, const ImVec2& pos, const ImVec2& size);
+	ID AddCustomLuaNode(const ImVec2& pos); // exec in/out only, empty source, no dynamic pins
+
+	// CustomLua node mutators: the shared surface used both by the in-editor UI and by
+	// external code (e.g. a bridge plugin) that wants to insert a live value as a node
+	bool SetCustomLuaSource(ID node, const std::string& source);                     // false if node isn't kind CustomLua
+	ID AddCustomLuaPin(ID node, bool isOutput, const std::string& name = "");        // adds a Wildcard data pin; 0 on failure
+	bool RemoveCustomLuaPin(ID node, ID pin);                                        // false if pin isn't a dynamic data pin on that node
 
 	// find a pin on a node by name and direction (returns 0 when not found)
 	ID FindPinID(ID node, const std::string& pinName, bool isOutput) const;
+
+	// set an existing pin's default value directly (e.g. for programmatic graph
+	// construction); false if the pin doesn't exist
+	bool SetPinDefaultValue(ID pin, const std::string& value);
 
 	// create/remove connections (AddLink validates like the interactive editor does)
 	bool AddLink(ID fromPin, ID toPin);
@@ -412,6 +425,7 @@ private:
 	void renderNode(Node& node);
 	void renderCommentNode(Node& node);
 	void renderRerouteNode(Node& node);
+	void renderCustomLuaNode(Node& node);
 	void renderDefaultEditor(Pin& pin, const ImVec2& pos, float width);
 	float defaultEditorWidth(const Pin& pin) const;
 	bool pinHasDefaultEditor(const Pin& pin) const;

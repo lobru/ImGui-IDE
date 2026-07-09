@@ -12,23 +12,31 @@
 
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
+#include "BlueprintLuaImport.h"
 
 #include "uevr_plugin.h"
 
-void UevrPlugin::renderBlueprintWindow(PluginHost &host)
+BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
 {
-    if (!blueprintVisible)
-        return;
-
-    // Lazily create the widget on first show and seed it with the UEVR Lua API
-    // (this also sets the blueprint parent class to "UEVR").
+    // Lazily create the widget on first use and seed it with the UEVR Lua API (this also
+    // sets the blueprint parent class to "UEVR"). Shared by the window itself and by
+    // insertLiveValueAsNode, so an "insert as node" click works even if the Blueprint
+    // window was never opened this session.
     if (!blueprintEditor)
     {
         blueprintEditor = std::make_unique<BlueprintEditor>();
         BlueprintLua::SetupUEVRRegistry(*blueprintEditor);
         blueprintEditor->SetBlueprint("UEVRScript", "UEVR");
     }
-    auto &bp = *blueprintEditor;
+    return *blueprintEditor;
+}
+
+void UevrPlugin::renderBlueprintWindow(PluginHost &host)
+{
+    if (!blueprintVisible)
+        return;
+
+    auto &bp = ensureBlueprintEditor();
     bp.SetPanInverted(host.hostPanInverted()); // every pan surface honors the app setting
 
     ImGui::SetNextWindowSize(ImVec2(1100.0f, 680.0f), ImGuiCond_FirstUseEver);
@@ -45,6 +53,20 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                     blueprintSnapshot = bp.SaveToString();
                 if (ImGui::MenuItem("Load Snapshot", nullptr, nullptr, !blueprintSnapshot.empty()))
                     bp.LoadFromString(blueprintSnapshot);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Import Lua (Active Doc)"))
+                {
+                    std::string source = host.hostActiveText();
+                    std::string error;
+                    if (source.empty())
+                        host.hostToast("No active document to import");
+                    else if (!BlueprintLuaImport::ImportScript(bp, source, error))
+                        host.hostError("Import failed: " + error);
+                    else
+                        host.hostToast("Imported Lua into the graph");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Best-effort: recognized statements become nodes, everything else becomes a Custom Lua node");
                 ImGui::EndMenu();
             }
 

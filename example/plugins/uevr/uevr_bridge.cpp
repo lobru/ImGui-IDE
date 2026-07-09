@@ -26,7 +26,60 @@
 
 #include <imgui.h>
 
+#include "BlueprintEditor.h"
 #include "uevr_plugin.h"
+
+namespace
+{
+// The inspect/watch wire format is "name\ttype\tvalue" rows (see tools/uevr-bridge's
+// handle_cmd): detect it as "every non-empty line has exactly 2 tabs" so the panel can
+// render a real table instead of a text blob, with no protocol version tag needed --
+// both halves of the bridge ship from the same repo.
+struct BridgeRow
+{
+    std::string name, type, value;
+};
+
+bool looksTabDelimited(const std::string &text)
+{
+    if (text.empty())
+        return false;
+    std::istringstream ss(text);
+    std::string line;
+    bool any = false;
+    while (std::getline(ss, line))
+    {
+        if (line.empty())
+            continue;
+        any = true;
+        if (std::count(line.begin(), line.end(), '\t') != 2)
+            return false;
+    }
+    return any;
+}
+
+std::vector<BridgeRow> parseTabDelimited(const std::string &text)
+{
+    std::vector<BridgeRow> rows;
+    std::istringstream ss(text);
+    std::string line;
+    while (std::getline(ss, line))
+    {
+        if (line.empty())
+            continue;
+        auto t1 = line.find('\t');
+        auto t2 = (t1 == std::string::npos) ? std::string::npos : line.find('\t', t1 + 1);
+        if (t1 == std::string::npos || t2 == std::string::npos)
+            continue;
+        BridgeRow row;
+        row.name = line.substr(0, t1);
+        row.type = line.substr(t1 + 1, t2 - t1 - 1);
+        row.value = line.substr(t2 + 1);
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+} // namespace
 
 std::filesystem::path UevrPlugin::uevrBridgeDir(const char *sub) const
 {
@@ -92,6 +145,24 @@ void UevrPlugin::pollUevrBridge()
             uevrModules = body;
         else if (kind == "inspect")
             uevrInspect = body;
+        else if (kind == "watch")
+        {
+            // response is one "type\tpreview" line per expression, in the same order
+            // uevrWatches was sent in -- order is the correlation key
+            std::istringstream ss(body);
+            std::string line;
+            size_t i = 0;
+            while (std::getline(ss, line) && i < uevrWatches.size())
+            {
+                auto tab = line.find('\t');
+                if (tab != std::string::npos)
+                {
+                    uevrWatches[i].type = line.substr(0, tab);
+                    uevrWatches[i].preview = line.substr(tab + 1);
+                }
+                ++i;
+            }
+        }
         else // "run" (and anything else) → the output log
         {
             std::istringstream ss(body);
@@ -195,8 +266,107 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
             ImGui::SameLine();
             if (ImGui::Button("Inspect") && uevrInspectBuf[0])
                 sendUevr("inspect", uevrInspectBuf);
+
             ImGui::BeginChild("##uevrInspect", ImVec2(0, 0), ImGuiChildFlags_Borders);
-            ImGui::TextUnformatted(uevrInspect.empty() ? "(evaluate an expression against the running game)" : uevrInspect.c_str());
+            if (uevrInspect.empty())
+            {
+                ImGui::TextUnformatted("(evaluate an expression against the running game)");
+            }
+            else if (looksTabDelimited(uevrInspect))
+            {
+                auto rows = parseTabDelimited(uevrInspect);
+                if (ImGui::BeginTable("##uevrInspectTable", 4,
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
+                {
+                    ImGui::TableSetupColumn("Name");
+                    ImGui::TableSetupColumn("Type");
+                    ImGui::TableSetupColumn("Value");
+                    ImGui::TableSetupColumn("##ins", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+                    ImGui::TableHeadersRow();
+                    for (size_t i = 0; i < rows.size(); ++i)
+                    {
+                        auto &row = rows[i];
+                        ImGui::PushID(static_cast<int>(i));
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(row.name.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(row.type.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(row.value.c_str());
+                        ImGui::TableNextColumn();
+                        if (ImGui::SmallButton("ins") && !row.name.empty())
+                            insertLiveValueAsNode(std::string(uevrInspectBuf) + "[\"" + row.name + "\"]", row.name);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Insert a Custom Lua node reading this property");
+                        ImGui::PopID();
+                    }
+                    ImGui::EndTable();
+                }
+            }
+            else
+            {
+                ImGui::TextUnformatted(uevrInspect.c_str());
+            }
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Watch"))
+        {
+            ImGui::SetNextItemWidth(-70.0f);
+            bool addNow = ImGui::InputText("##uevrWatchExpr", uevrWatchExprBuf, sizeof(uevrWatchExprBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if ((ImGui::Button("Add") || addNow) && uevrWatchExprBuf[0])
+            {
+                uevrWatches.push_back(WatchEntry{uevrWatchExprBuf, "", ""});
+                sendWatchBatch();
+            }
+
+            static double nextWatchSend = 0.0;
+            double now = ImGui::GetTime();
+            if (!uevrWatches.empty() && now >= nextWatchSend)
+            {
+                nextWatchSend = now + 1.0; // its own ~1 Hz cadence, separate from pollUevrBridge's 0.2s poll timer
+                sendWatchBatch();
+            }
+
+            ImGui::BeginChild("##uevrWatch", ImVec2(0, 0), ImGuiChildFlags_Borders);
+            if (uevrWatches.empty())
+            {
+                ImGui::TextUnformatted("(add an expression to watch it live, refreshed ~1x/sec)");
+            }
+            else if (ImGui::BeginTable("##uevrWatchTable", 4,
+                         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
+            {
+                ImGui::TableSetupColumn("Expression");
+                ImGui::TableSetupColumn("Type");
+                ImGui::TableSetupColumn("Value");
+                ImGui::TableSetupColumn("##rm", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                ImGui::TableHeadersRow();
+                int removeIndex = -1;
+                for (size_t i = 0; i < uevrWatches.size(); ++i)
+                {
+                    auto &w = uevrWatches[i];
+                    ImGui::PushID(static_cast<int>(i));
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(w.expr.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(w.type.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(w.preview.c_str());
+                    ImGui::TableNextColumn();
+                    if (ImGui::SmallButton("ins"))
+                        insertLiveValueAsNode(w.expr, w.expr);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("x"))
+                        removeIndex = static_cast<int>(i);
+                    ImGui::PopID();
+                }
+                if (removeIndex >= 0)
+                    uevrWatches.erase(uevrWatches.begin() + removeIndex);
+                ImGui::EndTable();
+            }
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -204,4 +374,23 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
     }
 
     ImGui::End();
+}
+
+void UevrPlugin::sendWatchBatch()
+{
+    std::string payload;
+    for (auto &w : uevrWatches)
+        payload += w.expr + "\n";
+    sendUevr("watch", payload);
+}
+
+void UevrPlugin::insertLiveValueAsNode(const std::string &expr, const std::string &label)
+{
+    auto &bp = ensureBlueprintEditor();
+    auto nodeId = bp.AddCustomLuaNode(ImVec2(0.0f, 0.0f));
+    if (nodeId == 0)
+        return;
+    bp.AddCustomLuaPin(nodeId, true, "Out0");
+    bp.SetCustomLuaSource(nodeId, "-- " + label + "\nOut0 = " + expr);
+    blueprintVisible = true;
 }

@@ -42,6 +42,11 @@ private:
     std::string blueprintSnapshot;                    // Graph > Save/Load Snapshot buffer
     void renderBlueprintWindow(PluginHost &host);
 
+    // Lazily creates/returns the Blueprint editor. Shared by renderBlueprintWindow and
+    // insertLiveValueAsNode so an "insert as node" click works even if the Blueprint
+    // window was never opened this session.
+    BlueprintEditor &ensureBlueprintEditor();
+
     // ── UEVR Live bridge (file-inbox IPC) ──────────────────────────────────
     bool uevrLiveVisible = false;
     char uevrReplBuf[4096]   = {0};
@@ -53,6 +58,21 @@ private:
     void sendUevr(const std::string &kind, const std::string &payload);
     void pollUevrBridge();                             // drain the out inbox (~5 Hz)
     void renderUevrLive(PluginHost &host);             // the dockable panel
+
+    // Live-value → Blueprint node bridge: turns an arbitrary inspected/watched
+    // expression into a Custom Lua node (see BlueprintEditor::AddCustomLuaNode) --
+    // a single registry Function can't represent an arbitrary expression, but a
+    // one-line Custom Lua node always can.
+    void insertLiveValueAsNode(const std::string &expr, const std::string &label);
+
+    // ── Watch list (batched, stateless -- the full list is resent every refresh) ────
+    struct WatchEntry
+    {
+        std::string expr, type, preview;
+    };
+    std::vector<WatchEntry> uevrWatches;
+    char uevrWatchExprBuf[256] = "uevr.api:get_local_pawn(0):get_full_name()";
+    void sendWatchBatch();
 };
 
 // Factory used by plugin_registry.cpp (declared there under the same #ifdef).

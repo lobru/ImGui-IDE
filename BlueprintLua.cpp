@@ -17,6 +17,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "BlueprintImGuiNames.h"
 #include "BlueprintLua.h"
 
 
@@ -159,24 +160,53 @@ void BlueprintLua::SetupUEVRRegistry(BlueprintEditor& editor) {
 		"Left Thumb", "Right Thumb",
 		"DPad Up", "DPad Down", "DPad Left", "DPad Right"});
 
-	// the pseudo class providing UEVR's script entry points
+	// the pseudo class providing UEVR's script entry points (all 18 uevr.sdk.callbacks
+	// registrations; verified against lua-api/lib/src/ScriptContext.cpp's add_callback list)
 	auto& uevr = registry.AddClass("UEVR", "", "UEVR script entry points");
 	uevr.AddEvent("Pre Engine Tick").Out("Engine", PinType(PinKind::Object, "UEngine")).Out("Delta Seconds", PinType(PinKind::Float)).Metadata("uevr.sdk.callbacks.on_pre_engine_tick").Tooltip("Called before the engine ticks each frame");
 	uevr.AddEvent("Post Engine Tick").Out("Engine", PinType(PinKind::Object, "UEngine")).Out("Delta Seconds", PinType(PinKind::Float)).Metadata("uevr.sdk.callbacks.on_post_engine_tick").Tooltip("Called after the engine ticks each frame");
-	uevr.AddEvent("Pre Slate Draw Window").Out("Renderer", PinType(PinKind::Object, "UObject")).Out("Viewport Info", PinType(PinKind::Object, "UObject")).Metadata("uevr.sdk.callbacks.on_pre_slate_draw_window").Tooltip("Called before slate draws the window");
+	uevr.AddEvent("Pre Slate Draw Window").Out("Renderer", PinType(PinKind::Object, "UObject")).Out("Viewport Info", PinType(PinKind::Object, "UObject")).Metadata("uevr.sdk.callbacks.on_pre_slate_draw_window_render_thread").Tooltip("Called before slate draws the window, on the render thread");
+	uevr.AddEvent("Post Slate Draw Window").Out("Renderer", PinType(PinKind::Object, "UObject")).Out("Viewport Info", PinType(PinKind::Object, "UObject")).Metadata("uevr.sdk.callbacks.on_post_slate_draw_window_render_thread").Tooltip("Called after slate draws the window, on the render thread");
 	uevr.AddEvent("XInput Get State").Out("Retval", PinType(PinKind::Integer)).Out("User Index", PinType(PinKind::Integer)).Out("State", PinType(PinKind::Struct, "XINPUT_STATE")).Metadata("uevr.sdk.callbacks.on_xinput_get_state").Tooltip("Called when the game polls the gamepad; the state can be inspected or modified");
+	uevr.AddEvent("XInput Set State").Out("Retval", PinType(PinKind::Integer)).Out("User Index", PinType(PinKind::Integer)).Out("Vibration", PinType(PinKind::Struct, "XINPUT_VIBRATION")).Metadata("uevr.sdk.callbacks.on_xinput_set_state").Tooltip("Called when the game sets gamepad vibration; the vibration can be inspected or modified");
 	uevr.AddEvent("Draw UI").Metadata("uevr.sdk.callbacks.on_draw_ui").Tooltip("Called when the UEVR overlay UI is drawn");
 	uevr.AddEvent("Script Reset").Metadata("uevr.sdk.callbacks.on_script_reset").Tooltip("Called when the script is reset or unloaded");
+	uevr.AddEvent("Frame").Metadata("uevr.sdk.callbacks.on_frame").Tooltip("Called every frame");
+	uevr.AddEvent("Pawn Changed").Metadata("uevr.sdk.callbacks.on_pawn_changed").Tooltip("Called when the local player's pawn changes");
+	uevr.AddEvent("View Target Changed").Metadata("uevr.sdk.callbacks.on_view_target_changed").Tooltip("Called when the active camera view target changes");
+	uevr.AddEvent("Level Changed").Metadata("uevr.sdk.callbacks.on_level_changed").Tooltip("Called when the game's level changes");
+	uevr.AddEvent("Lua Event").Out("Event Name", PinType(PinKind::String)).Out("Event Data", PinType(PinKind::String)).Metadata("uevr.sdk.callbacks.on_lua_event").Tooltip("Called when any script dispatches a custom event (see Dispatch Custom Event)");
+	uevr.AddEvent("Early Calculate Stereo View Offset").Out("Device", PinType(PinKind::Object, "UObject")).Out("View Index", PinType(PinKind::Integer)).Out("World To Meters", PinType(PinKind::Float)).Out("Position", PinType(PinKind::Vector)).Out("Rotation", PinType(PinKind::Rotator)).Out("Is Double", PinType(PinKind::Boolean)).Metadata("uevr.sdk.callbacks.on_early_calculate_stereo_view_offset").Tooltip("Called early in stereo view offset calculation; position/rotation can be modified");
+	uevr.AddEvent("Pre Calculate Stereo View Offset").Out("Device", PinType(PinKind::Object, "UObject")).Out("View Index", PinType(PinKind::Integer)).Out("World To Meters", PinType(PinKind::Float)).Out("Position", PinType(PinKind::Vector)).Out("Rotation", PinType(PinKind::Rotator)).Out("Is Double", PinType(PinKind::Boolean)).Metadata("uevr.sdk.callbacks.on_pre_calculate_stereo_view_offset").Tooltip("Called before stereo view offset calculation; position/rotation can be modified");
+	uevr.AddEvent("Post Calculate Stereo View Offset").Out("Device", PinType(PinKind::Object, "UObject")).Out("View Index", PinType(PinKind::Integer)).Out("World To Meters", PinType(PinKind::Float)).Out("Position", PinType(PinKind::Vector)).Out("Rotation", PinType(PinKind::Rotator)).Out("Is Double", PinType(PinKind::Boolean)).Metadata("uevr.sdk.callbacks.on_post_calculate_stereo_view_offset").Tooltip("Called after stereo view offset calculation; position/rotation can be modified");
+	uevr.AddEvent("Pre Viewport Client Draw").Out("Viewport Client", PinType(PinKind::Object, "UObject")).Out("Viewport", PinType(PinKind::Object, "UObject")).Out("Canvas", PinType(PinKind::Object, "UObject")).Metadata("uevr.sdk.callbacks.on_pre_viewport_client_draw").Tooltip("Called before the game viewport draws");
+	uevr.AddEvent("Post Viewport Client Draw").Out("Viewport Client", PinType(PinKind::Object, "UObject")).Out("Viewport", PinType(PinKind::Object, "UObject")).Out("Canvas", PinType(PinKind::Object, "UObject")).Metadata("uevr.sdk.callbacks.on_post_viewport_client_draw").Tooltip("Called after the game viewport draws");
 
-	// UObject access (UEVR exposes properties and functions through metatables)
+	// UObject access (UEVR exposes properties and functions through metatables); the
+	// reflection helpers below are sourced from APIUE.lua's ergonomic wrappers, which is
+	// what real scripts call, rather than the raw ScriptContext.cpp sol2 usertype names
 	auto& object = registry.AddClass("UObject", "", "An Unreal object accessed through UEVR's reflection bindings");
 	object.AddFunction("Get Full Name", "UObject").Pure().Ret(PinType(PinKind::String)).Metadata("{target}:get_full_name()");
 	object.AddFunction("Get FName", "UObject").Pure().Ret(PinType(PinKind::Name)).Metadata("{target}:get_fname():to_string()");
 	object.AddFunction("Get Class", "UObject").Pure().Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:get_class()");
+	object.AddFunction("Get Outer", "UObject").Pure().Keywords("owner package").Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:get_outer()");
+	object.AddFunction("As Class", "UObject").Pure().Keywords("cast").Ret(PinType(PinKind::Object, "UClass")).Metadata("{target}:as_class()");
+	object.AddFunction("As Struct", "UObject").Pure().Keywords("cast").Ret(PinType(PinKind::Object, "UStruct")).Metadata("{target}:as_struct()");
+	object.AddFunction("As Function", "UObject").Pure().Keywords("cast").Ret(PinType(PinKind::Object, "UFunction")).Metadata("{target}:as_function()");
 	object.AddFunction("Is A", "UObject").Pure().In("Class", PinType(PinKind::Object, "UObject")).Ret(PinType(PinKind::Boolean)).Metadata("{target}:is_a({0})");
 	object.AddFunction("Is Valid", "UObject").Pure().Keywords("null nil check").Ret(PinType(PinKind::Boolean)).Metadata("({target} ~= nil)");
 	object.AddFunction("Get Property", "UObject").Pure().Keywords("read field").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Wildcard)).Metadata("{target}[{0}]");
 	object.AddFunction("Set Property", "UObject").Keywords("write field").In("Name", PinType(PinKind::String)).In("Value", PinType(PinKind::Wildcard)).Metadata("{target}[{0}] = {1}");
+	object.AddFunction("Get Bool Property", "UObject").Pure().Keywords("read field typed").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Boolean)).Metadata("{target}:get_bool_property({0})");
+	object.AddFunction("Get Float Property", "UObject").Pure().Keywords("read field typed").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Float)).Metadata("{target}:get_float_property({0})");
+	object.AddFunction("Get Int Property", "UObject").Pure().Keywords("read field typed").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Integer)).Metadata("{target}:get_int_property({0})");
+	object.AddFunction("Get UInt Property", "UObject").Pure().Keywords("read field typed").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Integer)).Metadata("{target}:get_uint_property({0})");
+	object.AddFunction("Get FName Property", "UObject").Pure().Keywords("read field typed").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Name)).Metadata("{target}:get_fname_property({0}):to_string()");
+	object.AddFunction("Get UObject Property", "UObject").Pure().Keywords("read field typed").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:get_uobject_property({0})");
+	object.AddFunction("Get Properties", "UObject").Pure().Keywords("reflection fields inspect list").Ret(PinType(PinKind::Wildcard, "", true)).Metadata("{target}:get_property_info()").Tooltip("Returns an array of {name, type, flags, offset, Value} records");
+	object.AddFunction("Find Property", "UObject").Pure().Keywords("reflection field").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:find_property({0})").Tooltip("Target should be a UClass/UStruct (see As Class / As Struct / Get Class)");
+	object.AddFunction("Find Function", "UObject").Pure().Keywords("reflection method").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:find_function({0})").Tooltip("Target should be a UClass/UStruct (see As Class / As Struct / Get Class)");
+	object.AddFunction("Get Children", "UObject").Pure().Keywords("reflection fields").Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:get_children()").Tooltip("Target should be a UClass/UStruct (see As Class / As Struct / Get Class)");
 	object.AddFunction("Call (No Args)", "UObject").Keywords("invoke function method").In("Function Name", PinType(PinKind::String), "Jump").Ret(PinType(PinKind::Wildcard)).Metadata("{target}[{0}]({target})");
 	object.AddFunction("Call (1 Arg)", "UObject").Keywords("invoke function method").In("Function Name", PinType(PinKind::String), "SetActorScale3D").In("Arg", PinType(PinKind::Wildcard)).Ret(PinType(PinKind::Wildcard)).Metadata("{target}[{0}]({target}, {1})");
 
@@ -185,30 +215,62 @@ void BlueprintLua::SetupUEVRRegistry(BlueprintEditor& editor) {
 	actor.AddProperty("bCanBeDamaged", PinType(PinKind::Boolean), "Actor");
 	registry.AddClass("APawn", "AActor", "A possessable actor");
 	registry.AddClass("UEngine", "UObject", "The engine singleton");
+	registry.AddClass("UClass", "UObject", "A class or struct's reflection metadata");
+	registry.AddClass("UStruct", "UObject", "A class or struct's reflection metadata");
+	registry.AddClass("UFunction", "UObject", "A reflected function");
 
 	// the uevr.api object
 	auto& api = registry.AddClass("UEVR_API", "", "The uevr.api object");
 	api.AddFunction("Find UObject", "UEVR|API").Pure().Static().Keywords("search class object").In("Name", PinType(PinKind::String), "Class /Script/Engine.Pawn").Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api:find_uobject({0})").Tooltip("Find an object by its full name");
+	api.AddFunction("To UObject", "UEVR|API").Pure().Static().Keywords("cast address pointer").In("Address", PinType(PinKind::Integer)).Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api:to_uobject({0})");
 	api.AddFunction("Get Local Pawn", "UEVR|API").Pure().Static().Keywords("player character").In("Player Index", PinType(PinKind::Integer), "0").Ret(PinType(PinKind::Object, "APawn")).Metadata("uevr.api:get_local_pawn({0})");
 	api.AddFunction("Get Player Controller", "UEVR|API").Pure().Static().In("Player Index", PinType(PinKind::Integer), "0").Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api:get_player_controller({0})");
 	api.AddFunction("Get Engine", "UEVR|API").Pure().Static().Ret(PinType(PinKind::Object, "UEngine")).Metadata("uevr.api:get_engine()");
+	api.AddFunction("Spawn Object", "UEVR|API").Static().Keywords("instantiate create").In("Class", PinType(PinKind::Object, "UClass")).In("Outer", PinType(PinKind::Object, "UObject")).Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api:spawn_object({0}, {1})");
+	api.AddFunction("Add Component By Class", "UEVR|API").Static().Keywords("attach create").In("Actor", PinType(PinKind::Object, "AActor")).In("Class", PinType(PinKind::Object, "UClass")).In("Deferred", PinType(PinKind::Boolean), "false").Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api:add_component_by_class({0}, {1}, {2})");
 	api.AddFunction("Execute Command", "UEVR|API").Static().Keywords("console cvar").In("Command", PinType(PinKind::String)).Metadata("uevr.api:execute_command({0})").Tooltip("Execute a console command");
+	api.AddFunction("Dispatch Custom Event", "UEVR|API").Static().Keywords("broadcast lua event").In("Event Name", PinType(PinKind::String)).In("Event Data", PinType(PinKind::String), "").Metadata("uevr.api:dispatch_custom_event({0}, {1})").Tooltip("Broadcasts a Lua Event to every script's \"Lua Event\" handler");
 	api.AddFunction("Print", "UEVR|API").Static().Keywords("log output debug").In("Message", PinType(PinKind::String), "Hello from UEVR").Metadata("print({0})").Tooltip("Print to the UEVR log");
 	api.AddFunction("Log Info", "UEVR|API").Static().Keywords("log output debug").In("Message", PinType(PinKind::String)).Metadata("uevr.params.functions.log_info({0})");
+	api.AddFunction("Log Warn", "UEVR|API").Static().Keywords("log output debug warning").In("Message", PinType(PinKind::String)).Metadata("uevr.params.functions.log_warn({0})");
+	api.AddFunction("Log Error", "UEVR|API").Static().Keywords("log output debug error").In("Message", PinType(PinKind::String)).Metadata("uevr.params.functions.log_error({0})");
+	api.AddFunction("Is Drawing UI", "UEVR|API").Pure().Static().Keywords("menu overlay open input focus").Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.functions.is_drawing_ui()").Tooltip("True while UEVR's own overlay UI has input focus");
 
-	// the uevr.params.vr runtime object
+	// the uevr.params.vr runtime object (verified-safe subset: excludes the out-parameter
+	// pose/transform/origin/rotation-offset/joystick-source family, whose exact Lua calling
+	// convention -- pass a pre-allocated Vector/Quaternion object to be mutated in place --
+	// isn't safely representable as a single-expression node template; use a Custom Lua
+	// node for those, e.g. "local p = Vector3f.new(0,0,0) uevr.params.vr.get_pose(idx, p, rot)")
 	auto& vr = registry.AddClass("UEVR_VRData", "", "The uevr.params.vr object");
+	vr.AddFunction("Is Runtime Ready", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_runtime_ready()");
+	vr.AddFunction("Is OpenVR", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_openvr()");
+	vr.AddFunction("Is OpenXR", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_openxr()");
 	vr.AddFunction("Is HMD Active", "UEVR|VR").Pure().Static().Keywords("headset").Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_hmd_active()");
 	vr.AddFunction("Is Using Controllers", "UEVR|VR").Pure().Static().Keywords("motion").Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_using_controllers()");
 	vr.AddFunction("Get HMD Index", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_hmd_index()");
 	vr.AddFunction("Get Left Controller Index", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_left_controller_index()");
 	vr.AddFunction("Get Right Controller Index", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_right_controller_index()");
+	vr.AddFunction("Get HMD Width", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_hmd_width()");
+	vr.AddFunction("Get HMD Height", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_hmd_height()");
+	vr.AddFunction("Get UI Width", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_ui_width()");
+	vr.AddFunction("Get UI Height", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_ui_height()");
+	vr.AddFunction("Get Movement Orientation", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_movement_orientation()");
+	vr.AddFunction("Get Aim Method", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_aim_method()");
+	vr.AddFunction("Set Aim Method", "UEVR|VR").Static().In("Method", PinType(PinKind::Integer)).Metadata("uevr.params.vr.set_aim_method({0})");
+	vr.AddFunction("Is Aim Allowed", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_aim_allowed()");
+	vr.AddFunction("Set Aim Allowed", "UEVR|VR").Static().In("Allowed", PinType(PinKind::Boolean), "true").Metadata("uevr.params.vr.set_aim_allowed({0})");
+	vr.AddFunction("Is Snap Turn Enabled", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_snap_turn_enabled()");
+	vr.AddFunction("Set Snap Turn Enabled", "UEVR|VR").Static().In("Enabled", PinType(PinKind::Boolean), "true").Metadata("uevr.params.vr.set_snap_turn_enabled({0})");
+	vr.AddFunction("Set Decoupled Pitch Enabled", "UEVR|VR").Static().In("Enabled", PinType(PinKind::Boolean), "true").Metadata("uevr.params.vr.set_decoupled_pitch_enabled({0})");
+	vr.AddFunction("Get Action Handle", "UEVR|VR").Pure().Static().Keywords("input openxr openvr").In("Action Path", PinType(PinKind::String), "/actions/default/in/Trigger").Ret(PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_action_handle({0})");
+	vr.AddFunction("Is Action Active", "UEVR|VR").Pure().Static().Keywords("input pressed").In("Action", PinType(PinKind::Integer)).In("Source", PinType(PinKind::Integer)).Ret(PinType(PinKind::Boolean)).Metadata("uevr.params.vr.is_action_active({0}, {1})");
 	vr.AddFunction("Trigger Haptic Vibration", "UEVR|VR").Static().Keywords("rumble feedback controller").In("Seconds From Now", PinType(PinKind::Float), "0.0").In("Duration", PinType(PinKind::Float), "0.1").In("Frequency", PinType(PinKind::Float), "1.0").In("Amplitude", PinType(PinKind::Float), "300.0").In("Source", PinType(PinKind::Integer), "1").Metadata("uevr.params.vr.trigger_haptic_vibration({0}, {1}, {2}, {3}, {4})");
 	vr.AddFunction("Get Mod Value", "UEVR|VR").Pure().Static().Keywords("setting option").In("Name", PinType(PinKind::String), "VR_RoomscaleMovement").Ret(PinType(PinKind::String)).Metadata("uevr.params.vr.get_mod_value({0})");
 	vr.AddFunction("Set Mod Value", "UEVR|VR").Static().Keywords("setting option").In("Name", PinType(PinKind::String)).In("Value", PinType(PinKind::String)).Metadata("uevr.params.vr.set_mod_value({0}, {1})");
 	vr.AddFunction("Recenter View", "UEVR|VR").Static().Keywords("reset origin").Metadata("uevr.params.vr.recenter_view()");
-	vr.AddFunction("Get Standing Origin", "UEVR|VR").Pure().Static().Ret(PinType(PinKind::Vector)).Metadata("uevr.params.vr.get_standing_origin()");
-	vr.AddFunction("Set Standing Origin", "UEVR|VR").Static().In("Origin", PinType(PinKind::Vector)).Metadata("uevr.params.vr.set_standing_origin({0})");
+	vr.AddFunction("Recenter Horizon", "UEVR|VR").Static().Keywords("reset level").Metadata("uevr.params.vr.recenter_horizon()");
+	vr.AddFunction("Save Config", "UEVR|VR").Static().Metadata("uevr.params.vr.save_config()");
+	vr.AddFunction("Reload Config", "UEVR|VR").Static().Metadata("uevr.params.vr.reload_config()");
 
 	// helpers to inspect the XINPUT_STATE passed to the XInput Get State event
 	auto& xinput = registry.AddClass("XInput", "", "XINPUT_STATE helpers");
@@ -218,6 +280,66 @@ void BlueprintLua::SetupUEVRRegistry(BlueprintEditor& editor) {
 	xinput.AddFunction("Get Right Trigger", "UEVR|XInput").Pure().Static().In("State", PinType(PinKind::Struct, "XINPUT_STATE")).Ret(PinType(PinKind::Integer)).Metadata("{0}.Gamepad.bRightTrigger");
 	xinput.AddFunction("Get Left Thumb", "UEVR|XInput").Pure().Static().Keywords("stick axis").In("State", PinType(PinKind::Struct, "XINPUT_STATE")).Out("X", PinType(PinKind::Integer)).Out("Y", PinType(PinKind::Integer)).Metadata("{0}.Gamepad.sThumbLX|{0}.Gamepad.sThumbLY");
 	xinput.AddFunction("Get Right Thumb", "UEVR|XInput").Pure().Static().Keywords("stick axis").In("State", PinType(PinKind::Struct, "XINPUT_STATE")).Out("X", PinType(PinKind::Integer)).Out("Y", PinType(PinKind::Integer)).Metadata("{0}.Gamepad.sThumbRX|{0}.Gamepad.sThumbRY");
+
+	// ImGui widgets: draw calls are impure (exec-pinned, order matters); queries are pure.
+	// Interactive widgets in the real binding return (changed, new_value) via
+	// sol::variadic_results -- "(select(2, imgui.x(...)))" truncates to just the new value
+	// in a single expression, which is what the impure-node single-local-capture codegen
+	// path needs (see Generator::emitNode's CallFunction case in this file). Verified
+	// against the real signatures in src/mods/bindings/ImGui.cpp; trailing sol::object
+	// (flags/size/condition) parameters are passed literal nil rather than exposed as
+	// pins, keeping this set to the common case -- anything else is a Custom Lua node away.
+	auto& imgui = registry.AddClass("ImGui", "", "The imgui table (UEVR's Dear ImGui Lua bindings)");
+	imgui.AddFunction("Begin Window", "ImGui|Window").Keywords("panel").In("Name", PinType(PinKind::String), "Window").Ret(PinType(PinKind::Boolean)).Metadata("imgui.begin_window({0}, nil, nil)").Tooltip("Returns false while the window is collapsed/closed -- guard the body with a Branch");
+	imgui.AddFunction("End Window", "ImGui|Window").Metadata("imgui.end_window()").Tooltip("Always call once per Begin Window, regardless of its return value");
+	imgui.AddFunction("Begin Child Window", "ImGui|Window").Keywords("panel scroll region").In("Name", PinType(PinKind::String), "Child").Ret(PinType(PinKind::Boolean)).Metadata("imgui.begin_child_window({0}, nil, nil, nil)");
+	imgui.AddFunction("End Child Window", "ImGui|Window").Metadata("imgui.end_child_window()");
+	imgui.AddFunction("Set Next Window Size", "ImGui|Window").In("Width", PinType(PinKind::Float), "300.0").In("Height", PinType(PinKind::Float), "200.0").Metadata("imgui.set_next_window_size(Vector2f.new({0}, {1}), nil)").Tooltip("Call before Begin Window");
+	imgui.AddFunction("Text", "ImGui|Text").Keywords("label print").In("Text", PinType(PinKind::String), "Text").Metadata("imgui.text({0}, nil)");
+	imgui.AddFunction("Text Wrapped", "ImGui|Text").In("Text", PinType(PinKind::String), "Text").Metadata("imgui.text_wrapped({0})");
+	imgui.AddFunction("Text Disabled", "ImGui|Text").In("Text", PinType(PinKind::String), "Text").Metadata("imgui.text_disabled({0})");
+	imgui.AddFunction("Bullet Text", "ImGui|Text").In("Text", PinType(PinKind::String), "Text").Metadata("imgui.bullet_text({0})");
+	imgui.AddFunction("Button", "ImGui|Input").Keywords("click").In("Label", PinType(PinKind::String), "Button").Ret(PinType(PinKind::Boolean)).Metadata("imgui.button({0}, nil, nil)");
+	imgui.AddFunction("Small Button", "ImGui|Input").Keywords("click").In("Label", PinType(PinKind::String), "Button").Ret(PinType(PinKind::Boolean)).Metadata("imgui.small_button({0})");
+	imgui.AddFunction("Arrow Button", "ImGui|Input").Keywords("click direction").In("Str Id", PinType(PinKind::String), "arrow").In("Dir", PinType(PinKind::Integer), "0").Ret(PinType(PinKind::Boolean)).Metadata("imgui.arrow_button({0}, {1})");
+	imgui.AddFunction("Checkbox", "ImGui|Input").Keywords("toggle bool").In("Label", PinType(PinKind::String), "Checkbox").In("Value", PinType(PinKind::Boolean), "false").Ret(PinType(PinKind::Boolean)).Metadata("(select(2, imgui.checkbox({0}, {1})))");
+	imgui.AddFunction("Radio Button", "ImGui|Input").Keywords("select option").In("Label", PinType(PinKind::String), "Option").In("Active", PinType(PinKind::Boolean), "false").Ret(PinType(PinKind::Boolean)).Metadata("imgui.radio_button({0}, {1})").Tooltip("Returns true when clicked this frame; drive Active from your own selection state");
+	imgui.AddFunction("Slider Float", "ImGui|Input").Keywords("range value").In("Label", PinType(PinKind::String), "Slider").In("Value", PinType(PinKind::Float), "0.0").In("Min", PinType(PinKind::Float), "0.0").In("Max", PinType(PinKind::Float), "1.0").Ret(PinType(PinKind::Float)).Metadata("(select(2, imgui.slider_float({0}, {1}, {2}, {3}, \"%.3f\", nil)))");
+	imgui.AddFunction("Slider Int", "ImGui|Input").Keywords("range value").In("Label", PinType(PinKind::String), "Slider").In("Value", PinType(PinKind::Integer), "0").In("Min", PinType(PinKind::Integer), "0").In("Max", PinType(PinKind::Integer), "100").Ret(PinType(PinKind::Integer)).Metadata("(select(2, imgui.slider_int({0}, {1}, {2}, {3}, \"%d\", nil)))");
+	imgui.AddFunction("Drag Float", "ImGui|Input").Keywords("range value").In("Label", PinType(PinKind::String), "Drag").In("Value", PinType(PinKind::Float), "0.0").In("Speed", PinType(PinKind::Float), "1.0").In("Min", PinType(PinKind::Float), "0.0").In("Max", PinType(PinKind::Float), "0.0").Ret(PinType(PinKind::Float)).Metadata("(select(2, imgui.drag_float({0}, {1}, {2}, {3}, {4}, \"%.3f\", nil)))");
+	imgui.AddFunction("Drag Int", "ImGui|Input").Keywords("range value").In("Label", PinType(PinKind::String), "Drag").In("Value", PinType(PinKind::Integer), "0").In("Speed", PinType(PinKind::Float), "1.0").In("Min", PinType(PinKind::Integer), "0").In("Max", PinType(PinKind::Integer), "0").Ret(PinType(PinKind::Integer)).Metadata("(select(2, imgui.drag_int({0}, {1}, {2}, {3}, {4}, \"%d\", nil)))");
+	imgui.AddFunction("Input Text", "ImGui|Input").Keywords("string field").In("Label", PinType(PinKind::String), "Input").In("Value", PinType(PinKind::String), "").Ret(PinType(PinKind::String)).Metadata("(select(2, imgui.input_text({0}, {1}, 0)))");
+	imgui.AddFunction("Color Edit3", "ImGui|Input").Keywords("rgb picker").In("Label", PinType(PinKind::String), "Color").In("Color", PinType(PinKind::Vector), "1,1,1").Ret(PinType(PinKind::Vector)).Metadata("(select(2, imgui.color_edit3({0}, {1}, nil)))");
+	imgui.AddFunction("Same Line", "ImGui|Layout").Metadata("imgui.same_line()");
+	imgui.AddFunction("Separator", "ImGui|Layout").Metadata("imgui.separator()");
+	imgui.AddFunction("Spacing", "ImGui|Layout").Metadata("imgui.spacing()");
+	imgui.AddFunction("Indent", "ImGui|Layout").In("Width", PinType(PinKind::Integer), "0").Metadata("imgui.indent({0})");
+	imgui.AddFunction("Unindent", "ImGui|Layout").In("Width", PinType(PinKind::Integer), "0").Metadata("imgui.unindent({0})");
+	imgui.AddFunction("Begin Group", "ImGui|Layout").Metadata("imgui.begin_group()");
+	imgui.AddFunction("End Group", "ImGui|Layout").Metadata("imgui.end_group()");
+	imgui.AddFunction("Begin Table", "ImGui|Layout").Keywords("columns grid").In("Str Id", PinType(PinKind::String), "table").In("Columns", PinType(PinKind::Integer), "2").Ret(PinType(PinKind::Boolean)).Metadata("imgui.begin_table({0}, {1}, nil, nil, nil)");
+	imgui.AddFunction("End Table", "ImGui|Layout").Metadata("imgui.end_table()");
+	imgui.AddFunction("Table Next Row", "ImGui|Layout").Metadata("imgui.table_next_row(nil, nil)");
+	imgui.AddFunction("Table Next Column", "ImGui|Layout").Ret(PinType(PinKind::Boolean)).Metadata("imgui.table_next_column()");
+	imgui.AddFunction("Tree Node", "ImGui|Tree").Keywords("collapse expand").In("Label", PinType(PinKind::String), "Node").Ret(PinType(PinKind::Boolean)).Metadata("imgui.tree_node({0}, nil)").Tooltip("If true, call Tree Pop after the children");
+	imgui.AddFunction("Tree Pop", "ImGui|Tree").Metadata("imgui.tree_pop()");
+	imgui.AddFunction("Collapsing Header", "ImGui|Tree").Keywords("section").In("Name", PinType(PinKind::String), "Section").Ret(PinType(PinKind::Boolean)).Metadata("imgui.collapsing_header({0})");
+	imgui.AddFunction("Open Popup", "ImGui|Popup").In("Str Id", PinType(PinKind::String), "popup").Metadata("imgui.open_popup({0}, nil)");
+	imgui.AddFunction("Begin Popup", "ImGui|Popup").In("Str Id", PinType(PinKind::String), "popup").Ret(PinType(PinKind::Boolean)).Metadata("imgui.begin_popup({0}, nil)").Tooltip("If true, call End Window after the contents (popups share End Window)");
+	imgui.AddFunction("Begin Popup Modal", "ImGui|Popup").In("Str Id", PinType(PinKind::String), "popup").Ret(PinType(PinKind::Boolean)).Metadata("imgui.begin_popup_modal({0}, nil, nil)").Tooltip("If true, call End Window after the contents (popups share End Window)");
+	imgui.AddFunction("Close Current Popup", "ImGui|Popup").Metadata("imgui.close_current_popup()");
+	imgui.AddFunction("Progress Bar", "ImGui|Misc").In("Progress", PinType(PinKind::Float), "0.0").In("Overlay", PinType(PinKind::String), "").Metadata("imgui.progress_bar({0}, nil, {1})");
+	imgui.AddFunction("Is Item Hovered", "ImGui|Query").Pure().Ret(PinType(PinKind::Boolean)).Metadata("imgui.is_item_hovered(nil)").Tooltip("Refers to the most recently submitted widget");
+	imgui.AddFunction("Is Item Clicked", "ImGui|Query").Pure().Ret(PinType(PinKind::Boolean)).Metadata("imgui.is_item_clicked()").Tooltip("Refers to the most recently submitted widget");
+	// escape hatch: reaches every imgui.* binding by name (see BlueprintImGuiNames.h),
+	// mirroring the existing UObject "Call (N Args)" generic-call pattern
+	imgui.AddFunction("Call (No Args)", "ImGui|Call").Keywords("escape hatch raw").In("Function Name", PinType(PinKind::Enum, "ImGuiFunctionName"), "same_line").Ret(PinType(PinKind::Wildcard)).Metadata("imgui[{0}]()");
+	imgui.AddFunction("Call (1 Arg)", "ImGui|Call").Keywords("escape hatch raw").In("Function Name", PinType(PinKind::Enum, "ImGuiFunctionName"), "text").In("Arg 1", PinType(PinKind::Wildcard)).Ret(PinType(PinKind::Wildcard)).Metadata("imgui[{0}]({1})");
+	imgui.AddFunction("Call (2 Args)", "ImGui|Call").Keywords("escape hatch raw").In("Function Name", PinType(PinKind::Enum, "ImGuiFunctionName"), "button").In("Arg 1", PinType(PinKind::Wildcard)).In("Arg 2", PinType(PinKind::Wildcard)).Ret(PinType(PinKind::Wildcard)).Metadata("imgui[{0}]({1}, {2})");
+	imgui.AddFunction("Call (3 Args)", "ImGui|Call").Keywords("escape hatch raw").In("Function Name", PinType(PinKind::Enum, "ImGuiFunctionName"), "checkbox").In("Arg 1", PinType(PinKind::Wildcard)).In("Arg 2", PinType(PinKind::Wildcard)).In("Arg 3", PinType(PinKind::Wildcard)).Ret(PinType(PinKind::Wildcard)).Metadata("imgui[{0}]({1}, {2}, {3})");
+	imgui.AddFunction("Call (4 Args)", "ImGui|Call").Keywords("escape hatch raw").In("Function Name", PinType(PinKind::Enum, "ImGuiFunctionName"), "slider_float").In("Arg 1", PinType(PinKind::Wildcard)).In("Arg 2", PinType(PinKind::Wildcard)).In("Arg 3", PinType(PinKind::Wildcard)).In("Arg 4", PinType(PinKind::Wildcard)).Ret(PinType(PinKind::Wildcard)).Metadata("imgui[{0}]({1}, {2}, {3}, {4})");
+
+	registry.AddEnum("ImGuiFunctionName", imguiFunctionNames());
 
 	// Lua math, logic and string utilities
 	auto& math = registry.AddClass("LuaMath", "", "Lua math utilities");
@@ -277,6 +399,7 @@ private:
 	std::string outputExpression(const Pin& pin, int depth);
 	std::string callExpression(const Node& node, size_t outputIndex, int depth);
 	std::string expandTemplate(const std::string& tmpl, const Node& node, size_t outputIndex, int depth);
+	std::string substituteTokens(const std::string& text, const Node& node, int depth);
 	std::string defaultLiteral(const Pin& pin) const;
 	const Pin* targetPin(const Node& node) const;
 	std::vector<const Pin*> dataInputs(const Node& node) const;
@@ -287,6 +410,7 @@ private:
 	void emitChain(const Pin* execOutput, std::string& out, int indent);
 	void emitNode(const Node& node, const Pin& enteredPin, std::string& out, int indent);
 	void emitFlowControl(const Node& node, const Pin& enteredPin, std::string& out, int indent);
+	void emitCustomLuaBlock(const Node& node, std::string& out, int indent);
 	std::string& stateLocal(const Node& node, const char* prefix, const char* initial);
 	static void line(std::string& out, int indent, const std::string& text);
 
@@ -444,16 +568,20 @@ std::string Generator::expandTemplate(const std::string& tmpl, const Node& node,
 	}
 
 	std::string segment = segments[std::min(outputIndex, segments.size() - 1)];
+	return substituteTokens(segment, node, depth);
+}
+
+std::string Generator::substituteTokens(const std::string& text, const Node& node, int depth) {
 	std::vector<const Pin*> inputs = dataInputs(node);
 	std::string result;
 	size_t i = 0;
 
-	while (i < segment.size()) {
-		if (segment[i] == '{') {
-			size_t close = segment.find('}', i);
+	while (i < text.size()) {
+		if (text[i] == '{') {
+			size_t close = text.find('}', i);
 
 			if (close != std::string::npos) {
-				std::string key = segment.substr(i + 1, close - i - 1);
+				std::string key = text.substr(i + 1, close - i - 1);
 
 				if (key == "target") {
 					const Pin* target = targetPin(node);
@@ -473,11 +601,27 @@ std::string Generator::expandTemplate(const std::string& tmpl, const Node& node,
 
 					i = close + 1;
 					continue;
+
+				} else if (!key.empty()) {
+					// named reference (CustomLua pins): matched by identifier-normalized
+					// name rather than position, so it stays valid across pin add/remove
+					const Pin* match = nullptr;
+
+					for (auto input : inputs) {
+						if (identifier(input->name) == identifier(key)) {
+							match = input;
+							break;
+						}
+					}
+
+					result += match ? inputExpression(*match, depth + 1) : "nil --[[ unknown input '" + key + "' ]]";
+					i = close + 1;
+					continue;
 				}
 			}
 		}
 
-		result += segment[i++];
+		result += text[i++];
 	}
 
 	return result;
@@ -575,6 +719,11 @@ std::string Generator::outputExpression(const Pin& pin, int depth) {
 
 			return callExpression(*node, 0, depth);
 		}
+
+		case NodeKind::CustomLua:
+			// pinNames is checked at the top of this function already; reaching here
+			// means this output was read before the node executed on this chain
+			return "nil --[[ '" + node->title + "' has not been executed ]]";
 
 		default:
 			return "nil --[[ unsupported source '" + node->title + "' ]]";
@@ -722,9 +871,45 @@ void Generator::emitNode(const Node& node, const Pin& enteredPin, std::string& o
 			emitFlowControl(node, enteredPin, out, indent);
 			break;
 
+		case NodeKind::CustomLua: {
+			for (auto output : dataOutputs(node)) {
+				line(out, indent, "local " + identifier(output->name) + " = nil");
+			}
+
+			emitCustomLuaBlock(node, out, indent);
+
+			for (auto output : dataOutputs(node)) {
+				pinNames[output->id] = identifier(output->name);
+			}
+
+			emitChain(findExecOutput(node, ""), out, indent);
+			break;
+		}
+
 		default:
 			line(out, indent, "-- cannot execute node '" + node.title + "'");
 			break;
+	}
+}
+
+void Generator::emitCustomLuaBlock(const Node& node, std::string& out, int indent) {
+	// substituted directly against the raw multi-line source, NOT through expandTemplate:
+	// real Lua can legitimately contain '|' (bitwise op, string/table content), so
+	// expandTemplate's split-on-'|' multi-output segmenting must never run over free-form
+	// user code.
+	std::string substituted = substituteTokens(node.customCode, node, 0);
+	size_t start = 0;
+
+	while (start < substituted.size()) {
+		size_t end = substituted.find('\n', start);
+
+		if (end == std::string::npos) {
+			line(out, indent, substituted.substr(start));
+			break;
+		}
+
+		line(out, indent, substituted.substr(start, end - start));
+		start = end + 1;
 	}
 }
 
@@ -966,36 +1151,57 @@ const std::vector<std::string>& BlueprintLua::LuaApiIdentifiers() {
 	// Mirrors the identifiers SetupUEVRRegistry exposes (and the ones the
 	// generator emits). Whole-word completions for a Lua editor's trie —
 	// namespaces, sdk callback names, api/vr/xinput methods, UObject accessors,
-	// plus the handful of Lua stdlib helpers the codegen leans on.
-	static const std::vector<std::string> words = {
-		// namespaces / roots
-		"uevr", "api", "params", "sdk", "callbacks", "functions", "vr",
-		// sdk callback registration names
-		"on_pre_engine_tick", "on_post_engine_tick", "on_pre_slate_draw_window",
-		"on_xinput_get_state", "on_draw_ui", "on_script_reset",
-		"on_lua_event", "on_frame",
-		// uevr.api methods
-		"find_uobject", "get_local_pawn", "get_player_controller", "get_engine",
-		"execute_command", "get_uobject_array", "find_uobjects",
-		// uevr.params.functions
-		"log_info", "log_error", "log_warn",
-		// UObject accessors
-		"get_full_name", "get_fname", "get_class", "is_a", "to_string",
-		"get_property", "set_property", "call_function",
-		// uevr.params.vr
-		"is_hmd_active", "is_using_controllers", "get_hmd_index",
-		"get_left_controller_index", "get_right_controller_index",
-		"trigger_haptic_vibration", "get_mod_value", "set_mod_value",
-		"recenter_view", "get_standing_origin", "set_standing_origin",
-		"get_rotation_offset", "set_rotation_offset", "get_position_offset",
-		// XINPUT_STATE fields the xinput helpers touch
-		"Gamepad", "wButtons", "bLeftTrigger", "bRightTrigger",
-		"sThumbLX", "sThumbLY", "sThumbRX", "sThumbRY",
-		// math / vector helpers the generator emits
-		"Vector3f", "Vector2f", "new",
-		// Lua stdlib the codegen leans on (handy in hand-written scripts too)
-		"print", "tostring", "tonumber", "pairs", "ipairs", "string", "math",
-		"format", "floor", "ceil", "random", "min", "max", "abs",
-	};
+	// plus the handful of Lua stdlib helpers the codegen leans on. The full
+	// imgui.* binding surface is appended from BlueprintImGuiNames.h rather than
+	// hand-duplicated here.
+	static const std::vector<std::string> words = [] {
+		std::vector<std::string> list = {
+			// namespaces / roots
+			"uevr", "api", "params", "sdk", "callbacks", "functions", "vr", "imgui",
+			// sdk callback registration names (all 18; see SetupUEVRRegistry)
+			"on_pre_engine_tick", "on_post_engine_tick",
+			"on_pre_slate_draw_window_render_thread", "on_post_slate_draw_window_render_thread",
+			"on_xinput_get_state", "on_xinput_set_state", "on_draw_ui", "on_script_reset",
+			"on_frame", "on_pawn_changed", "on_view_target_changed", "on_level_changed",
+			"on_lua_event", "on_early_calculate_stereo_view_offset",
+			"on_pre_calculate_stereo_view_offset", "on_post_calculate_stereo_view_offset",
+			"on_pre_viewport_client_draw", "on_post_viewport_client_draw",
+			// uevr.api methods
+			"find_uobject", "to_uobject", "get_local_pawn", "get_player_controller", "get_engine",
+			"spawn_object", "add_component_by_class", "execute_command", "dispatch_custom_event",
+			"get_uobject_array", "get_console_manager",
+			// uevr.params.functions
+			"log_info", "log_error", "log_warn", "is_drawing_ui",
+			// UObject accessors
+			"get_full_name", "get_fname", "get_class", "get_outer", "as_class", "as_struct",
+			"as_function", "is_a", "to_string", "get_property", "set_property", "call_function",
+			"get_bool_property", "get_float_property", "get_int_property", "get_uint_property",
+			"get_fname_property", "get_uobject_property", "get_property_info", "get_properties",
+			"find_property", "find_function", "get_children", "get_child_properties",
+			// uevr.params.vr
+			"is_runtime_ready", "is_openvr", "is_openxr", "is_hmd_active", "is_using_controllers",
+			"get_hmd_index", "get_left_controller_index", "get_right_controller_index",
+			"get_hmd_width", "get_hmd_height", "get_ui_width", "get_ui_height",
+			"get_movement_orientation", "get_aim_method", "set_aim_method", "is_aim_allowed",
+			"set_aim_allowed", "is_snap_turn_enabled", "set_snap_turn_enabled",
+			"set_decoupled_pitch_enabled", "get_action_handle", "is_action_active",
+			"trigger_haptic_vibration", "get_mod_value", "set_mod_value",
+			"recenter_view", "recenter_horizon", "save_config", "reload_config",
+			"get_standing_origin", "set_standing_origin", "get_rotation_offset", "set_rotation_offset",
+			// XINPUT_STATE fields the xinput helpers touch
+			"Gamepad", "wButtons", "bLeftTrigger", "bRightTrigger",
+			"sThumbLX", "sThumbLY", "sThumbRX", "sThumbRY",
+			// math / vector helpers the generator emits
+			"Vector3f", "Vector2f", "new", "select",
+			// Lua stdlib the codegen leans on (handy in hand-written scripts too)
+			"print", "tostring", "tonumber", "pairs", "ipairs", "string", "math",
+			"format", "floor", "ceil", "random", "min", "max", "abs",
+		};
+
+		const auto& imguiNames = imguiFunctionNames();
+		list.insert(list.end(), imguiNames.begin(), imguiNames.end());
+		return list;
+	}();
+
 	return words;
 }

@@ -159,6 +159,20 @@ static bool tokenizeLine(const std::string& line, std::vector<std::string>& toke
 }
 
 
+// grows a std::string-backed InputTextMultiline buffer in place (standard ImGui idiom
+// for editing arbitrary-length text without a fixed char[] cap — CustomLua nodes hold
+// hand-written Lua source that shouldn't silently truncate)
+static int customLuaTextCallback(ImGuiInputTextCallbackData* data) {
+	if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+		std::string* text = static_cast<std::string*>(data->UserData);
+		text->resize(static_cast<size_t>(data->BufTextLen));
+		data->Buf = text->data();
+	}
+
+	return 0;
+}
+
+
 //
 //	Static description tables
 //
@@ -196,7 +210,8 @@ static const char* nodeKindNames[] = {
 	"VariableSet",
 	"FlowControl",
 	"Reroute",
-	"Comment"
+	"Comment",
+	"CustomLua"
 };
 
 // built-in flow control node definitions (Unreal's standard macros)
@@ -325,6 +340,9 @@ ImU32 BlueprintEditor::headerColor(const Node& node) const {
 
 		case NodeKind::FlowControl:
 			return IM_COL32(80, 80, 80, 255);
+
+		case NodeKind::CustomLua:
+			return IM_COL32(120, 60, 140, 255);
 
 		default:
 			return IM_COL32(60, 60, 60, 255);
@@ -907,6 +925,79 @@ BlueprintEditor::ID BlueprintEditor::AddCommentNode(const std::string& text, con
 	return finishNode(node);
 }
 
+BlueprintEditor::ID BlueprintEditor::AddCustomLuaNode(const ImVec2& pos) {
+	Node& node = createNode(NodeKind::CustomLua, pos);
+	node.title = "Custom Lua";
+	node.customCode = "-- custom lua\n";
+	node.commentSize = ImVec2(260.0f, 160.0f);
+	addPin(node, "", PinType(PinKind::Exec), false);
+	addPin(node, "", PinType(PinKind::Exec), true);
+	return finishNode(node);
+}
+
+bool BlueprintEditor::SetCustomLuaSource(ID nodeID, const std::string& source) {
+	Node* node = findNode(nodeID);
+
+	if (!node || node->kind != NodeKind::CustomLua) {
+		return false;
+	}
+
+	node->customCode = source;
+	recordUndo();
+	dirty = true;
+	return true;
+}
+
+BlueprintEditor::ID BlueprintEditor::AddCustomLuaPin(ID nodeID, bool isOutput, const std::string& name) {
+	Node* node = findNode(nodeID);
+
+	if (!node || node->kind != NodeKind::CustomLua) {
+		return 0;
+	}
+
+	std::string pinName = name;
+
+	if (pinName.empty()) {
+		int count = 0;
+
+		for (auto& pin : node->pins) {
+			if (pin.type.kind != PinKind::Exec && pin.isOutput == isOutput) {
+				count++;
+			}
+		}
+
+		pinName = (isOutput ? "Out" : "In") + std::to_string(count);
+	}
+
+	addPin(*node, pinName, PinType(PinKind::Wildcard), isOutput);
+	ID pinID = node->pins.back().id;
+	rebuildIndex();
+	recordUndo();
+	dirty = true;
+	return pinID;
+}
+
+bool BlueprintEditor::RemoveCustomLuaPin(ID nodeID, ID pinID) {
+	Node* node = findNode(nodeID);
+
+	if (!node || node->kind != NodeKind::CustomLua) {
+		return false;
+	}
+
+	auto it = std::find_if(node->pins.begin(), node->pins.end(), [pinID](const Pin& p) { return p.id == pinID; });
+
+	if (it == node->pins.end() || it->type.kind == PinKind::Exec) {
+		return false; // exec pins are fixed, not dynamic
+	}
+
+	breakPinLinksInternal(pinID);
+	node->pins.erase(it);
+	rebuildIndex();
+	recordUndo();
+	dirty = true;
+	return true;
+}
+
 BlueprintEditor::ID BlueprintEditor::FindPinID(ID node, const std::string& pinName, bool isOutput) const {
 	const Node* n = findNode(node);
 
@@ -919,6 +1010,19 @@ BlueprintEditor::ID BlueprintEditor::FindPinID(ID node, const std::string& pinNa
 	}
 
 	return 0;
+}
+
+bool BlueprintEditor::SetPinDefaultValue(ID pinID, const std::string& value) {
+	Pin* pin = findPin(pinID);
+
+	if (!pin) {
+		return false;
+	}
+
+	pin->defaultValue = value;
+	recordUndo();
+	dirty = true;
+	return true;
 }
 
 
@@ -1469,6 +1573,10 @@ std::string BlueprintEditor::serializeGraph(bool selectionOnly, const char* magi
 			static_cast<double>(node.commentSize.x), static_cast<double>(node.commentSize.y));
 		out += buffer;
 
+		if (node.kind == NodeKind::CustomLua) {
+			out += "lua " + escapeString(node.customCode) + "\n";
+		}
+
 		for (auto& pin : node.pins) {
 			std::snprintf(buffer, sizeof(buffer), "pin %d %s %s ", pin.id, pin.isOutput ? "out" : "in", pinKindName(pin.type.kind));
 			out += buffer;
@@ -1553,6 +1661,9 @@ bool BlueprintEditor::parseGraphText(const std::string& text, const char* magic,
 				node.commentSize.y = std::strtof(tokens[11].c_str(), nullptr);
 				result.nodes.push_back(std::move(node));
 			}
+
+		} else if (tokens[0] == "lua" && tokens.size() >= 2 && !result.nodes.empty()) {
+			result.nodes.back().customCode = tokens[1];
 
 		} else if (tokens[0] == "pin" && tokens.size() >= 7 && !result.nodes.empty()) {
 			Pin pin;
@@ -2065,6 +2176,11 @@ void BlueprintEditor::renderNode(Node& node) {
 		return;
 	}
 
+	if (node.kind == NodeKind::CustomLua) {
+		renderCustomLuaNode(node);
+		return;
+	}
+
 	ImGuiIO& io = ImGui::GetIO();
 	float z = zoom;
 	bool compact = node.kind == NodeKind::VariableGet;
@@ -2520,6 +2636,291 @@ void BlueprintEditor::renderRerouteNode(Node& node) {
 		}
 	}
 
+	ImGui::PopID();
+}
+
+
+//
+//	BlueprintEditor::renderCustomLuaNode
+//
+
+void BlueprintEditor::renderCustomLuaNode(Node& node) {
+	ImGuiIO& io = ImGui::GetIO();
+	float z = zoom;
+
+	node.commentSize.x = std::max(node.commentSize.x, 220.0f);
+	node.commentSize.y = std::max(node.commentSize.y, 140.0f);
+	node.size = node.commentSize;
+
+	ImGui::PushID(node.id);
+	ImGui::PushFont(nullptr, baseFontSize * z);
+
+	ImVec2 p0 = graphToScreen(node.pos);
+	ImVec2 p1 = p0 + node.commentSize * z;
+	float headerH = ImGui::GetTextLineHeight() + 8.0f * z;
+	float rowH = std::max(15.0f * z, ImGui::GetFrameHeight()) + 4.0f * z;
+	float inset = 5.0f * z;
+	float iconSize = 15.0f * z;
+	bool selected = selectedNodes.count(node.id) != 0;
+
+	drawList->AddRectFilled(p0, p1, IM_COL32(22, 22, 22, 235), 6.0f * z);
+	drawList->AddRectFilled(p0, ImVec2(p1.x, p0.y + headerH), headerColor(node), 6.0f * z, ImDrawFlags_RoundCornersTop);
+	drawList->AddLine(ImVec2(p0.x, p0.y + headerH), ImVec2(p1.x, p0.y + headerH), IM_COL32(0, 0, 0, 130), std::max(1.0f, z));
+	drawList->AddRect(p0, p1, selected ? IM_COL32(255, 175, 40, 255) : IM_COL32(70, 70, 70, 255), 6.0f * z, 0, selected ? std::max(1.5f, 2.0f * z) : 1.0f);
+	drawList->AddText(ImGui::GetFont(), baseFontSize * z, ImVec2(p0.x + 9.0f * z, p0.y + 4.0f * z), IM_COL32(255, 255, 255, 255), node.title.c_str());
+
+	// resize grip, bottom right (mirrors renderCommentNode)
+	float grip = 14.0f * z;
+	drawList->AddTriangleFilled(ImVec2(p1.x - grip, p1.y), ImVec2(p1.x, p1.y - grip), p1, IM_COL32(130, 130, 130, 140));
+	ImGui::SetCursorScreenPos(ImVec2(p1.x - grip, p1.y - grip));
+	ImGui::InvisibleButton("##resize", ImVec2(grip, grip));
+
+	if (ImGui::IsItemActivated()) {
+		action = Action::resizeComment;
+		actionNode = node.id;
+	}
+
+	if (ImGui::IsItemActive() && action == Action::resizeComment) {
+		node.commentSize = node.commentSize + io.MouseDelta / z;
+		node.commentSize.x = std::max(node.commentSize.x, 220.0f);
+		node.commentSize.y = std::max(node.commentSize.y, 140.0f);
+	}
+
+	if (ImGui::IsItemDeactivated() && action == Action::resizeComment) {
+		action = Action::none;
+		actionNode = 0;
+		recordUndo();
+		dirty = true;
+	}
+
+	// header: drag to move/select, double-click to rename (mirrors renderCommentNode)
+	if (hoveredNode == 0 && ImGui::IsWindowHovered() &&
+		io.MousePos.x >= p0.x && io.MousePos.x <= p1.x &&
+		io.MousePos.y >= p0.y && io.MousePos.y <= p0.y + headerH) {
+		hoveredNode = node.id;
+	}
+
+	ImGui::SetCursorScreenPos(p0);
+	ImGui::InvisibleButton("##luaheader", ImVec2(std::max(1.0f, p1.x - p0.x), headerH));
+
+	if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+		renameNode = node.id;
+		std::snprintf(renameBuffer, sizeof(renameBuffer), "%s", node.title.c_str());
+		ImGui::OpenPopup("##BlueprintRename");
+	}
+
+	if (ImGui::IsItemActivated()) {
+		if (io.KeyCtrl) {
+			if (selected) {
+				selectedNodes.erase(node.id);
+
+			} else {
+				selectedNodes.insert(node.id);
+			}
+
+		} else if (!selected) {
+			selectedNodes.clear();
+			selectedLinks.clear();
+			selectedNodes.insert(node.id);
+		}
+
+		action = Action::dragNodes;
+		nodesMoved = false;
+	}
+
+	if (ImGui::IsItemActive() && action == Action::dragNodes && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+		nodesMoved = true;
+
+		for (auto id : selectedNodes) {
+			Node* n = findNode(id);
+
+			if (n) {
+				n->pos = n->pos + io.MouseDelta / z;
+			}
+		}
+	}
+
+	if (ImGui::IsItemDeactivated() && action == Action::dragNodes) {
+		action = Action::none;
+
+		if (nodesMoved) {
+			nodesMoved = false;
+			recordUndo();
+			dirty = true;
+		}
+	}
+
+	if (ImGui::BeginPopup("##BlueprintRename")) {
+		if (ImGui::IsWindowAppearing()) {
+			ImGui::SetKeyboardFocusHere();
+		}
+
+		bool done = ImGui::InputText("##rename", renameBuffer, sizeof(renameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+		ImGui::SameLine();
+		done |= ImGui::Button("OK");
+
+		if (done) {
+			Node* n = findNode(renameNode);
+
+			if (n && renameBuffer[0]) {
+				n->title = renameBuffer;
+				recordUndo();
+				dirty = true;
+			}
+
+			renameNode = 0;
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+
+	// split pins: exec pins are fixed (top row), data pins are dynamic (user-managed)
+	std::vector<Pin*> execIn, execOut, dataIn, dataOut;
+
+	for (auto& pin : node.pins) {
+		if (pin.type.kind == PinKind::Exec) {
+			(pin.isOutput ? execOut : execIn).push_back(&pin);
+
+		} else {
+			(pin.isOutput ? dataOut : dataIn).push_back(&pin);
+		}
+	}
+
+	float execY = p0.y + headerH + rowH * 0.5f;
+
+	for (auto pin : execIn) {
+		ImVec2 center(p0.x + inset + iconSize * 0.5f, execY);
+		bool connected = pinLinkCount(pin->id) != 0 || (action == Action::dragLink && actionPin == pin->id);
+		renderPinIcon(center, pin->type, connected);
+		handlePinInteraction(*pin, center);
+	}
+
+	for (auto pin : execOut) {
+		ImVec2 center(p1.x - inset - iconSize * 0.5f, execY);
+		bool connected = pinLinkCount(pin->id) != 0 || (action == Action::dragLink && actionPin == pin->id);
+		renderPinIcon(center, pin->type, connected);
+		handlePinInteraction(*pin, center);
+	}
+
+	// dynamic data pins: inline-renameable name field + remove button on each row
+	float bodyY = p0.y + headerH + rowH;
+	size_t pinRows = std::max(dataIn.size(), dataOut.size());
+	float pinFieldW = std::max(40.0f, (p1.x - p0.x) * 0.5f - (inset + iconSize + 30.0f * z));
+	ID removePin = 0;
+
+	for (size_t i = 0; i < pinRows; i++) {
+		float rowY = bodyY + static_cast<float>(i) * rowH;
+		float centerY = rowY + rowH * 0.5f;
+		float fieldY = rowY + (rowH - ImGui::GetFrameHeight()) * 0.5f;
+
+		if (i < dataIn.size()) {
+			Pin* pin = dataIn[i];
+			ImVec2 center(p0.x + inset + iconSize * 0.5f, centerY);
+			bool connected = pinLinkCount(pin->id) != 0 || (action == Action::dragLink && actionPin == pin->id);
+			renderPinIcon(center, pin->type, connected);
+			handlePinInteraction(*pin, center);
+
+			ImGui::PushID(pin->id);
+			ImGui::SetCursorScreenPos(ImVec2(center.x + iconSize * 0.5f + 4.0f * z, fieldY));
+			char buffer[64];
+			std::snprintf(buffer, sizeof(buffer), "%s", pin->name.c_str());
+			ImGui::SetNextItemWidth(pinFieldW);
+
+			if (ImGui::InputText("##pinname", buffer, sizeof(buffer))) {
+				pin->name = buffer;
+				edited = true;
+			}
+
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				recordUndo();
+			}
+
+			ImGui::SameLine();
+
+			if (ImGui::SmallButton("x")) {
+				removePin = pin->id;
+			}
+
+			ImGui::PopID();
+		}
+
+		if (i < dataOut.size()) {
+			Pin* pin = dataOut[i];
+			ImVec2 center(p1.x - inset - iconSize * 0.5f, centerY);
+			bool connected = pinLinkCount(pin->id) != 0 || (action == Action::dragLink && actionPin == pin->id);
+			renderPinIcon(center, pin->type, connected);
+			handlePinInteraction(*pin, center);
+
+			ImGui::PushID(pin->id);
+			float fieldX = center.x - iconSize * 0.5f - 4.0f * z - pinFieldW;
+			ImGui::SetCursorScreenPos(ImVec2(fieldX - 22.0f * z, fieldY));
+
+			if (ImGui::SmallButton("x")) {
+				removePin = pin->id;
+			}
+
+			ImGui::SameLine();
+			ImGui::SetCursorScreenPos(ImVec2(fieldX, fieldY));
+			char buffer[64];
+			std::snprintf(buffer, sizeof(buffer), "%s", pin->name.c_str());
+			ImGui::SetNextItemWidth(pinFieldW);
+
+			if (ImGui::InputText("##pinname", buffer, sizeof(buffer))) {
+				pin->name = buffer;
+				edited = true;
+			}
+
+			if (ImGui::IsItemDeactivatedAfterEdit()) {
+				recordUndo();
+			}
+
+			ImGui::PopID();
+		}
+	}
+
+	if (removePin != 0) {
+		RemoveCustomLuaPin(node.id, removePin);
+	}
+
+	float buttonsY = bodyY + static_cast<float>(pinRows) * rowH;
+	ImGui::SetCursorScreenPos(ImVec2(p0.x + inset, buttonsY + 2.0f * z));
+
+	if (ImGui::SmallButton("+ Input")) {
+		AddCustomLuaPin(node.id, false);
+	}
+
+	ImGui::SetCursorScreenPos(ImVec2(p1.x - inset - 62.0f * z, buttonsY + 2.0f * z));
+
+	if (ImGui::SmallButton("+ Output")) {
+		AddCustomLuaPin(node.id, true);
+	}
+
+	// the Lua source box fills whatever body space remains down to the resize grip
+	float codeY = buttonsY + rowH;
+	ImVec2 codePos(p0.x + inset, codeY);
+	ImVec2 codeSize(std::max(40.0f, p1.x - p0.x - 2.0f * inset), std::max(40.0f, p1.y - 6.0f * z - codeY));
+
+	ImGui::SetCursorScreenPos(codePos);
+
+	if (ImGui::InputTextMultiline("##luasource", node.customCode.data(), node.customCode.size() + 1, codeSize,
+			ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackResize, customLuaTextCallback, &node.customCode)) {
+		edited = true;
+	}
+
+	if (ImGui::IsItemDeactivatedAfterEdit()) {
+		recordUndo();
+	}
+
+	// hover tracking over the body (below the header) so a canvas box-select doesn't
+	// start from on top of the node's own widgets
+	if (hoveredNode == 0 && ImGui::IsWindowHovered() &&
+		io.MousePos.x >= p0.x && io.MousePos.x <= p1.x &&
+		io.MousePos.y > p0.y + headerH && io.MousePos.y <= p1.y) {
+		hoveredNode = node.id;
+	}
+
+	ImGui::PopFont();
 	ImGui::PopID();
 }
 
@@ -3098,6 +3499,17 @@ void BlueprintEditor::buildPalette() {
 		palette.push_back(std::move(paletteAction));
 	}
 
+	{
+		PaletteAction paletteAction;
+		paletteAction.category = "Utilities";
+		paletteAction.name = "Add Custom Lua Node";
+		paletteAction.keywords = "code script raw lua escape hatch";
+		paletteAction.pins.push_back(std::make_pair(PinType(PinKind::Exec), false));
+		paletteAction.pins.push_back(std::make_pair(PinType(PinKind::Exec), true));
+		paletteAction.spawn = [this](const ImVec2& pos) { return AddCustomLuaNode(pos); };
+		palette.push_back(std::move(paletteAction));
+	}
+
 	std::sort(palette.begin(), palette.end(), [](const PaletteAction& a, const PaletteAction& b) {
 		return a.category == b.category ? a.name < b.name : a.category < b.category;
 	});
@@ -3339,7 +3751,7 @@ void BlueprintEditor::renderNodeContextMenu() {
 				}
 			}
 
-			if (node->kind == NodeKind::Comment || node->kind == NodeKind::CustomEvent) {
+			if (node->kind == NodeKind::Comment || node->kind == NodeKind::CustomEvent || node->kind == NodeKind::CustomLua) {
 				if (ImGui::MenuItem("Rename...")) {
 					renameNode = contextNode;
 					std::snprintf(renameBuffer, sizeof(renameBuffer), "%s", node->title.c_str());

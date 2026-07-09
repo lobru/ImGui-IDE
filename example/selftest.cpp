@@ -28,6 +28,7 @@
 #ifdef IMGUIIDE_PLUGIN_UEVR
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
+#include "BlueprintLuaImport.h"
 #endif
 
 #include <filesystem>
@@ -1394,6 +1395,118 @@ int main()
 		};
 		CHECK(!api.empty() && hasWord("find_uobject") && hasWord("on_pre_engine_tick") && hasWord("uevr"),
 		      "blueprintlua: LuaApiIdentifiers includes core UEVR tokens");
+	}
+
+	// ── Custom Lua node: create/pins/source/save-load round-trip ───────────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+
+		auto node = bp.AddCustomLuaNode(ImVec2(0, 0));
+		CHECK(node != 0, "customlua: node created");
+		CHECK(bp.SetCustomLuaSource(node, "Out0 = 1 + 1"), "customlua: source set");
+
+		auto outPin = bp.AddCustomLuaPin(node, true, "");
+		CHECK(outPin != 0, "customlua: output pin added");
+		CHECK(bp.GetPin(outPin) != nullptr && bp.GetPin(outPin)->name == "Out0",
+		      "customlua: unnamed pin auto-named Out0");
+
+		auto inPin = bp.AddCustomLuaPin(node, false, "MyInput");
+		CHECK(inPin != 0 && bp.GetPin(inPin) != nullptr && bp.GetPin(inPin)->name == "MyInput",
+		      "customlua: named input pin keeps its name");
+
+		CHECK(bp.RemoveCustomLuaPin(node, inPin), "customlua: pin removed");
+		CHECK(bp.GetPin(inPin) == nullptr, "customlua: removed pin no longer resolves");
+
+		auto execIn = bp.FindPinID(node, "", false);
+		CHECK(execIn != 0, "customlua: exec pins survive pin add/remove");
+
+		std::string saved = bp.SaveToString();
+		BlueprintEditor loaded;
+		CHECK(loaded.LoadFromString(saved), "customlua: graph reloads");
+		CHECK(loaded.GetNodeCount() == 1, "customlua: reloaded graph has exactly one node");
+		auto* reloadedNode = loaded.GetNode(loaded.GetNodes()[0].id);
+		CHECK(reloadedNode != nullptr && reloadedNode->customCode == "Out0 = 1 + 1",
+		      "customlua: source text survives save/load");
+		CHECK(reloadedNode != nullptr && reloadedNode->pins.size() == 3, // exec in, exec out, Out0
+		      "customlua: dynamic pin count survives save/load");
+	}
+
+	// ── Custom Lua codegen: mixed with a CallFunction node ──────────────────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto lua = bp.AddCustomLuaNode(ImVec2(320, 0));
+		bp.SetCustomLuaSource(lua, "print(\"hello\")");
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(lua, "", false));
+
+		std::string script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find("print(\"hello\")") != std::string::npos,
+		      "customlua codegen: raw source appears verbatim in the generated script");
+		CHECK(script.find("uevr.sdk.callbacks.on_pre_engine_tick") != std::string::npos,
+		      "customlua codegen: still emits the surrounding event registration");
+	}
+
+	// ── Import: round-trips GenerateScript's own output ─────────────────────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto print = bp.AddCallFunctionNode("UEVR_API", "Print", ImVec2(320, 0));
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(print, "", false));
+		std::string script = BlueprintLua::GenerateScript(bp);
+
+		BlueprintEditor imported;
+		BlueprintLua::SetupUEVRRegistry(imported);
+		std::string error;
+		CHECK(BlueprintLuaImport::ImportScript(imported, script, error),
+		      "import: GenerateScript output imports without error");
+		CHECK(imported.GetNodeCount() >= 2, "import: recognizes the event and the call as separate nodes");
+
+		bool hasEventNode = false, hasCallNode = false;
+		for (auto& n : imported.GetNodes()) {
+			if (n.kind == BlueprintEditor::NodeKind::Event) hasEventNode = true;
+			if (n.kind == BlueprintEditor::NodeKind::CallFunction && n.memberName == "Print") hasCallNode = true;
+		}
+		CHECK(hasEventNode, "import: event wrapper decomposed into a real Event node (not a fallback)");
+		CHECK(hasCallNode, "import: bare call decomposed into a real CallFunction node (not a fallback)");
+
+		// re-generating the imported graph should still mention the same callback + call
+		std::string regenerated = BlueprintLua::GenerateScript(imported);
+		CHECK(regenerated.find("uevr.sdk.callbacks.on_pre_engine_tick") != std::string::npos,
+		      "import round-trip: regenerated script keeps the event registration");
+	}
+
+	// ── Import: never drops or crashes on unrecognizable input ──────────────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		std::string error;
+		std::string weird =
+			"uevr.sdk.callbacks.on_draw_ui(function()\n"
+			"    local x = coroutine.wrap(function() return 1 end)()\n"
+			"    SomeGlobal.deeply.nested[x]:call(1, 2, 3)\n"
+			"end)\n";
+		CHECK(BlueprintLuaImport::ImportScript(bp, weird, error),
+		      "import: unrecognizable-but-valid Lua still succeeds (via fallback)");
+		CHECK(bp.GetNodeCount() >= 1, "import: fallback still produces at least one node, nothing silently dropped");
+
+		bool hasCustomLua = false;
+		for (auto& n : bp.GetNodes()) {
+			if (n.kind == BlueprintEditor::NodeKind::CustomLua && n.customCode.find("coroutine.wrap") != std::string::npos) {
+				hasCustomLua = true;
+			}
+		}
+		CHECK(hasCustomLua, "import: unrecognized body text preserved verbatim in a Custom Lua node");
+
+		// totally empty input is handled gracefully too
+		BlueprintEditor emptyImport;
+		BlueprintLua::SetupUEVRRegistry(emptyImport);
+		std::string emptyError;
+		CHECK(BlueprintLuaImport::ImportScript(emptyImport, "", emptyError),
+		      "import: empty source does not error");
 	}
 #endif // IMGUIIDE_PLUGIN_UEVR
 

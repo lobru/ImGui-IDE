@@ -114,6 +114,20 @@ if not _ok then return '!! modules dump error: '..tostring(_result) end
 return _result
 )LUA";
 
+// quote arbitrary text as a Lua string literal (used to embed watch expressions as data
+// rather than splicing them directly into chunk source)
+std::string lua_quote(const std::string& text) {
+    std::string result = "\"";
+    for (auto c : text) {
+        if (c == '\\') { result += "\\\\"; }
+        else if (c == '"') { result += "\\\""; }
+        else if (c == '\n') { result += "\\n"; }
+        else { result += c; }
+    }
+    result += "\"";
+    return result;
+}
+
 fs::path bridge_dir(const char* sub) {
     const char* appdata = std::getenv("APPDATA");
     fs::path base = appdata ? fs::path(appdata) : fs::path(".");
@@ -159,21 +173,71 @@ void handle_cmd(const fs::path& p) {
     } else if (kind == "modules") {
         result = run_chunk(DUMP_MODULES_LUA, "ide_bridge.modules");
     } else if (kind == "inspect") {
-        // Evaluate the expression and describe the value.
+        // Evaluate the expression and describe the value. A reflectable UObject/UStruct
+        // (has :get_property_info(), see APIUE.lua) is dumped as tab-delimited
+        // name/type/value rows so the IDE can render a real property table; a plain Lua
+        // table falls back to the same 3-column shape over pairs(); anything else is a
+        // single-line type/value description. Both row-producing branches emit the exact
+        // same "name\ttype\tvalue" shape so the IDE-side table renderer doesn't need to
+        // special-case which branch produced them.
         std::string chunk =
             "local ok, v = pcall(function() return " + payload + " end)\n"
             "if not ok then return '!! '..tostring(v) end\n"
             "local t = type(v)\n"
+            "if t == 'userdata' and v.get_property_info then\n"
+            "  local pok, props = pcall(function() return v:get_property_info() end)\n"
+            "  if pok and props then\n"
+            "    local out = {}\n"
+            "    for _, p in ipairs(props) do\n"
+            "      local vs = p.Value ~= nil and tostring(p.Value) or ''\n"
+            "      out[#out+1] = tostring(p.name)..'\\t'..tostring(p.type)..'\\t'..vs\n"
+            "    end\n"
+            "    return table.concat(out, '\\n')\n"
+            "  end\n"
+            "end\n"
             "if t == 'table' then\n"
-            "  local out = { tostring(v) }\n"
+            "  local out = {}\n"
             "  local n = 0\n"
             "  for k, val in pairs(v) do n = n + 1; if n > 200 then break end\n"
-            "    out[#out+1] = string.format('  %-32s %s', tostring(k), tostring(val)) end\n"
+            "    out[#out+1] = tostring(k)..'\\t'..type(val)..'\\t'..tostring(val) end\n"
             "  return table.concat(out, '\\n')\n"
             "end\n"
-            "return t..': '..tostring(v)\n";
+            "return '\\t'..t..'\\t'..tostring(v)\n";
         result = run_chunk(chunk, "ide_bridge.inspect");
         kind = "inspect";
+    } else if (kind == "watch") {
+        // Batched, stateless: the IDE resends the full expression list every poll (no
+        // watch_add/remove registration -- the transport is already best-effort/stateless
+        // everywhere else, and a handful of short expressions is cheap to replay in full).
+        // Response is one "type\tpreview" line per expression, in the SAME ORDER sent --
+        // order is the correlation key, no per-row expression echo needed.
+        std::istringstream in(payload);
+        std::string line;
+        std::string lua_list = "{";
+        while (std::getline(in, line)) {
+            if (line.empty())
+                continue;
+            lua_list += lua_quote(line) + ",";
+        }
+        lua_list += "}";
+        std::string chunk =
+            "local exprs = " + lua_list + "\n"
+            "local out = {}\n"
+            "for _, src in ipairs(exprs) do\n"
+            "  local lok, fn = pcall(load, 'return '..src)\n"
+            "  local ok, v = false, nil\n"
+            "  if lok and fn then ok, v = pcall(fn) end\n"
+            "  if not ok then\n"
+            "    out[#out+1] = 'error\\t'..tostring(v)\n"
+            "  else\n"
+            "    local s = tostring(v)\n"
+            "    if #s > 200 then s = s:sub(1,200)..'..' end\n"
+            "    out[#out+1] = type(v)..'\\t'..s\n"
+            "  end\n"
+            "end\n"
+            "return table.concat(out, '\\n')\n";
+        result = run_chunk(chunk, "ide_bridge.watch");
+        kind = "watch";
     } else {
         // "run": execute the payload as a chunk, capturing errors.
         std::string chunk =

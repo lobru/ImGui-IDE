@@ -111,7 +111,8 @@ if(IMGUIIDE_PLUGIN_UEVR)
 		plugins/uevr/blueprint_window.cpp
 		plugins/uevr/uevr_bridge.cpp
 		../BlueprintEditor.cpp
-		../BlueprintLua.cpp)
+		../BlueprintLua.cpp
+		../BlueprintLuaImport.cpp)
 	target_include_directories(example PRIVATE plugins/uevr)
 	target_compile_definitions(example PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
 endif()
@@ -195,7 +196,7 @@ if(IMGUIIDE_PLUGIN_UNREAL)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
 endif()
 if(IMGUIIDE_PLUGIN_UEVR)
-	target_sources(selftest PRIVATE ../BlueprintEditor.cpp ../BlueprintLua.cpp)
+	target_sources(selftest PRIVATE ../BlueprintEditor.cpp ../BlueprintLua.cpp ../BlueprintLuaImport.cpp)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
 endif()
 target_compile_options(selftest PRIVATE
