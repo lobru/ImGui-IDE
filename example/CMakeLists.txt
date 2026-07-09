@@ -167,6 +167,15 @@ endif()
 set(IMGUIIDE_EXE_NAME "ImGui-IDE" CACHE STRING "Base name of the produced app executable")
 set_target_properties(example PROPERTIES OUTPUT_NAME "${IMGUIIDE_EXE_NAME}")
 
+# Dev/test builds can retarget the whole app payload into a staging directory:
+# because the plugin DLLs and synced assets all follow $<TARGET_FILE_DIR:example>,
+# moving the exe moves everything with it. A rebuild then never has to overwrite —
+# or wait on a file lock from — a separately-running install (exe OR its plugins).
+set(IMGUIIDE_STAGING_DIR "" CACHE PATH "If set, output the app + its plugins here")
+if(IMGUIIDE_STAGING_DIR)
+	set_target_properties(example PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${IMGUIIDE_STAGING_DIR}")
+endif()
+
 # The example executable owns main(); the editor library doesn't.
 target_compile_definitions(example PRIVATE STANDALONE=1)
 
