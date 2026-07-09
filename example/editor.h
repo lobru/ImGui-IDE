@@ -87,6 +87,7 @@ class Editor : public PluginHost {
 	}
 	void hostToast(const std::string &text) override { pushToast(text, IM_COL32(80, 160, 255, 255), 0); }
 	void hostError(const std::string &message) override { showError(message); }
+	void hostSendToClaude(const std::string &message) override { writeToastReply(message); }
 	void hostRunInDir(const std::string &command, const std::filesystem::path &dir) override { runCommandInOutputPanel(command, dir); }
 	void hostRunProjectBuild() override { runProjectBuild(); }
 	std::filesystem::path hostExeDir() const override;                 // exe's directory (get_module_path)

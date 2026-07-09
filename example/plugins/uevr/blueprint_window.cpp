@@ -13,6 +13,7 @@
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
 #include "BlueprintLuaImport.h"
+#include "blueprint_templates.h"
 
 #include "uevr_plugin.h"
 
@@ -48,6 +49,20 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
             {
                 if (ImGui::MenuItem("New / Clear Graph"))
                     bp.ClearGraph();
+                if (ImGui::BeginMenu("New from Template"))
+                {
+                    for (auto &tmpl : BlueprintTemplates::All())
+                    {
+                        if (ImGui::MenuItem(tmpl.name.c_str()))
+                        {
+                            tmpl.build(bp);
+                            host.hostToast("Loaded template: " + tmpl.name);
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s", tmpl.description.c_str());
+                    }
+                    ImGui::EndMenu();
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Save Snapshot"))
                     blueprintSnapshot = bp.SaveToString();
@@ -67,6 +82,30 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                 }
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Best-effort: recognized statements become nodes, everything else becomes a Custom Lua node");
+                if (ImGui::MenuItem("Adapt Active Doc with AI\xe2\x80\xa6"))
+                {
+                    // The structural importer only handles shapes it recognizes; for
+                    // arbitrary hand-written scripts, hand the source to Claude (via the
+                    // editor's reply bridge) to restructure/clean/port it instead.
+                    std::string source = host.hostActiveText();
+                    if (source.empty())
+                        host.hostToast("No active document to adapt");
+                    else
+                    {
+                        std::string prompt =
+                            "[ImGui-IDE / UEVR Blueprint] Please adapt the UEVR Lua script below so it works well in\n"
+                            "this IDE. Recognize the uevr.sdk.callbacks handlers and uevr.api / uevr.params / imgui\n"
+                            "calls, restructure into clear event handlers, fix anything broken or deprecated, and\n"
+                            "leave a short comment on anything that must remain a raw Lua block. Save the adapted\n"
+                            "script next to the project (or open it in the IDE) when done.\n\n"
+                            "--- BEGIN SCRIPT ---\n" +
+                            source + "\n--- END SCRIPT ---\n";
+                        host.hostSendToClaude(prompt);
+                        host.hostToast("Sent to Claude to adapt \xe2\x80\x94 watch for the reply");
+                    }
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Send the active document to Claude to restructure/clean/port when structural import can't");
                 ImGui::EndMenu();
             }
 

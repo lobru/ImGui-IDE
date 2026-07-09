@@ -77,6 +77,12 @@ public:
     // feedback + running
     virtual void hostToast(const std::string &text) = 0;
     virtual void hostError(const std::string &message) = 0;                                     // modal error dialog
+
+    // hand a message to the connected AI assistant (Claude) via the editor's
+    // reply outbox — the same channel the in-editor "Reply to Claude" feature
+    // uses. A Claude Code loop watching the project picks it up. Fire-and-forget.
+    virtual void hostSendToClaude(const std::string &message) = 0;
+
     virtual void hostRunInDir(const std::string &command, const std::filesystem::path &dir) = 0; // run in the Output panel
     virtual void hostRunProjectBuild() = 0;                                                     // the F6 build resolver
 

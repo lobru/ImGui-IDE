@@ -29,6 +29,7 @@
 #include "BlueprintEditor.h"
 #include "BlueprintLua.h"
 #include "BlueprintLuaImport.h"
+#include "blueprint_templates.h"
 #endif
 
 #include <filesystem>
@@ -1140,6 +1141,7 @@ int main()
 			std::string hostActiveSelection() const override { return {}; }
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
+			void hostSendToClaude(const std::string&) override {}
 			void hostRunInDir(const std::string&, const std::filesystem::path&) override {}
 			void hostRunProjectBuild() override {}
 			std::filesystem::path hostExeDir() const override { return {}; }
@@ -1202,6 +1204,7 @@ int main()
 			std::string hostActiveSelection() const override { return {}; }
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
+			void hostSendToClaude(const std::string&) override {}
 			void hostRunInDir(const std::string&, const std::filesystem::path&) override {}
 			void hostRunProjectBuild() override {}
 			std::filesystem::path hostExeDir() const override { return {}; }
@@ -1520,6 +1523,42 @@ int main()
 		std::string emptyError;
 		CHECK(BlueprintLuaImport::ImportScript(emptyImport, "", emptyError),
 		      "import: empty source does not error");
+	}
+
+	// ── Blueprint templates: each builds a valid, generating graph ─────────
+	// A wrong class/function/pin name would silently drop a link, so the content
+	// spot-checks below (which need the links intact) are the real guard.
+	{
+		const auto& templates = BlueprintTemplates::All();
+		CHECK(templates.size() >= 3, "templates: at least three built-in templates");
+		for (auto& tmpl : templates) {
+			BlueprintEditor bp;
+			BlueprintLua::SetupUEVRRegistry(bp);
+			tmpl.build(bp);
+			CHECK(bp.GetNodeCount() >= 2, "template: builds at least two nodes");
+			CHECK(!BlueprintLua::GenerateScript(bp).empty(), "template: generates a non-empty script");
+		}
+
+		BlueprintEditor hello;
+		BlueprintLua::SetupUEVRRegistry(hello);
+		templates[0].build(hello);
+		std::string h = BlueprintLua::GenerateScript(hello);
+		CHECK(h.find("on_pre_engine_tick") != std::string::npos && h.find("Hello from UEVR") != std::string::npos,
+		      "template hello: registers the tick and prints the message");
+
+		BlueprintEditor ui;
+		BlueprintLua::SetupUEVRRegistry(ui);
+		templates[1].build(ui);
+		std::string u = BlueprintLua::GenerateScript(ui);
+		CHECK(u.find("begin_window") != std::string::npos && u.find("end_window") != std::string::npos,
+		      "template panel: emits begin_window + end_window");
+
+		BlueprintEditor pawn;
+		BlueprintLua::SetupUEVRRegistry(pawn);
+		templates[2].build(pawn);
+		std::string p = BlueprintLua::GenerateScript(pawn);
+		CHECK(p.find("get_local_pawn") != std::string::npos && p.find("get_full_name") != std::string::npos,
+		      "template log-pawn: data links carry pawn:get_full_name() into print");
 	}
 #endif // IMGUIIDE_PLUGIN_UEVR
 
