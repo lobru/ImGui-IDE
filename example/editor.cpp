@@ -80,6 +80,7 @@
 
 #include "editor.h"
 #include "cppgen.h"
+#include "plugin_loader.h"
 #include "pdfview.h"
 #include "tsindex.h"
 
@@ -412,6 +413,23 @@ Editor::Editor()
     // register (e.g. augment the shared C++ language) BEFORE the first document
     // — the demo tab below opens as C++. enabled() reads flags loaded above.
     registerBuiltinPlugins(pluginRegistry);
+    // Feature plugins packaged as DLLs under <exe>/plugins are loaded at runtime,
+    // so a lean core exe can ship without them and gain them by dropping in a DLL.
+    // They join the same registry as any compiled-in plugins, before registerAll
+    // applies persisted enable flags and runs onRegister. Results go to both stderr
+    // (dev console) and <config>/plugins.log so a GUI launch leaves a trace to
+    // diagnose a plugin that didn't load.
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(userConfigDir(), ec);
+        std::ofstream pluginLog(userConfigDir() / "plugins.log", std::ios::trunc);
+        loadPluginDLLs(pluginRegistry, hostExeDir() / "plugins",
+                       [&pluginLog](const std::string &msg) {
+                           std::fprintf(stderr, "%s\n", msg.c_str());
+                           if (pluginLog)
+                               pluginLog << msg << "\n";
+                       });
+    }
     pluginRegistry.registerAll(*this);
 
     // Skip the demo when this is a second-or-later launch (settings file
@@ -820,6 +838,25 @@ void Editor::runCommandInOutputPanel(const std::string &cmd, const std::filesyst
 std::filesystem::path Editor::hostExeDir() const
 {
     return get_module_path().parent_path();
+}
+
+// PluginHost::hostAugmentCppLanguage — apply a plugin's UE-style vocabulary to the
+// editor's single shared C++ Language. Runs in the exe, which owns the real
+// TextEditor::Language statics, so DLL plugins (with their own static TextEditor)
+// still colour the same definition the editor renders with.
+void Editor::hostAugmentCppLanguage(const std::vector<std::string> &types,
+                                    const std::vector<std::string> &keywords,
+                                    bool (*isTypeLike)(const std::string &))
+{
+    TextEditor::Language *cpp = TextEditor::Language::CppMutable();
+    if (!cpp)
+        return;
+    for (auto &t : types)
+        cpp->declarations.insert(t);
+    for (auto &k : keywords)
+        cpp->keywords.insert(k);
+    if (isTypeLike)
+        cpp->isTypeLike = isTypeLike;
 }
 
 void Editor::runProjectBuild()

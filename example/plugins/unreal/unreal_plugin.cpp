@@ -6,10 +6,9 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <vector>
 
 #include <imgui.h>
-
-#include "TextEditor.h"
 
 #include "unreal.h"
 #include "unreal_plugin.h"
@@ -38,13 +37,11 @@ std::unique_ptr<EditorPlugin> createUnrealPlugin()
     return std::make_unique<UnrealPlugin>();
 }
 
-void UnrealPlugin::onRegister(PluginHost &)
+void UnrealPlugin::onRegister(PluginHost &host)
 {
     // Augment the shared C++ language once with Unreal's vocabulary. Harmless in
-    // non-UE C++ (these names simply don't appear there).
-    TextEditor::Language *cpp = TextEditor::Language::CppMutable();
-    if (!cpp)
-        return;
+    // non-UE C++ (these names simply don't appear there). Applied through the host
+    // so this works identically whether the plugin is compiled in or DLL-loaded.
 
     // UE fundamental types, containers, smart pointers, math + string types —
     // colored as types (declarations). Aliases like int32/FString/TArray that
@@ -71,11 +68,10 @@ void UnrealPlugin::onRegister(PluginHost &)
         "FORCEINLINE", "FORCENOINLINE", "UE_DEPRECATED", "UE_NODISCARD",
         "LOCTEXT", "NSLOCTEXT", "TEXT", "INVTEXT", "PURE_VIRTUAL"};
 
-    for (auto &t : ueTypes)
-        cpp->declarations.insert(t);
-    for (auto &m : ueMacros)
-        cpp->keywords.insert(m);
-    cpp->isTypeLike = unrealTypeLike; // catch unlisted F*/U*/A*/T*/E*/I*/S* types
+    host.hostAugmentCppLanguage(
+        std::vector<std::string>(std::begin(ueTypes), std::end(ueTypes)),   // → declarations
+        std::vector<std::string>(std::begin(ueMacros), std::end(ueMacros)), // → keywords
+        unrealTypeLike); // catch unlisted F*/U*/A*/T*/E*/I*/S* types
 }
 
 void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)

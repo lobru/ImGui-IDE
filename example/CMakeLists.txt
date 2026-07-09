@@ -83,38 +83,71 @@ add_executable(example
 	pdfview.cpp
 	cppgen.cpp
 	plugin_registry.cpp
+	plugin_loader.cpp
 	dejavu.cpp
 	main.cpp)
 
 target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
 
-# ── In-process plugins ────────────────────────────────────────────────────
+# ── Feature plugins, packaged as runtime-loaded DLLs ──────────────────────
 # Domain-specific features live in plugins, each behind its own flag (default
-# ON). A core build with every flag OFF compiles none of their code. See
-# example/plugin_api.h.
-option(IMGUIIDE_PLUGIN_UNREAL "Build the Unreal Engine integration plugin" ON)
-option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin" ON)
+# ON). Each enabled plugin builds as a MODULE (a dlopen-only shared library)
+# dropped into <exe>/plugins and loaded at startup by plugin_loader.cpp. The core
+# exe links none of their code, so a plugin-less build is a genuinely smaller
+# binary that gains a feature simply by having its DLL present. See plugin_api.h
+# (the C++ interface) and plugin_abi.h (the extern-"C" DLL boundary).
+option(IMGUIIDE_PLUGIN_UNREAL "Build the Unreal Engine integration plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin (DLL)" ON)
+
+# Static deps linked INTO a plugin DLL must be position-independent (a no-op on
+# Windows; required to pull a static archive into a shared object elsewhere).
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR)
+	set_property(TARGET imgui imguifd PROPERTY POSITION_INDEPENDENT_CODE ON)
+endif()
+
+# imguiide_add_plugin(<target> <factory> <sources...>)
+# Builds one plugin DLL: the given sources + the shared extern-"C" ABI shim, with
+# the shim wired to <factory> (the plugin's createXxxPlugin). The .dll lands in
+# <exe>/plugins and is built alongside the exe. Only the 3 ABI functions are
+# exported; imgui is linked in statically and shares the host context at runtime.
+function(imguiide_add_plugin name factory)
+	add_library(${name} MODULE ${ARGN} plugins/plugin_dll_main.cpp)
+	target_link_libraries(${name} PRIVATE imguifd)
+	target_include_directories(${name} PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${CMAKE_CURRENT_SOURCE_DIR}/..)
+	target_compile_definitions(${name} PRIVATE IMGUIIDE_PLUGIN_FACTORY=${factory})
+	set_target_properties(${name} PROPERTIES
+		PREFIX ""
+		LIBRARY_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:example>/plugins"
+		RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:example>/plugins")
+	target_compile_options(${name} PRIVATE
+		$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+		$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+	add_dependencies(example ${name}) # build + deploy the DLL whenever the exe builds
+endfunction()
 
 if(IMGUIIDE_PLUGIN_UNREAL)
-	target_sources(example PRIVATE
+	imguiide_add_plugin(imguiide_unreal createUnrealPlugin
 		plugins/unreal/unreal_plugin.cpp
 		plugins/unreal/unreal.cpp)
-	target_include_directories(example PRIVATE plugins/unreal)
-	target_compile_definitions(example PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
+	target_include_directories(imguiide_unreal PRIVATE plugins/unreal)
+	target_link_libraries(imguiide_unreal PRIVATE nlohmann_json) # unreal.cpp parses .uproject JSON
+	target_compile_definitions(imguiide_unreal PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
 endif()
 
 if(IMGUIIDE_PLUGIN_UEVR)
-	# BlueprintEditor/BlueprintLua are used ONLY by this plugin, so they compile
-	# with it (not in TextEditorLib) — a core build omits them entirely.
-	target_sources(example PRIVATE
+	# BlueprintEditor/BlueprintLua/Import are used ONLY by this plugin, so they
+	# compile into its DLL (not TextEditorLib) — a core build omits them entirely.
+	imguiide_add_plugin(imguiide_uevr createUevrPlugin
 		plugins/uevr/uevr_plugin.cpp
 		plugins/uevr/blueprint_window.cpp
 		plugins/uevr/uevr_bridge.cpp
 		../BlueprintEditor.cpp
 		../BlueprintLua.cpp
 		../BlueprintLuaImport.cpp)
-	target_include_directories(example PRIVATE plugins/uevr)
-	target_compile_definitions(example PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
+	target_include_directories(imguiide_uevr PRIVATE plugins/uevr)
+	target_compile_definitions(imguiide_uevr PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
 endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP; the PDF viewer uses the

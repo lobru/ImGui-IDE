@@ -1147,6 +1147,17 @@ int main()
 			bool hostGetFlag(const std::string&, bool d) const override { return d; }
 			void hostSetFlag(const std::string&, bool) override {}
 			bool hostPanInverted() const override { return false; }
+			// mirror Editor's impl so this test exercises the real host-routed path
+			void hostAugmentCppLanguage(const std::vector<std::string>& types,
+			                            const std::vector<std::string>& keywords,
+			                            bool (*isTypeLike)(const std::string&)) override
+			{
+				auto* cpp = TextEditor::Language::CppMutable();
+				if (!cpp) return;
+				for (auto& t : types) cpp->declarations.insert(t);
+				for (auto& k : keywords) cpp->keywords.insert(k);
+				if (isTypeLike) cpp->isTypeLike = isTypeLike;
+			}
 		} stub;
 		UnrealPlugin().onRegister(stub);
 
@@ -1196,6 +1207,8 @@ int main()
 			std::filesystem::path hostExeDir() const override { return {}; }
 			std::filesystem::path hostRepoRoot() const override { return {}; }
 			bool hostPanInverted() const override { return false; }
+			void hostAugmentCppLanguage(const std::vector<std::string>&, const std::vector<std::string>&,
+			                            bool (*)(const std::string&)) override {}
 			bool hostGetFlag(const std::string& k, bool d) const override
 			{
 				auto it = flags.find(k);

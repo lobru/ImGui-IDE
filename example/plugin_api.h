@@ -17,6 +17,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 // Top-level menus a plugin can contribute into (mirror renderMenuBar()).
 enum class PluginMenu
@@ -85,6 +86,15 @@ public:
 
     // shared UI preferences a plugin's own surfaces must honor
     virtual bool hostPanInverted() const = 0; // invert-pan setting (every pan surface honors it)
+
+    // augment the editor's shared C++ language definition (add type/keyword
+    // vocabulary, install an isTypeLike fallback). Routed through the host so a
+    // plugin — including one loaded from a DLL with its own static TextEditor —
+    // mutates the ONE Language the editor actually highlights with, not a private
+    // copy. isTypeLike may be null to leave the existing fallback in place.
+    virtual void hostAugmentCppLanguage(const std::vector<std::string> &types,
+                                        const std::vector<std::string> &keywords,
+                                        bool (*isTypeLike)(const std::string &)) = 0;
 
     // small persisted key -> bool store (runtime enable toggles, etc.)
     virtual bool hostGetFlag(const std::string &key, bool def) const = 0;
