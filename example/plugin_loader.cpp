@@ -62,13 +62,18 @@ void loadPluginDLLs(PluginRegistry &registry, const std::filesystem::path &plugi
     void *allocUd = nullptr;
     ImGui::GetAllocatorFunctions(&allocFn, &freeFn, &allocUd);
 
+    // Manual increment with an error_code: a range-for over directory_iterator only
+    // passes ec to construction — its operator++ still THROWS. plugins/ is exactly the
+    // kind of directory that can change under us (a concurrent build writing .dll/.pdb),
+    // so iterate the fully non-throwing way, with a separate ec per entry so one bad
+    // entry doesn't abort the whole scan.
     std::vector<std::filesystem::path> files;
-    for (auto &entry : std::filesystem::directory_iterator(pluginsDir, ec))
+    for (auto it = std::filesystem::directory_iterator(pluginsDir, ec);
+         !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
     {
-        if (ec)
-            break;
-        if (entry.is_regular_file(ec) && isPluginFile(entry.path()))
-            files.push_back(entry.path());
+        std::error_code fec;
+        if (it->is_regular_file(fec) && !fec && isPluginFile(it->path()))
+            files.push_back(it->path());
     }
     std::sort(files.begin(), files.end()); // deterministic load order
 
