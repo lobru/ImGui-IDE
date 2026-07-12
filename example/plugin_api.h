@@ -93,6 +93,12 @@ public:
     // shared UI preferences a plugin's own surfaces must honor
     virtual bool hostPanInverted() const = 0; // invert-pan setting (every pan surface honors it)
 
+    // Apply the editor's middle-mouse drag-to-pan/scroll to the CURRENT ImGui window
+    // (call inside a scroll child, like the editor does in its panels). Honors the
+    // invert-pan + accel prefs. windowKey must be unique across all live pan surfaces;
+    // the editor uses 1..99, so plugins should use 100+.
+    virtual void hostMiddleMousePanScroll(int windowKey) = 0;
+
     // augment the editor's shared C++ language definition (add type/keyword
     // vocabulary, install an isTypeLike fallback). Routed through the host so a
     // plugin — including one loaded from a DLL with its own static TextEditor —

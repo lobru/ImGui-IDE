@@ -99,6 +99,7 @@ BlueprintEditor::PinType sidebarVarPinType(int idx)
     case 3: return BlueprintEditor::PinType(PK::Vector);
     case 4: return BlueprintEditor::PinType(PK::Integer);
     case 5: return BlueprintEditor::PinType(PK::Object, "UObject");
+
     default: return BlueprintEditor::PinType(PK::Wildcard);
     }
 }
@@ -119,9 +120,10 @@ const char *pinKindLabel(BlueprintEditor::PinKind k)
 }
 } // namespace
 
-void UevrPlugin::renderBlueprintSidebar(PluginHost &, BlueprintEditor &bp)
+void UevrPlugin::renderBlueprintSidebar(PluginHost &host, BlueprintEditor &bp)
 {
-    ImGui::BeginChild("##bpSidebar", ImVec2(210.0f, 0.0f), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
+    ImGui::BeginChild("##bpSidebar", ImVec2(210.0f, 0.0f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX, ImGuiWindowFlags_HorizontalScrollbar);
 
     // ── UEVR SDK callbacks: click to drop the event node ──────────────────
     if (ImGui::CollapsingHeader("Callbacks", ImGuiTreeNodeFlags_DefaultOpen))
@@ -151,7 +153,7 @@ void UevrPlugin::renderBlueprintSidebar(PluginHost &, BlueprintEditor &bp)
                 ImGui::SetKeyboardFocusHere();
             bool enter = ImGui::InputTextWithHint("##vn", "name", sidebarVarName, sizeof(sidebarVarName),
                                                   ImGuiInputTextFlags_EnterReturnsTrue);
-            const char *types[] = {"String", "Number", "Boolean", "Vector", "Integer", "Object"};
+            const char *types[] = {"String", "Number", "Boolean", "Vector", "Integer", "Object", "Class",};
             ImGui::SetNextItemWidth(150.0f);
             ImGui::Combo("##vt", &sidebarVarType, types, IM_ARRAYSIZE(types));
             if ((ImGui::Button("Add") || enter) && sidebarVarName[0])
@@ -188,6 +190,7 @@ void UevrPlugin::renderBlueprintSidebar(PluginHost &, BlueprintEditor &bp)
             ImGui::TextDisabled("(no variables yet)");
     }
 
+    host.hostMiddleMousePanScroll(105);
     ImGui::EndChild();
 }
 

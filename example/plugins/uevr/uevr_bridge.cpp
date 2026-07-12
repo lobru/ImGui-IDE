@@ -244,11 +244,12 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
     {
         if (ImGui::BeginTabItem("Output"))
         {
-            ImGui::BeginChild("##uevrOut", ImVec2(0, 0), ImGuiChildFlags_Borders);
+            ImGui::BeginChild("##uevrOut", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
             for (auto &line : uevrOutputLog)
                 ImGui::TextUnformatted(line.c_str());
             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
                 ImGui::SetScrollHereY(1.0f); // autoscroll when pinned to bottom
+            host.hostMiddleMousePanScroll(100);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -256,8 +257,9 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
         {
             if (ImGui::Button("Refresh"))
                 sendUevr("globals", "");
-            ImGui::BeginChild("##uevrGlobals", ImVec2(0, 0), ImGuiChildFlags_Borders);
+            ImGui::BeginChild("##uevrGlobals", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
             ImGui::TextUnformatted(uevrGlobals.empty() ? "(refresh to query the game)" : uevrGlobals.c_str());
+            host.hostMiddleMousePanScroll(101);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -265,8 +267,9 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
         {
             if (ImGui::Button("Refresh"))
                 sendUevr("modules", "");
-            ImGui::BeginChild("##uevrModules", ImVec2(0, 0), ImGuiChildFlags_Borders);
+            ImGui::BeginChild("##uevrModules", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
             ImGui::TextUnformatted(uevrModules.empty() ? "(refresh to query the game)" : uevrModules.c_str());
+            host.hostMiddleMousePanScroll(102);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -319,6 +322,7 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
             {
                 ImGui::TextUnformatted(uevrInspect.c_str());
             }
+            host.hostMiddleMousePanScroll(103);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -378,6 +382,7 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
                     uevrWatches.erase(uevrWatches.begin() + removeIndex);
                 ImGui::EndTable();
             }
+            host.hostMiddleMousePanScroll(104);
             ImGui::EndChild();
             ImGui::EndTabItem();
         }

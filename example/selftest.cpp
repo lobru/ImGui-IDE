@@ -1168,6 +1168,7 @@ int main(int argc, char** argv)
 			bool hostGetFlag(const std::string&, bool d) const override { return d; }
 			void hostSetFlag(const std::string&, bool) override {}
 			bool hostPanInverted() const override { return false; }
+			void hostMiddleMousePanScroll(int) override {}
 			// mirror Editor's impl so this test exercises the real host-routed path
 			void hostAugmentCppLanguage(const std::vector<std::string>& types,
 			                            const std::vector<std::string>& keywords,
@@ -1229,6 +1230,7 @@ int main(int argc, char** argv)
 			std::filesystem::path hostExeDir() const override { return {}; }
 			std::filesystem::path hostRepoRoot() const override { return {}; }
 			bool hostPanInverted() const override { return false; }
+			void hostMiddleMousePanScroll(int) override {}
 			void hostAugmentCppLanguage(const std::vector<std::string>&, const std::vector<std::string>&,
 			                            bool (*)(const std::string&)) override {}
 			bool hostGetFlag(const std::string& k, bool d) const override

@@ -93,6 +93,7 @@ class Editor : public PluginHost {
 	std::filesystem::path hostExeDir() const override;                 // exe's directory (get_module_path)
 	std::filesystem::path hostRepoRoot() const override { return findSelfRepoRoot(); }
 	bool hostPanInverted() const override { return prefInvertPan; }
+	void hostMiddleMousePanScroll(int windowKey) override { middleMousePanScroll(windowKey); }
 	void hostAugmentCppLanguage(const std::vector<std::string> &types,
 	                            const std::vector<std::string> &keywords,
 	                            bool (*isTypeLike)(const std::string &)) override;
