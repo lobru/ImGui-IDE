@@ -1163,7 +1163,12 @@ bool BlueprintEditor::wouldCreateDataCycle(ID fromNode, ID toNode) const {
 
 bool BlueprintEditor::typesCompatible(const PinType& from, const PinType& to) const {
 	if (from.isArray != to.isArray) {
-		return false;
+		// A Wildcard pin is "any Lua value" — array-ness is advisory on it, so a
+		// Table (array) variable wires into For Each's Wildcard "Array" pin. The
+		// strict array/scalar split only applies between two TYPED pins.
+		if (from.kind != PinKind::Wildcard && to.kind != PinKind::Wildcard) {
+			return false;
+		}
 	}
 
 	if (from.kind == PinKind::Exec || to.kind == PinKind::Exec) {

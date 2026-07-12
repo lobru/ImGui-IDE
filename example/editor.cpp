@@ -1331,17 +1331,34 @@ void Editor::formatActiveDocument()
     }
     else
     {
-        // stylua / black / rustfmt format the file IN PLACE; read it back after.
+        // stylua / black / rustfmt format the file IN PLACE, so stdout isn't the
+        // result — capture stderr too and surface the tool's ACTUAL message (line/
+        // column of a syntax error) instead of a generic guess.
         const char *name = (tool == Tool::Stylua) ? "stylua" : (tool == Tool::Black) ? "black"
                                                                                      : "rustfmt";
-        std::string cmd = (tool == Tool::Stylua)  ? "stylua " + q + " 2>nul"
-                          : (tool == Tool::Black) ? "black -q " + q + " 2>nul"
-                                                  : "rustfmt " + q + " 2>nul";
+        std::string cmd = (tool == Tool::Stylua)  ? "stylua " + q + " 2>&1"
+                          : (tool == Tool::Black) ? "black -q " + q + " 2>&1"
+                                                  : "rustfmt " + q + " 2>&1";
         int rc = run(cmd);
         if (rc != 0)
         {
             std::filesystem::remove(src, ec);
-            showError(std::string("Format: ") + name + " failed (on PATH? syntax error?).");
+            if (out.find("is not recognized") != std::string::npos || out.find("cannot find") != std::string::npos)
+                showError(std::string("Format: ") + name + " is not installed (not found on PATH).");
+            else
+            {
+                // first few lines of the tool's own diagnostics (path prefix trimmed)
+                std::string detail = out.substr(0, out.find('\0'));
+                size_t cut = 0, lines = 0;
+                while (cut < detail.size() && lines < 4)
+                    if (detail[cut++] == '\n')
+                        lines++;
+                detail = detail.substr(0, cut);
+                while (!detail.empty() && (detail.back() == '\n' || detail.back() == '\r'))
+                    detail.pop_back();
+                showError(std::string("Format: ") + name + " rejected the document:\n\n" +
+                          (detail.empty() ? "(no diagnostics reported)" : detail));
+            }
             return;
         }
         std::ifstream rf(src, std::ios::binary);

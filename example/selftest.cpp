@@ -68,6 +68,63 @@ static size_t foldCount(const TextEditor::Language* lang, const std::string& src
 int main(int argc, char** argv)
 {
 #ifdef IMGUIIDE_PLUGIN_UEVR
+	// Dev helper: `selftest --dump-lua` prints a kitchen-sink generated script
+	// (variables incl. lazy-init + tables, custom-lua functions, events with the
+	// guard/pcall wrapper, For Each, Make Struct) so external Lua tools (stylua,
+	// luacheck) can validate the generator's output syntax.
+	if (argc > 1 && std::string(argv[1]) == "--dump-lua") {
+		using PK = BlueprintEditor::PinKind;
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		bp.AddVariable("Items", BlueprintEditor::PinType(PK::Wildcard, "", true), "");
+		bp.AddVariable("Pawn", BlueprintEditor::PinType(PK::Object, "UObject"), "");
+		bp.AddVariable("Speed", BlueprintEditor::PinType(PK::Float), "1.5");
+
+		auto& reg = bp.GetRegistry();
+		auto& s = reg.AddClass("FTestStruct", "", "");
+		s.AddProperty("X", BlueprintEditor::PinType(PK::Float), "");
+		reg.AddClass("Consumer", "", "").AddFunction("Use", "")
+			.Static().In("S", BlueprintEditor::PinType(PK::Struct, "FTestStruct")).Metadata("use({0})");
+
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto fetch = bp.AddCallFunctionNode("UEVR_API", "Get Local Pawn", ImVec2(0, 150));
+		auto init = bp.AddVariableSetIfUnsetNode("Pawn", ImVec2(250, 0));
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(init, "", false));
+		bp.AddLink(bp.FindPinID(fetch, "Return Value", true), bp.FindPinID(init, "Pawn", false));
+
+		auto getPawn = bp.AddVariableGetNode("Pawn", ImVec2(250, 150));
+		auto valid = bp.AddFlowControlNode("Is Valid", ImVec2(500, 0));
+		bp.AddLink(bp.FindPinID(init, "", true), bp.FindPinID(valid, "", false));
+		bp.AddLink(bp.FindPinID(getPawn, "", true), bp.FindPinID(valid, "Object", false));
+
+		auto add = bp.AddCallFunctionNode("LuaTable", "Array Add", ImVec2(750, 0));
+		auto getItems = bp.AddVariableGetNode("Items", ImVec2(750, 150));
+		bp.AddLink(bp.FindPinID(valid, "Is Valid", true), bp.FindPinID(add, "", false));
+		bp.AddLink(bp.FindPinID(getItems, "", true), bp.FindPinID(add, "Array", false));
+		bp.SetPinDefaultValue(bp.FindPinID(add, "Value", false), "tick");
+
+		auto each = bp.AddFlowControlNode("For Each", ImVec2(1000, 0));
+		auto getItems2 = bp.AddVariableGetNode("Items", ImVec2(1000, 200));
+		bp.AddLink(bp.FindPinID(add, "", true), bp.FindPinID(each, "", false));
+		bp.AddLink(bp.FindPinID(getItems2, "", true), bp.FindPinID(each, "Array", false));
+
+		auto lua = bp.AddCustomLuaNode(ImVec2(1300, 0));
+		bp.AddCustomLuaPin(lua, false, "Item");
+		bp.AddCustomLuaPin(lua, true, "Out0");
+		bp.SetCustomLuaSource(lua, "print(tostring({Item}))\nOut0 = {Item}");
+		bp.AddLink(bp.FindPinID(each, "Loop Body", true), bp.FindPinID(lua, "", false));
+		bp.AddLink(bp.FindPinID(each, "Element", true), bp.FindPinID(lua, "Item", false));
+
+		auto mk = bp.AddMakeStructNode("FTestStruct", ImVec2(1300, 300));
+		bp.SetPinDefaultValue(bp.FindPinID(mk, "X", false), "2.0");
+		auto use = bp.AddCallFunctionNode("Consumer", "Use", ImVec2(1600, 0));
+		bp.AddLink(bp.FindPinID(each, "Completed", true), bp.FindPinID(use, "", false));
+		bp.AddLink(bp.FindPinID(mk, "FTestStruct", true), bp.FindPinID(use, "S", false));
+
+		std::printf("%s\n", BlueprintLua::GenerateScript(bp).c_str());
+		return 0;
+	}
+
 	// Dev helper: `selftest <sdk_dump_dir>` loads a real UEVR SDK dump through the
 	// same importer the plugin uses and reports counts — a headless way to sanity
 	// -check real dumps without launching the app. Exits without running the suite.
@@ -1738,7 +1795,8 @@ int main(int argc, char** argv)
 		CHECK(addNode != 0, "snippet table: Array Add present");
 		bp.AddLink(bp.FindPinID(ev, "", true), bp.FindPinID(addNode, "", false));
 		std::string script = BlueprintLua::GenerateScript(bp);
-		CHECK(script.find("table.insert(") != std::string::npos && script.find("in ipairs(") != std::string::npos,
+		CHECK(script.find("table.insert(Items, \"hello\")") != std::string::npos &&
+		          script.find("in ipairs((Items) or {})") != std::string::npos,
 		      "snippet table: append + iterate codegen");
 
 		BlueprintEditor bp2;
@@ -1842,7 +1900,7 @@ int main(int argc, char** argv)
 		bp.AddLink(bp.FindPinID(each, "Element", true), bp.FindPinID(lua, "Item", false));
 
 		std::string script = BlueprintLua::GenerateScript(bp);
-		CHECK(script.find("in ipairs(") != std::string::npos, "foreach: emits ipairs iteration");
+		CHECK(script.find("in ipairs((Items) or {})") != std::string::npos, "foreach: the table variable actually wires into the loop");
 		CHECK(script.find("local function bpLua") != std::string::npos,
 		      "customlua: node compiled as a local function");
 		CHECK(script.find("print(tostring(Item))") != std::string::npos,

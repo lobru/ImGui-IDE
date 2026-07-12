@@ -705,6 +705,23 @@ std::string Generator::defaultLiteral(const Pin& pin) const {
 				return "{}";
 			}
 
+			// A hand-entered default on a Wildcard pin: infer the Lua literal (number /
+			// boolean / quoted string) rather than silently dropping it to nil.
+			if (pin.type.kind == PinKind::Wildcard && !pin.defaultValue.empty()) {
+				if (pin.defaultValue == "true" || pin.defaultValue == "false" || pin.defaultValue == "nil") {
+					return pin.defaultValue;
+				}
+
+				char* end = nullptr;
+				(void)std::strtod(pin.defaultValue.c_str(), &end);
+
+				if (end && *end == '\0' && end != pin.defaultValue.c_str()) {
+					return pin.defaultValue; // parses fully as a number
+				}
+
+				return luaString(pin.defaultValue);
+			}
+
 			return "nil";
 	}
 }
