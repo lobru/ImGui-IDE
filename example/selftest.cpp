@@ -1763,6 +1763,12 @@ int main(int argc, char** argv)
 		CHECK(reg.FindClass("Quaternionf") && reg.FindFunction("Quaternionf", "Slerp (Quaternion)"), "registry: Quaternionf nodes present");
 		CHECK(reg.FindClass("Transformf") && reg.FindClass("Matrix4x4f") && reg.FindClass("StructObject"),
 		      "registry: Transform/Matrix/StructObject classes present");
+		CHECK(reg.FindClass("UObjectHook") && reg.FindFunction("UObjectHook", "Get First Object By Class"),
+		      "registry: UObjectHook present");
+		CHECK(reg.FindFunction("IConsoleVariable", "Get Int") && reg.FindFunction("UEVR_API", "Get Console Manager"),
+		      "registry: console API present");
+		CHECK(reg.FindFunction("UClass", "Get Class Default Object") && reg.FindFunction("UObject", "Get Address"),
+		      "registry: reflection additions on existing classes (not shadowed by duplicates)");
 
 		// codegen spot-check: Array Length (Integer) -> To String -> Print emits #(...)
 		auto ev = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));

@@ -215,9 +215,9 @@ void BlueprintLua::SetupUEVRRegistry(BlueprintEditor& editor) {
 	actor.AddProperty("bCanBeDamaged", PinType(PinKind::Boolean), "Actor");
 	registry.AddClass("APawn", "AActor", "A possessable actor");
 	registry.AddClass("UEngine", "UObject", "The engine singleton");
-	registry.AddClass("UClass", "UObject", "A class or struct's reflection metadata");
-	registry.AddClass("UStruct", "UObject", "A class or struct's reflection metadata");
-	registry.AddClass("UFunction", "UObject", "A reflected function");
+	auto& uclass = registry.AddClass("UClass", "UObject", "A class or struct's reflection metadata");
+	auto& ustruct = registry.AddClass("UStruct", "UObject", "A class or struct's reflection metadata");
+	auto& ufunction = registry.AddClass("UFunction", "UObject", "A reflected function");
 
 	// the uevr.api object
 	auto& api = registry.AddClass("UEVR_API", "", "The uevr.api object");
@@ -456,6 +456,74 @@ void BlueprintLua::SetupUEVRRegistry(BlueprintEditor& editor) {
 	luaTable.AddFunction("Map Set", "Utilities|Map").In("Map", PinType(PinKind::Wildcard, "Map")).In("Key", PinType(PinKind::Wildcard)).In("Value", PinType(PinKind::Wildcard)).Metadata("{0}[{1}] = {2}");
 	luaTable.AddFunction("Map Contains", "Utilities|Map").Pure().Static().In("Map", PinType(PinKind::Wildcard, "Map")).In("Key", PinType(PinKind::Wildcard)).Out("Has Key", PinType(PinKind::Boolean)).Metadata("(({0})[{1}] ~= nil)");
 	luaTable.AddFunction("Map Remove", "Utilities|Map").In("Map", PinType(PinKind::Wildcard, "Map")).In("Key", PinType(PinKind::Wildcard)).Metadata("{0}[{1}] = nil");
+
+	// -- UEVR API: object-hook / reflection / console / raw calls / VR --
+	auto& uObjectHook = registry.AddClass("UObjectHook", "", "UEVR's UObjectHook (uevr.types.UObjectHook) - enumerate live instances by class and attach objects to VR motion controllers");
+	auto& motionControllerState = registry.AddClass("MotionControllerState", "", "Per-object VR motion-controller attach state (from UObjectHook.get_or_add_motion_controller_state)");
+	auto& fConsoleManager = registry.AddClass("FConsoleManager", "", "The console manager (uevr.api:get_console_manager()) - look up console variables and commands");
+	auto& iConsoleVariable = registry.AddClass("IConsoleVariable", "", "A console variable (cvar) - get/set its int/float/string value");
+	auto& iConsoleCommand = registry.AddClass("IConsoleCommand", "", "A console command - execute it with an argument string");
+	auto& fUObjectArray = registry.AddClass("FUObjectArray", "", "The global UObject array (uevr.api:get_uobject_array()) - iterate every live UObject");
+	auto& fField = registry.AddClass("FField", "", "A reflected field (property list node); walk with get_next");
+	auto& fProperty = registry.AddClass("FProperty", "FField", "A reflected property - offset, flags and parameter kind");
+	auto& fFieldClass = registry.AddClass("FFieldClass", "", "The class of an FField/FProperty (e.g. FloatProperty, ObjectProperty)");
+	auto& uGameViewportClient = registry.AddClass("UGameViewportClient", "UObject", "The game viewport client - exec console commands through it");
+	auto& uEVR_System = registry.AddClass("UEVR_System", "", "Top-level uevr.* helpers (address conversion, raw native calls, inline mid-hooks)");
+	auto& midHook = registry.AddClass("MidHook", "", "A live safetyhook mid-hook handle returned by uevr.hook_create_mid");
+	uObjectHook.AddFunction("Get First Object By Class", "UEVR|Hook").Pure().Static().In("Class", PinType(PinKind::Class, "UClass")).In("Allow Default", PinType(PinKind::Boolean), "false").Out("Object", PinType(PinKind::Object, "UObject")).Metadata("uevr.types.UObjectHook.get_first_object_by_class({0}, {1})");
+	uObjectHook.AddFunction("Get Objects By Class", "UEVR|Hook").Pure().Static().In("Class", PinType(PinKind::Class, "UClass")).In("Allow Default", PinType(PinKind::Boolean), "false").Out("Objects", PinType(PinKind::Wildcard)).Metadata("uevr.types.UObjectHook.get_objects_by_class({0}, {1})");
+	uObjectHook.AddFunction("Get Or Add Motion Controller State", "UEVR|Hook").Static().In("Object", PinType(PinKind::Object, "UObject")).Out("State", PinType(PinKind::Object, "MotionControllerState")).Metadata("uevr.types.UObjectHook.get_or_add_motion_controller_state({0})");
+	uObjectHook.AddFunction("Exists", "UEVR|Hook").Pure().Static().In("Object", PinType(PinKind::Object, "UObject")).Out("Valid", PinType(PinKind::Boolean)).Metadata("uevr.types.UObjectHook.exists({0})");
+	motionControllerState.AddFunction("Set Location Offset", "UEVR|Hook").In("Offset", PinType(PinKind::Vector)).Metadata("{target}:set_location_offset({0})");
+	motionControllerState.AddFunction("Set Rotation Offset", "UEVR|Hook").In("Rotation", PinType(PinKind::Vector)).Metadata("{target}:set_rotation_offset({0})");
+	motionControllerState.AddFunction("Set Hand", "UEVR|Hook").In("Hand", PinType(PinKind::Integer), "1").Metadata("{target}:set_hand({0})");
+	motionControllerState.AddFunction("Set Permanent", "UEVR|Hook").In("Permanent", PinType(PinKind::Boolean), "true").Metadata("{target}:set_permanent({0})");
+	uclass.AddFunction("Get Class Default Object", "UEVR|Reflection").Pure().Out("CDO", PinType(PinKind::Object, "UObject")).Metadata("{target}:get_class_default_object()");
+	uclass.AddFunction("Get Objects Matching", "UEVR|Reflection").Pure().In("Allow Default", PinType(PinKind::Boolean), "false").Out("Objects", PinType(PinKind::Wildcard)).Metadata("{target}:get_objects_matching({0})");
+	uclass.AddFunction("Get First Object Matching", "UEVR|Reflection").Pure().In("Allow Default", PinType(PinKind::Boolean), "false").Out("Object", PinType(PinKind::Object, "UObject")).Metadata("{target}:get_first_object_matching({0})");
+	ustruct.AddFunction("Get Super Struct", "UEVR|Reflection").Pure().Out("Super", PinType(PinKind::Object, "UStruct")).Metadata("{target}:get_super_struct()");
+	ustruct.AddFunction("Get Child Properties", "UEVR|Reflection").Pure().Out("First Field", PinType(PinKind::Object, "FField")).Metadata("{target}:get_child_properties()");
+	ustruct.AddFunction("Get Properties Size", "UEVR|Reflection").Pure().Out("Size", PinType(PinKind::Integer)).Metadata("{target}:get_properties_size()");
+	ufunction.AddFunction("Call (Caller)", "UEVR|Reflection").In("Caller", PinType(PinKind::Object, "UObject")).Out("Return", PinType(PinKind::Wildcard)).Metadata("{target}:call({0})");
+	ufunction.AddFunction("Call (Caller, 1 Arg)", "UEVR|Reflection").In("Caller", PinType(PinKind::Object, "UObject")).In("Arg", PinType(PinKind::Wildcard)).Out("Return", PinType(PinKind::Wildcard)).Metadata("{target}:call({0}, {1})");
+	ufunction.AddFunction("Get Native Function", "UEVR|Reflection").Pure().Out("Address", PinType(PinKind::Wildcard)).Metadata("{target}:get_native_function()");
+	ufunction.AddFunction("Process Event", "UEVR|Reflection").In("Object", PinType(PinKind::Object, "UObject")).In("Params", PinType(PinKind::Wildcard)).Metadata("{target}:process_event({0}, {1})");
+	ufunction.AddFunction("Get Function Flags", "UEVR|Reflection").Pure().Out("Flags", PinType(PinKind::Integer)).Metadata("{target}:get_function_flags()");
+	ufunction.AddFunction("Set Function Flags", "UEVR|Reflection").In("Flags", PinType(PinKind::Integer)).Metadata("{target}:set_function_flags({0})");
+	object.AddFunction("Get Address", "UEVR|Object").Pure().Out("Address", PinType(PinKind::Integer)).Metadata("{target}:get_address()");
+	object.AddFunction("Get Short Name", "UEVR|Object").Pure().Out("Name", PinType(PinKind::String)).Metadata("{target}:get_short_name()");
+	object.AddFunction("Get Double Property", "UEVR|Object").Pure().In("Name", PinType(PinKind::String)).Out("Value", PinType(PinKind::Float)).Metadata("{target}:get_double_property({0})");
+	object.AddFunction("Call Function By Name", "UEVR|Object").In("Function Name", PinType(PinKind::String), "Jump").Out("Return", PinType(PinKind::Wildcard)).Metadata("{target}:call({0})");
+	object.AddFunction("Call Function By Name (1 Arg)", "UEVR|Object").In("Function Name", PinType(PinKind::String), "SetActorHiddenInGame").In("Arg", PinType(PinKind::Wildcard)).Out("Return", PinType(PinKind::Wildcard)).Metadata("{target}:call({0}, {1})");
+	object.AddFunction("Read Float", "UEVR|Memory").Pure().In("Offset", PinType(PinKind::Integer)).Out("Value", PinType(PinKind::Float)).Metadata("{target}:read_float({0})");
+	object.AddFunction("Write Dword", "UEVR|Memory").In("Offset", PinType(PinKind::Integer)).In("Value", PinType(PinKind::Integer)).Metadata("{target}:write_dword({0}, {1})");
+	api.AddFunction("Get UObject Array", "UEVR|API").Pure().Static().Out("Array", PinType(PinKind::Object, "FUObjectArray")).Metadata("uevr.api:get_uobject_array()");
+	api.AddFunction("Get Console Manager", "UEVR|API").Pure().Static().Out("Manager", PinType(PinKind::Object, "FConsoleManager")).Metadata("uevr.api:get_console_manager()");
+	fConsoleManager.AddFunction("Find Variable", "UEVR|Console").Pure().In("Name", PinType(PinKind::String), "r.ScreenPercentage").Out("Variable", PinType(PinKind::Object, "IConsoleVariable")).Metadata("{target}:find_variable({0})");
+	fConsoleManager.AddFunction("Find Command", "UEVR|Console").Pure().In("Name", PinType(PinKind::String)).Out("Command", PinType(PinKind::Object, "IConsoleCommand")).Metadata("{target}:find_command({0})");
+	iConsoleVariable.AddFunction("Set", "UEVR|Console").In("Value", PinType(PinKind::Wildcard)).Metadata("{target}:set({0})");
+	iConsoleVariable.AddFunction("Get Int", "UEVR|Console").Pure().Out("Value", PinType(PinKind::Integer)).Metadata("{target}:get_int()");
+	iConsoleVariable.AddFunction("Get Float", "UEVR|Console").Pure().Out("Value", PinType(PinKind::Float)).Metadata("{target}:get_float()");
+	iConsoleCommand.AddFunction("Execute", "UEVR|Console").In("Args", PinType(PinKind::String)).Metadata("{target}:execute({0})");
+	fUObjectArray.AddFunction("Get Object Count", "UEVR|Reflection").Pure().Out("Count", PinType(PinKind::Integer)).Metadata("{target}:get_object_count()");
+	fUObjectArray.AddFunction("Get Object", "UEVR|Reflection").Pure().In("Index", PinType(PinKind::Integer)).Out("Object", PinType(PinKind::Object, "UObject")).Metadata("{target}:get_object({0})");
+	fField.AddFunction("Get Next", "UEVR|Reflection").Pure().Out("Next", PinType(PinKind::Object, "FField")).Metadata("{target}:get_next()");
+	fField.AddFunction("Get Field Name", "UEVR|Reflection").Pure().Out("Name", PinType(PinKind::String)).Metadata("{target}:get_fname():to_string()");
+	fField.AddFunction("As Property", "UEVR|Reflection").Pure().Out("Property", PinType(PinKind::Object, "FProperty")).Metadata("{target}:as_property()");
+	fField.AddFunction("Get Field Class", "UEVR|Reflection").Pure().Out("Class", PinType(PinKind::Object, "FFieldClass")).Metadata("{target}:get_class()");
+	fProperty.AddFunction("Get Offset", "UEVR|Reflection").Pure().Out("Offset", PinType(PinKind::Integer)).Metadata("{target}:get_offset()");
+	fProperty.AddFunction("Is Out Param", "UEVR|Reflection").Pure().Out("Value", PinType(PinKind::Boolean)).Metadata("{target}:is_out_param()");
+	fFieldClass.AddFunction("Get Name", "UEVR|Reflection").Pure().Out("Name", PinType(PinKind::String)).Metadata("{target}:get_name()");
+	uEVR_System.AddFunction("To Address", "UEVR|System").Pure().Static().In("Pointer", PinType(PinKind::Wildcard)).Out("Address", PinType(PinKind::Integer)).Metadata("uevr.to_address({0})");
+	uEVR_System.AddFunction("Call Native Function", "UEVR|System").Static().In("Target Address", PinType(PinKind::Integer)).In("Self / Arg0", PinType(PinKind::Wildcard)).Out("Return", PinType(PinKind::Wildcard)).Metadata("uevr.call_function({0}, {1})");
+	uEVR_System.AddFunction("Remove Mid Hook", "UEVR|System").Static().In("Target Address", PinType(PinKind::Integer)).Out("Removed", PinType(PinKind::Boolean)).Metadata("uevr.hook_remove_mid({0})");
+	uEVR_System.AddFunction("Create Mid Hook", "UEVR|System").Static().In("Target Address", PinType(PinKind::Integer)).In("Callback", PinType(PinKind::Wildcard)).Out("Hook", PinType(PinKind::Object, "MidHook")).Metadata("uevr.hook_create_mid({0}, {1})");
+	midHook.AddFunction("Remove", "UEVR|System").Out("Removed", PinType(PinKind::Boolean)).Metadata("{target}:remove()");
+	uGameViewportClient.AddFunction("Exec", "UEVR|Console").In("Command", PinType(PinKind::String)).Metadata("{target}:exec({0})");
+	vr.AddFunction("Get Lowest XInput Index", "UEVR|VR").Pure().Static().Out("Index", PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_lowest_xinput_index()");
+	vr.AddFunction("Get Left Joystick Source", "UEVR|VR").Pure().Static().Out("Source", PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_left_joystick_source()");
+	vr.AddFunction("Get Right Joystick Source", "UEVR|VR").Pure().Static().Out("Source", PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_right_joystick_source()");
+	vr.AddFunction("Get Joystick Axis", "UEVR|VR").Pure().Static().In("Source", PinType(PinKind::Integer)).Out("Axis", PinType(PinKind::Vector)).Metadata("uevr.params.vr.get_joystick_axis({0})");
 
 	editor.SetBlueprint(editor.GetBlueprintName(), "UEVR");
 }
