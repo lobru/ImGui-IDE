@@ -1750,6 +1750,30 @@ int main(int argc, char** argv)
 		CHECK(script.find("Name = \"hi\"") != std::string::npos, "make struct: string field quoted in table");
 		CHECK(script.find("use({") != std::string::npos, "make struct: table passed as the struct arg");
 	}
+
+	// ── Expanded registry: datatypes + table/array nodes ───────────────────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		auto& reg = bp.GetRegistry();
+		CHECK(reg.FindClass("LuaTable") && reg.FindFunction("LuaTable", "Array Get") &&
+		          reg.FindFunction("LuaTable", "Array Length") && reg.FindFunction("LuaTable", "Map Set"),
+		      "registry: LuaTable array/map nodes present");
+		CHECK(reg.FindClass("Vector3f") && reg.FindFunction("Vector3f", "Dot (Vector3f)"), "registry: Vector3f nodes present");
+		CHECK(reg.FindClass("Quaternionf") && reg.FindFunction("Quaternionf", "Slerp (Quaternion)"), "registry: Quaternionf nodes present");
+		CHECK(reg.FindClass("Transformf") && reg.FindClass("Matrix4x4f") && reg.FindClass("StructObject"),
+		      "registry: Transform/Matrix/StructObject classes present");
+
+		// codegen spot-check: Array Length (Integer) -> To String -> Print emits #(...)
+		auto ev = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto len = bp.AddCallFunctionNode("LuaTable", "Array Length", ImVec2(150, 0));
+		auto ts = bp.AddCallFunctionNode("LuaString", "To String", ImVec2(300, 0));
+		auto print = bp.AddCallFunctionNode("UEVR_API", "Print", ImVec2(450, 0));
+		bp.AddLink(bp.FindPinID(ev, "", true), bp.FindPinID(print, "", false));
+		bp.AddLink(bp.FindPinID(len, "Length", true), bp.FindPinID(ts, "Value", false));
+		bp.AddLink(bp.FindPinID(ts, "Return Value", true), bp.FindPinID(print, "Message", false));
+		CHECK(BlueprintLua::GenerateScript(bp).find("#(") != std::string::npos, "table: Array Length emits #(...) in codegen");
+	}
 #endif // IMGUIIDE_PLUGIN_UEVR
 
 	if (gFailures == 0) {
