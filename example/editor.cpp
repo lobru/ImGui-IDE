@@ -5450,7 +5450,7 @@ void Editor::renderReferencesPanel()
                             referencesFileCount, referencesFileCount == 1 ? "" : "s");
         // Scope toggle: default is the active file; tick to widen to the whole
         // project and re-run the same query against the tab it came from.
-        if (ImGui::Checkbox("Search all files", &referencesAllFiles))
+        if (ImGui::Checkbox("All files", &referencesAllFiles))
         {
             // Guard the stored pointer: the source tab may have been closed since
             // the search ran. Only re-run if it's still a live tab.
@@ -9606,6 +9606,7 @@ void Editor::render()
     renderReferencesPanel();
     renderSymbolsPanel();
     renderFindInFilesPanel();
+    appShortcutsSuppressed = false;                 // a focused plugin window may re-raise it below
     pluginRegistry.frame(*this); // in-process plugins: dockable windows + polling
     renderDevTools();
     renderMarkdownPreview();
@@ -11609,7 +11610,8 @@ void Editor::renderMenuBar()
     // fire even while a document or input box has keyboard focus.
     if (!capturingKeybind && ImGui::IsKeyPressed(ImGuiKey_F11, false))
         toggleFocusMode();
-    if (!capturingKeybind && (!io.WantCaptureKeyboard || ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow)))
+    if (!capturingKeybind && !appShortcutsSuppressed &&
+        (!io.WantCaptureKeyboard || ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow)))
     {
 
         // App-level shortcuts dispatched through the rebindable keybind registry.
@@ -13348,7 +13350,7 @@ void Editor::configureTabAutocomplete(TabDocument &t)
     // purple gutter dot on Claude-changed lines is the left-click equivalent; both
     // open the reply popup → <configDir>/replies outbox.
     t.editor.SetLineNumberContextMenuCallback([this, tptr](int line) {
-        // ✎ — U+270E, present in DejaVu (the 💬 emoji is not; it rendered as tofu).
+        // ✎ — U+270E, present in DejaVu (the � emoji is not; it rendered as tofu).
         if (ImGui::MenuItem("\xe2\x9c\x8e Reply to Claude about this line"))
             requestReply(tptr->filename, line, tptr->filename + ":" + std::to_string(line + 1));
     });

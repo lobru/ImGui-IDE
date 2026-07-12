@@ -237,6 +237,11 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
     ImGui::SetNextWindowSize(ImVec2(1100.0f, 680.0f), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Blueprint Editor###blueprintEditor", &blueprintVisible, ImGuiWindowFlags_MenuBar))
     {
+        // While this window is focused it handles its own Ctrl+Z/C/V/Del etc, so tell
+        // the host to skip the document's app-level shortcuts (route keys here).
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            host.hostSuppressAppShortcuts();
+
         if (ImGui::BeginMenuBar())
         {
             if (ImGui::BeginMenu("Graph"))

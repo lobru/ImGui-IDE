@@ -188,6 +188,10 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
         return;
     }
 
+    // Focused: the REPL / inspect fields want the keys, not the document's shortcuts.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+        host.hostSuppressAppShortcuts();
+
     ImGui::TextDisabled("Runs Lua inside a running UEVR game via the ImGui-IDE bridge plugin.");
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("%s", uevrBridgeDir("cmd").string().c_str());

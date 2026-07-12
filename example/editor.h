@@ -88,6 +88,7 @@ class Editor : public PluginHost {
 	void hostToast(const std::string &text) override { pushToast(text, IM_COL32(80, 160, 255, 255), 0); }
 	void hostError(const std::string &message) override { showError(message); }
 	void hostSendToClaude(const std::string &message) override { writeToastReply(message); }
+	void hostSuppressAppShortcuts() override { appShortcutsSuppressed = true; }
 	void hostRunInDir(const std::string &command, const std::filesystem::path &dir) override { runCommandInOutputPanel(command, dir); }
 	void hostRunProjectBuild() override { runProjectBuild(); }
 	std::filesystem::path hostExeDir() const override;                 // exe's directory (get_module_path)
@@ -109,6 +110,10 @@ class Editor : public PluginHost {
 	// extension points. Empty in a core build (all IMGUIIDE_PLUGIN_* off).
 	PluginRegistry pluginRegistry;
 	std::unordered_map<std::string, bool> pluginFlags;
+	// Set for one frame by hostSuppressAppShortcuts() when a focused plugin window
+	// (e.g. the Blueprint editor) is handling its own Ctrl+Z/C/V; gates the app-level
+	// keyboard shortcut dispatch so the keys route to the plugin, not the document.
+	bool appShortcutsSuppressed = false;
 
 	// per-document state — each doc is its own dockable window
 	struct TabDocument {

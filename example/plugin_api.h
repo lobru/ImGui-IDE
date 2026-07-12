@@ -83,6 +83,11 @@ public:
     // uses. A Claude Code loop watching the project picks it up. Fire-and-forget.
     virtual void hostSendToClaude(const std::string &message) = 0;
 
+    // Called by a plugin window (during onFrame) that currently has focus and
+    // handles its own Ctrl+Z/C/V/etc, so the editor SKIPS its app-level keyboard
+    // shortcuts this frame and the keys route to the plugin. Reset each frame.
+    virtual void hostSuppressAppShortcuts() = 0;
+
     virtual void hostRunInDir(const std::string &command, const std::filesystem::path &dir) = 0; // run in the Output panel
     virtual void hostRunProjectBuild() = 0;                                                     // the F6 build resolver
 

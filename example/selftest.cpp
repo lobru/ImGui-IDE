@@ -1162,6 +1162,7 @@ int main(int argc, char** argv)
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
 			void hostSendToClaude(const std::string&) override {}
+			void hostSuppressAppShortcuts() override {}
 			void hostRunInDir(const std::string&, const std::filesystem::path&) override {}
 			void hostRunProjectBuild() override {}
 			std::filesystem::path hostExeDir() const override { return {}; }
@@ -1226,6 +1227,7 @@ int main(int argc, char** argv)
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
 			void hostSendToClaude(const std::string&) override {}
+			void hostSuppressAppShortcuts() override {}
 			void hostRunInDir(const std::string&, const std::filesystem::path&) override {}
 			void hostRunProjectBuild() override {}
 			std::filesystem::path hostExeDir() const override { return {}; }
