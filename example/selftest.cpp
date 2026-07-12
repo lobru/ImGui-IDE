@@ -1580,6 +1580,20 @@ int main(int argc, char** argv)
 		std::string p = BlueprintLua::GenerateScript(pawn);
 		CHECK(p.find("get_local_pawn") != std::string::npos && p.find("get_full_name") != std::string::npos,
 		      "template log-pawn: data links carry pawn:get_full_name() into print");
+
+		BlueprintEditor hmd;
+		BlueprintLua::SetupUEVRRegistry(hmd);
+		templates[3].build(hmd);
+		std::string h3 = BlueprintLua::GenerateScript(hmd);
+		CHECK(h3.find("is_hmd_active") != std::string::npos && h3.find("if ") != std::string::npos,
+		      "template hmd-gate: Branch on is_hmd_active generates an if");
+
+		BlueprintEditor fl;
+		BlueprintLua::SetupUEVRRegistry(fl);
+		templates[4].build(fl);
+		std::string f4 = BlueprintLua::GenerateScript(fl);
+		CHECK(f4.find("tostring") != std::string::npos && f4.find("dt=") != std::string::npos,
+		      "template log-dt: builds a string from the tick's Delta Seconds");
 	}
 
 	// ── Registry JSON: data-driven API export/import round-trips ────────────

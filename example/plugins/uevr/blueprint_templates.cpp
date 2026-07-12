@@ -53,6 +53,34 @@ void buildLogPawn(BlueprintEditor &bp)
     bp.AddLink(bp.FindPinID(pawn, "Return Value", true), bp.FindPinID(name, "Target", false));    // data
     bp.AddLink(bp.FindPinID(name, "Return Value", true), bp.FindPinID(print, "Message", false));  // data
 }
+// "Pre Engine Tick -> Branch(Is HMD Active) -> Print": conditional flow + a VR query.
+void buildHmdGate(BlueprintEditor &bp)
+{
+    bp.ClearGraph();
+    ID tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(-360.0f, 0.0f));
+    ID hmd = bp.AddCallFunctionNode("UEVR_VRData", "Is HMD Active", ImVec2(-360.0f, 150.0f));
+    ID branch = bp.AddFlowControlNode("Branch", ImVec2(-40.0f, 0.0f));
+    ID print = bp.AddCallFunctionNode("UEVR_API", "Print", ImVec2(280.0f, 0.0f));
+    bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(branch, "", false));                    // exec
+    bp.AddLink(bp.FindPinID(hmd, "Return Value", true), bp.FindPinID(branch, "Condition", false)); // bool
+    bp.AddLink(bp.FindPinID(branch, "True", true), bp.FindPinID(print, "", false));                // True -> Print
+    bp.SetPinDefaultValue(bp.FindPinID(print, "Message", false), "VR mode active");
+}
+
+// "Pre Engine Tick -> Print('dt=' .. tostring(Delta Seconds))": event data + string build.
+void buildFormattedLog(BlueprintEditor &bp)
+{
+    bp.ClearGraph();
+    ID tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(-460.0f, 0.0f));
+    ID toStr = bp.AddCallFunctionNode("LuaString", "To String", ImVec2(-200.0f, 150.0f));
+    ID append = bp.AddCallFunctionNode("LuaString", "Append", ImVec2(60.0f, 150.0f));
+    ID print = bp.AddCallFunctionNode("UEVR_API", "Print", ImVec2(320.0f, 0.0f));
+    bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(print, "", false));                       // exec
+    bp.AddLink(bp.FindPinID(tick, "Delta Seconds", true), bp.FindPinID(toStr, "Value", false));     // float -> tostring
+    bp.AddLink(bp.FindPinID(toStr, "Return Value", true), bp.FindPinID(append, "B", false));        // -> Append B
+    bp.AddLink(bp.FindPinID(append, "Return Value", true), bp.FindPinID(print, "Message", false));  // -> Print
+    bp.SetPinDefaultValue(bp.FindPinID(append, "A", false), "dt=");
+}
 } // namespace
 
 namespace BlueprintTemplates
@@ -63,6 +91,8 @@ const std::vector<Template> &All()
         {"Hello (log each tick)", "Print a message every engine tick.", buildHello},
         {"Draw a UI panel", "Draw an on-screen ImGui window every frame.", buildDrawUi},
         {"Log the player pawn", "Print the local pawn's full name each tick.", buildLogPawn},
+        {"HMD-gated action", "Only run when the VR headset is active (Branch on Is HMD Active).", buildHmdGate},
+        {"Log with delta time", "Print a string built from the tick's Delta Seconds.", buildFormattedLog},
     };
     return templates;
 }
