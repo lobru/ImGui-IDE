@@ -143,6 +143,7 @@ if(IMGUIIDE_PLUGIN_UEVR)
 		plugins/uevr/uevr_plugin.cpp
 		plugins/uevr/blueprint_window.cpp
 		plugins/uevr/blueprint_templates.cpp
+		plugins/uevr/blueprint_snippets.cpp
 		plugins/uevr/uevr_bridge.cpp
 		plugins/uevr/BlueprintEditor.cpp
 		plugins/uevr/BlueprintLua.cpp
@@ -247,7 +248,8 @@ endif()
 if(IMGUIIDE_PLUGIN_UEVR)
 	target_sources(selftest PRIVATE
 		plugins/uevr/BlueprintEditor.cpp plugins/uevr/BlueprintLua.cpp plugins/uevr/BlueprintLuaImport.cpp
-		plugins/uevr/BlueprintRegistryJson.cpp plugins/uevr/blueprint_templates.cpp)
+		plugins/uevr/BlueprintRegistryJson.cpp plugins/uevr/blueprint_templates.cpp
+		plugins/uevr/blueprint_snippets.cpp)
 	target_include_directories(selftest PRIVATE plugins/uevr)
 	target_link_libraries(selftest PRIVATE nlohmann_json)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UEVR=1)

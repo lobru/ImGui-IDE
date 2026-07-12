@@ -30,6 +30,7 @@
 #include "BlueprintLua.h"
 #include "BlueprintLuaImport.h"
 #include "BlueprintRegistryJson.h"
+#include "blueprint_snippets.h"
 #include "blueprint_templates.h"
 #endif
 
@@ -1594,6 +1595,27 @@ int main(int argc, char** argv)
 		std::string f4 = BlueprintLua::GenerateScript(fl);
 		CHECK(f4.find("tostring") != std::string::npos && f4.find("dt=") != std::string::npos,
 		      "template log-dt: builds a string from the tick's Delta Seconds");
+	}
+
+	// ── Snippets: INSERT a wired cluster (unlike templates, no clear) ───────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		auto ev = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		size_t before = bp.GetNodeCount();
+		CHECK(!BlueprintSnippets::All().empty(), "snippets: at least one snippet");
+		BlueprintSnippets::All()[0].insert(bp); // For Loop (print index)
+		CHECK(bp.GetNodeCount() > before + 1, "snippets: For Loop inserts multiple nodes");
+		CHECK(bp.GetNode(ev) != nullptr, "snippets: existing graph preserved (no clear)");
+
+		BlueprintEditor::ID loopId = 0;
+		for (auto& n : bp.GetNodes())
+			if (n.kind == BlueprintEditor::NodeKind::FlowControl && n.memberName == "For Loop")
+				loopId = n.id;
+		CHECK(loopId != 0, "snippets: For Loop flow node present");
+		bp.AddLink(bp.FindPinID(ev, "", true), bp.FindPinID(loopId, "", false));
+		CHECK(BlueprintLua::GenerateScript(bp).find("for ") != std::string::npos,
+		      "snippets: wired For Loop generates a for-loop");
 	}
 
 	// ── Registry JSON: data-driven API export/import round-trips ────────────

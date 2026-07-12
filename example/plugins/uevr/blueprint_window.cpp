@@ -22,6 +22,7 @@
 #include "BlueprintLua.h"
 #include "BlueprintLuaImport.h"
 #include "BlueprintRegistryJson.h"
+#include "blueprint_snippets.h"
 #include "blueprint_templates.h"
 
 #include "uevr_plugin.h"
@@ -253,6 +254,20 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                         }
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("%s", tmpl.description.c_str());
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Insert Snippet"))
+                {
+                    for (auto &snip : BlueprintSnippets::All())
+                    {
+                        if (ImGui::MenuItem(snip.name.c_str()))
+                        {
+                            snip.insert(bp); // inserts at the view cursor, keeps the graph
+                            host.hostToast("Inserted snippet: " + snip.name);
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s", snip.description.c_str());
                     }
                     ImGui::EndMenu();
                 }
