@@ -340,6 +340,10 @@ public:
 	inline const Node* GetNode(ID id) const { return findNode(id); }
 	inline const Pin* GetPin(ID id) const { return findPin(id); }
 
+	// introspection / test helpers for pin compatibility + spawn-drag auto-connect
+	inline bool CanConnectPins(ID from, ID to) const { std::string e; return canConnect(from, to, e); }
+	ID AutoConnectForTest(ID pendingPin, ID node); // returns the input pin it connected to (0 = none)
+
 	// statistics and state
 	inline size_t GetNodeCount() const { return nodes.size(); }
 	inline size_t GetLinkCount() const { return links.size(); }
@@ -410,14 +414,21 @@ private:
 	ID finishNode(Node& node);
 
 	// connection management
-	bool canConnect(ID a, ID b, std::string& error) const;
+	bool canConnect(ID a, ID b, std::string& error, bool strongOnly = false) const;
 	bool connect(ID fromPin, ID toPin);
+	// Connect `pendingPin` to the best input pin of `node`: a strong-match pass
+	// (real type match) first, then a permissive pass (Lua-truthiness bool). Records
+	// undo on success. Used by spawn-from-drag so a dragged value lands on the
+	// intended pin, not an incidental bool. Returns true if a link was made.
+	bool autoConnectPendingToNode(ID pendingPin, Node& node);
 	void breakLinkInternal(ID link);
 	void breakPinLinksInternal(ID pin);
 	void removeNodeInternal(ID node);
 	int pinLinkCount(ID pin) const;
 	bool wouldCreateDataCycle(ID fromNode, ID toNode) const;
 	bool typesCompatible(const PinType& from, const PinType& to) const;
+	bool typesCompatible(const PinType& from, const PinType& to, bool allowTruthiness) const;
+	bool isClassLike(const PinType& t) const;
 
 	// undo and change tracking
 	void recordUndo();

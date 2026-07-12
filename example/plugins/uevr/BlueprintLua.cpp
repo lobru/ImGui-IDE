@@ -188,12 +188,12 @@ void BlueprintLua::SetupUEVRRegistry(BlueprintEditor& editor) {
 	auto& object = registry.AddClass("UObject", "", "An Unreal object accessed through UEVR's reflection bindings");
 	object.AddFunction("Get Full Name", "UObject").Pure().Ret(PinType(PinKind::String)).Metadata("{target}:get_full_name()");
 	object.AddFunction("Get FName", "UObject").Pure().Ret(PinType(PinKind::Name)).Metadata("{target}:get_fname():to_string()");
-	object.AddFunction("Get Class", "UObject").Pure().Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:get_class()");
+	object.AddFunction("Get Class", "UObject").Pure().Keywords("type reflection").Ret(PinType(PinKind::Class, "UClass")).Metadata("{target}:get_class()").Tooltip("The object's UClass — feed into Is A / Get Objects Matching / class inputs");
 	object.AddFunction("Get Outer", "UObject").Pure().Keywords("owner package").Ret(PinType(PinKind::Object, "UObject")).Metadata("{target}:get_outer()");
 	object.AddFunction("As Class", "UObject").Pure().Keywords("cast").Ret(PinType(PinKind::Object, "UClass")).Metadata("{target}:as_class()");
 	object.AddFunction("As Struct", "UObject").Pure().Keywords("cast").Ret(PinType(PinKind::Object, "UStruct")).Metadata("{target}:as_struct()");
 	object.AddFunction("As Function", "UObject").Pure().Keywords("cast").Ret(PinType(PinKind::Object, "UFunction")).Metadata("{target}:as_function()");
-	object.AddFunction("Is A", "UObject").Pure().In("Class", PinType(PinKind::Object, "UObject")).Ret(PinType(PinKind::Boolean)).Metadata("{target}:is_a({0})");
+	object.AddFunction("Is A", "UObject").Pure().Keywords("class check type kind").In("Class", PinType(PinKind::Class, "UClass")).Ret(PinType(PinKind::Boolean)).Metadata("{target}:is_a({0})").Tooltip("Class accepts a UClass (Get Class / Find Class (Fast)). For a short-name string use Is A (Fast)");
 	object.AddFunction("Is Valid", "UObject").Pure().Keywords("null nil check").Ret(PinType(PinKind::Boolean)).Metadata("({target} ~= nil)");
 	object.AddFunction("Get Property", "UObject").Pure().Keywords("read field").In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Wildcard)).Metadata("{target}[{0}]");
 	object.AddFunction("Set Property", "UObject").Keywords("write field").In("Name", PinType(PinKind::String)).In("Value", PinType(PinKind::Wildcard)).Metadata("{target}[{0}] = {1}");
@@ -520,6 +520,32 @@ void BlueprintLua::SetupUEVRRegistry(BlueprintEditor& editor) {
 	uEVR_System.AddFunction("Create Mid Hook", "UEVR|System").Static().In("Target Address", PinType(PinKind::Integer)).In("Callback", PinType(PinKind::Wildcard)).Out("Hook", PinType(PinKind::Object, "MidHook")).Metadata("uevr.hook_create_mid({0}, {1})");
 	midHook.AddFunction("Remove", "UEVR|System").Out("Removed", PinType(PinKind::Boolean)).Metadata("{target}:remove()");
 	uGameViewportClient.AddFunction("Exec", "UEVR|Console").In("Command", PinType(PinKind::String)).Metadata("{target}:exec({0})");
+
+	// ── api_fast: native fast-path helpers (uevr.api_fast.*) ────────────────────
+	// These bypass the generic reflection dispatcher (fewer Lua/sol2 round-trips per
+	// call) and take class SHORT NAMES (e.g. "Actor"), resolved via find_class under
+	// the hood. Prefer them for per-frame work. Mirrors UEVR SDKFast.cpp.
+	api.AddFunction("Find Class (Fast)", "UEVR|Fast").Pure().Static().Keywords("class shortname lookup").In("Name", PinType(PinKind::String), "Actor").Ret(PinType(PinKind::Class, "UClass")).Metadata("uevr.api_fast.find_class({0})").Tooltip("Resolve a UClass by short name (e.g. \"Actor\"); cached fast lookup");
+	api.AddFunction("Get Objects By Class (Fast)", "UEVR|Fast").Pure().Static().Keywords("all instances find").In("Class Name", PinType(PinKind::String), "Actor").In("Allow Default", PinType(PinKind::Boolean), "false").Ret(PinType(PinKind::Wildcard, "", true)).Metadata("uevr.api_fast.get_objects_by_class({0}, {1})").Tooltip("Every live instance of a class (by short name) as an array — iterate with For Each");
+	api.AddFunction("Is A (Fast)", "UEVR|Fast").Pure().Static().Keywords("class check type kind").In("Object", PinType(PinKind::Object, "UObject")).In("Class Name", PinType(PinKind::String), "Actor").Ret(PinType(PinKind::Boolean)).Metadata("uevr.api_fast.is_a({0}, {1})");
+	api.AddFunction("Get CDO (Fast)", "UEVR|Fast").Pure().Static().Keywords("class default object template").In("Class Name", PinType(PinKind::String), "Actor").Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api_fast.get_cdo({0})");
+	api.AddFunction("Spawn Object (Fast)", "UEVR|Fast").Static().Keywords("create instantiate new").In("Class Name", PinType(PinKind::String), "Actor").In("Outer", PinType(PinKind::Object, "UObject")).Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api_fast.spawn_object({0}, {1})");
+	api.AddFunction("Spawn Actor (Fast)", "UEVR|Fast").Static().Keywords("create instantiate new").In("Class Name", PinType(PinKind::String), "Actor").In("Location", PinType(PinKind::Vector)).Ret(PinType(PinKind::Object, "AActor")).Metadata("uevr.api_fast.spawn_actor({0}, {1})");
+	api.AddFunction("Get Component By Class (Fast)", "UEVR|Fast").Pure().Static().Keywords("find component").In("Actor", PinType(PinKind::Object, "AActor")).In("Class", PinType(PinKind::Class, "UClass")).Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api_fast.get_component_by_class({0}, {1})").Tooltip("Class is a UClass object (feed Find Class (Fast))");
+	api.AddFunction("Get Or Add Component (Fast)", "UEVR|Fast").Static().Keywords("create component").In("Actor", PinType(PinKind::Object, "AActor")).In("Class Name", PinType(PinKind::String), "SceneComponent").Ret(PinType(PinKind::Object, "UObject")).Metadata("uevr.api_fast.get_or_add_component({0}, {1})");
+	api.AddFunction("Get All Components (Fast)", "UEVR|Fast").Pure().Static().Keywords("components array").In("Actor", PinType(PinKind::Object, "AActor")).Ret(PinType(PinKind::Wildcard, "", true)).Metadata("uevr.api_fast.get_all_components({0})");
+	api.AddFunction("Get Root Component (Fast)", "UEVR|Fast").Pure().Static().In("Actor", PinType(PinKind::Object, "AActor")).Ret(PinType(PinKind::Object, "USceneComponent")).Metadata("uevr.api_fast.get_root_component({0})");
+	api.AddFunction("Destroy Actor (Fast)", "UEVR|Fast").Static().Keywords("remove delete").In("Actor", PinType(PinKind::Object, "AActor")).Ret(PinType(PinKind::Boolean)).Metadata("uevr.api_fast.destroy_actor({0})");
+	api.AddFunction("Get Property (Fast)", "UEVR|Fast").Pure().Static().Keywords("read field any type generic").In("Object", PinType(PinKind::Object, "UObject")).In("Name", PinType(PinKind::String)).Ret(PinType(PinKind::Wildcard)).Metadata("uevr.api_fast.get_property({0}, {1})").Tooltip("Read ANY property by name — returns the correctly-typed value. One node for bool/number/name/object (replaces the per-type Get X Property nodes)");
+	api.AddFunction("Set Property (Fast)", "UEVR|Fast").Static().Keywords("write field any type generic").In("Object", PinType(PinKind::Object, "UObject")).In("Name", PinType(PinKind::String)).In("Value", PinType(PinKind::Wildcard)).Ret(PinType(PinKind::Boolean)).Metadata("uevr.api_fast.set_property({0}, {1}, {2})");
+	api.AddFunction("Call Function (Fast)", "UEVR|Fast").Static().Keywords("invoke method process event").In("Object", PinType(PinKind::Object, "UObject")).In("Name", PinType(PinKind::String), "Jump").Ret(PinType(PinKind::Wildcard)).Metadata("uevr.api_fast.call_function({0}, {1})");
+	api.AddFunction("Get Actor Location (Fast)", "UEVR|Fast").Pure().Static().Keywords("position transform").In("Actor", PinType(PinKind::Object, "AActor")).Ret(PinType(PinKind::Vector)).Metadata("uevr.api_fast.get_actor_location({0})");
+	api.AddFunction("Set Actor Location (Fast)", "UEVR|Fast").Static().Keywords("position transform move").In("Actor", PinType(PinKind::Object, "AActor")).In("Location", PinType(PinKind::Vector)).Metadata("uevr.api_fast.set_actor_location({0}, {1})");
+	api.AddFunction("Get Actor Rotation (Fast)", "UEVR|Fast").Pure().Static().Keywords("orientation transform").In("Actor", PinType(PinKind::Object, "AActor")).Ret(PinType(PinKind::Rotator)).Metadata("uevr.api_fast.get_actor_rotation({0})");
+	api.AddFunction("Set Actor Rotation (Fast)", "UEVR|Fast").Static().Keywords("orientation transform turn").In("Actor", PinType(PinKind::Object, "AActor")).In("Rotation", PinType(PinKind::Rotator)).Metadata("uevr.api_fast.set_actor_rotation({0}, {1})");
+	api.AddFunction("Get Local Pawn (Fast)", "UEVR|Fast").Pure().Static().Keywords("player character").In("Index", PinType(PinKind::Integer), "0").Ret(PinType(PinKind::Object, "APawn")).Metadata("uevr.api_fast.get_local_pawn({0})");
+	api.AddFunction("Get Player Controller (Fast)", "UEVR|Fast").Pure().Static().In("Index", PinType(PinKind::Integer), "0").Ret(PinType(PinKind::Object, "APlayerController")).Metadata("uevr.api_fast.get_player_controller({0})");
+	api.AddFunction("Get World (Fast)", "UEVR|Fast").Pure().Static().Ret(PinType(PinKind::Object, "UWorld")).Metadata("uevr.api_fast.get_world()");
 	vr.AddFunction("Get Lowest XInput Index", "UEVR|VR").Pure().Static().Out("Index", PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_lowest_xinput_index()");
 	vr.AddFunction("Get Left Joystick Source", "UEVR|VR").Pure().Static().Out("Source", PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_left_joystick_source()");
 	vr.AddFunction("Get Right Joystick Source", "UEVR|VR").Pure().Static().Out("Source", PinType(PinKind::Integer)).Metadata("uevr.params.vr.get_right_joystick_source()");

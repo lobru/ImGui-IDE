@@ -1932,6 +1932,56 @@ int main(int argc, char** argv)
 		      "sdk expose: exposed function spawns a node");
 	}
 
+	// ── Class/Object pin interop + api_fast nodes (UEVR API audit) ──────────
+	{
+		using PK = BlueprintEditor::PinKind;
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+
+		// The reported bug: Get Class -> Get Objects Matching. Get Class now returns a
+		// UClass; its output must connect to the node's class/Target pin, NOT only the
+		// bool "Allow Default".
+		auto pawn = bp.AddCallFunctionNode("UEVR_API", "Get Local Pawn", ImVec2(0, 0));
+		auto getClass = bp.AddCallFunctionNode("UObject", "Get Class", ImVec2(250, 0));
+		bp.AddLink(bp.FindPinID(pawn, "Return Value", true), bp.FindPinID(getClass, "Target", false));
+
+		auto matching = bp.AddCallFunctionNode("UClass", "Get Objects Matching", ImVec2(500, 0));
+		BlueprintEditor::ID classOut = bp.FindPinID(getClass, "Return Value", true);
+		BlueprintEditor::ID targetPin = bp.FindPinID(matching, "Target", false);
+		BlueprintEditor::ID allowPin = bp.FindPinID(matching, "Allow Default", false);
+		CHECK(targetPin != 0 && allowPin != 0, "classinterop: node pins found");
+
+		CHECK(bp.CanConnectPins(classOut, targetPin),
+		      "classinterop: a UClass output connects to the class/Target pin");
+		// strong-match auto-connect must pick Target (a real class match), not the bool
+		CHECK(bp.AutoConnectForTest(classOut, matching) == targetPin,
+		      "classinterop: auto-connect lands on Target, not the bool Allow Default");
+
+		// truthiness still lets a class (or anything) reach a real bool when intended
+		auto branch = bp.AddFlowControlNode("Branch", ImVec2(500, 300));
+		CHECK(bp.CanConnectPins(classOut, bp.FindPinID(branch, "Condition", false)),
+		      "classinterop: class->bool still allowed for explicit nil-checks");
+
+		// api_fast family present and generating uevr.api_fast.* calls
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(-400, -300));
+		auto findCls = bp.AddCallFunctionNode("UEVR_API", "Find Class (Fast)", ImVec2(-400, -150));
+		CHECK(findCls != 0, "fast: Find Class (Fast) exists");
+		auto objs = bp.AddCallFunctionNode("UEVR_API", "Get Objects By Class (Fast)", ImVec2(-150, -300));
+		CHECK(objs != 0, "fast: Get Objects By Class (Fast) exists");
+		bp.SetPinDefaultValue(bp.FindPinID(objs, "Class Name", false), "Actor");
+		auto each = bp.AddFlowControlNode("For Each", ImVec2(150, -300));
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(each, "", false));
+		bp.AddLink(bp.FindPinID(objs, "Return Value", true), bp.FindPinID(each, "Array", false));
+		std::string script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find("uevr.api_fast.get_objects_by_class(\"Actor\", false)") != std::string::npos,
+		      "fast: generates a uevr.api_fast call with the short name");
+
+		auto getProp = bp.AddCallFunctionNode("UEVR_API", "Get Property (Fast)", ImVec2(150, -150));
+		CHECK(getProp != 0 && bp.FindPinID(getProp, "Object", false) != 0 &&
+		          bp.FindPinID(getProp, "Name", false) != 0,
+		      "fast: generic Get Property (Fast) takes object + name, any-typed return");
+	}
+
 	// ── Is Valid flow node + Lua-truthiness Boolean inputs ──────────────────
 	{
 		BlueprintEditor bp;

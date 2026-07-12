@@ -1162,6 +1162,31 @@ bool BlueprintEditor::wouldCreateDataCycle(ID fromNode, ID toNode) const {
 }
 
 bool BlueprintEditor::typesCompatible(const PinType& from, const PinType& to) const {
+	return typesCompatible(from, to, true);
+}
+
+// A "class token" is anything that carries a UClass at runtime. UEVR's API is
+// inconsistent about how it types these — some pins are PinKind::Class, others are
+// PinKind::Object with subtype "UClass"/"UStruct" (e.g. As Class's return, Spawn
+// Object's input, and every method defined ON the UClass reflection class, whose
+// self pin is Object "UClass"). Treat them all as one family so a class value
+// plugs into any class input. (Without this, dragging a class into a node like
+// "Get Objects Matching" skipped the real class/Target pin and fell through to the
+// bool "Allow Default" — the reported bug.)
+bool BlueprintEditor::isClassLike(const PinType& t) const {
+	if (t.kind == PinKind::Class) {
+		return true;
+	}
+
+	if (t.kind == PinKind::Object) {
+		return t.subtype == "UClass" || t.subtype == "UStruct" ||
+		       registry.IsChildOf(t.subtype, "UClass") || registry.IsChildOf(t.subtype, "UStruct");
+	}
+
+	return false;
+}
+
+bool BlueprintEditor::typesCompatible(const PinType& from, const PinType& to, bool allowTruthiness) const {
 	if (from.isArray != to.isArray) {
 		// A Wildcard pin is "any Lua value" — array-ness is advisory on it, so a
 		// Table (array) variable wires into For Each's Wildcard "Array" pin. The
@@ -1176,6 +1201,20 @@ bool BlueprintEditor::typesCompatible(const PinType& from, const PinType& to) co
 	}
 
 	if (from.kind == PinKind::Wildcard || to.kind == PinKind::Wildcard) {
+		return true;
+	}
+
+	// Class tokens are interchangeable regardless of Class-vs-Object encoding (see
+	// isClassLike). Checked before the plain Object rule so Object "UClass" reaches
+	// a PinKind::Class input and vice versa.
+	if (isClassLike(from) && isClassLike(to)) {
+		return true;
+	}
+
+	// A class token IS-A UObject, so it may feed a generic object input whose type is
+	// an ancestor of UClass (typically UObject). Not the reverse — an instance is not
+	// a class — so this is one-directional.
+	if (isClassLike(from) && to.kind == PinKind::Object && registry.IsChildOf("UClass", to.subtype)) {
 		return true;
 	}
 
@@ -1209,14 +1248,17 @@ bool BlueprintEditor::typesCompatible(const PinType& from, const PinType& to) co
 	// Lua truthiness: `if <anything>` is valid Lua (nil/false are falsy, everything
 	// else truthy), so a Boolean INPUT (Branch/While conditions, bool params) accepts
 	// any data connection — wire an Object straight into a Branch to nil-check it.
-	if (to.kind == PinKind::Boolean) {
+	// Suppressible: auto-connect-on-drop runs a strong-match pass FIRST (truthiness
+	// off) so a dragged value lands on a real type match instead of an incidental
+	// bool input, then a permissive pass — see the spawn-from-drag sites.
+	if (allowTruthiness && to.kind == PinKind::Boolean) {
 		return true;
 	}
 
 	return from.kind == to.kind;
 }
 
-bool BlueprintEditor::canConnect(ID a, ID b, std::string& error) const {
+bool BlueprintEditor::canConnect(ID a, ID b, std::string& error, bool strongOnly) const {
 	const Pin* pa = findPin(a);
 	const Pin* pb = findPin(b);
 
@@ -1238,7 +1280,9 @@ bool BlueprintEditor::canConnect(ID a, ID b, std::string& error) const {
 	const Pin* from = pa->isOutput ? pa : pb;
 	const Pin* to = pa->isOutput ? pb : pa;
 
-	if (!typesCompatible(from->type, to->type)) {
+	// strongOnly suppresses the Lua-truthiness catch-all (anything -> bool) so a
+	// caller can prefer a real type match; see the auto-connect-on-drop two-pass.
+	if (!typesCompatible(from->type, to->type, !strongOnly)) {
 		error = pinTypeLabel(from->type) + " is not compatible with " + pinTypeLabel(to->type);
 		return false;
 	}
@@ -1249,6 +1293,51 @@ bool BlueprintEditor::canConnect(ID a, ID b, std::string& error) const {
 	}
 
 	return true;
+}
+
+BlueprintEditor::ID BlueprintEditor::AutoConnectForTest(ID pendingPin, ID node) {
+	Node* n = findNode(node);
+
+	if (!n || !autoConnectPendingToNode(pendingPin, *n)) {
+		return 0;
+	}
+
+	for (auto& link : links) {
+		if (link.from == pendingPin) {
+			const Pin* to = findPin(link.to);
+
+			if (to && to->node == node) {
+				return link.to;
+			}
+		}
+	}
+
+	return 0;
+}
+
+bool BlueprintEditor::autoConnectPendingToNode(ID pendingPin, Node& node) {
+	// Two passes: strong match first (real types, no truthiness), then permissive.
+	// So dragging e.g. a class output onto a node lands on its class/Target pin
+	// rather than an incidental bool input that Lua-truthiness would also accept.
+	for (int pass = 0; pass < 2; ++pass) {
+		bool strongOnly = pass == 0;
+
+		for (auto& pin : node.pins) {
+			std::string error;
+
+			if (canConnect(pendingPin, pin.id, error, strongOnly)) {
+				bool made = connect(pendingPin, pin.id);
+
+				if (made) {
+					recordUndo();
+				}
+
+				return made;
+			}
+		}
+	}
+
+	return false;
 }
 
 bool BlueprintEditor::connect(ID fromPin, ID toPin) {
@@ -3746,17 +3835,7 @@ void BlueprintEditor::renderGraphContextMenu() {
 					Node* node = findNode(id);
 
 					if (node && pendingLinkPin) {
-						for (auto& pin : node->pins) {
-							std::string error;
-
-							if (canConnect(pendingLinkPin, pin.id, error)) {
-								if (connect(pendingLinkPin, pin.id)) {
-									recordUndo();
-								}
-
-								break;
-							}
-						}
+						autoConnectPendingToNode(pendingLinkPin, *node);
 					}
 				}
 
@@ -3854,17 +3933,7 @@ void BlueprintEditor::renderGraphContextMenu() {
 					Node* node = findNode(id);
 
 					if (node) {
-						for (auto& pin : node->pins) {
-							std::string error;
-
-							if (canConnect(pendingLinkPin, pin.id, error)) {
-								if (connect(pendingLinkPin, pin.id)) {
-									recordUndo();
-								}
-
-								break;
-							}
-						}
+						autoConnectPendingToNode(pendingLinkPin, *node);
 					}
 				}
 			}
