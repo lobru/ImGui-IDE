@@ -15,6 +15,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -34,6 +35,7 @@ LibHandle openLib(const std::filesystem::path &p) { return LoadLibraryW(p.wstrin
 void *findSym(LibHandle h, const char *name) { return reinterpret_cast<void *>(GetProcAddress(h, name)); }
 void closeLib(LibHandle h) { FreeLibrary(h); }
 bool isPluginFile(const std::filesystem::path &p) { return p.extension() == ".dll"; }
+unsigned long currentPid() { return GetCurrentProcessId(); }
 #else
 using LibHandle = void *;
 LibHandle openLib(const std::filesystem::path &p) { return dlopen(p.c_str(), RTLD_NOW | RTLD_LOCAL); }
@@ -44,7 +46,48 @@ bool isPluginFile(const std::filesystem::path &p)
     auto e = p.extension();
     return e == ".so" || e == ".dylib";
 }
+unsigned long currentPid() { return static_cast<unsigned long>(::getpid()); }
 #endif
+
+// The dir prefix for our per-process shadow copies (see shadowCopyDir).
+const std::string kShadowPrefix = "imguiide-plugins-";
+
+// A private, per-process directory under the system temp dir into which every
+// plugin DLL is copied before loading. Loading the COPY (not the build output)
+// means the running app never holds an OS lock on plugins/<name>.dll, so a
+// concurrent `ninja` can overwrite it — no more LNK1168 "cannot open ... for
+// writing" while the IDE is up. Returns an empty path if temp is unusable, in
+// which case the caller falls back to loading in place.
+std::filesystem::path shadowCopyDir()
+{
+    std::error_code ec;
+    std::filesystem::path base = std::filesystem::temp_directory_path(ec);
+    if (ec)
+        return {};
+
+    // Sweep stale shadow dirs from earlier runs first. A dir whose DLLs are still
+    // mapped by a LIVE process can't be removed (the files stay locked), so this
+    // naturally leaves other running instances' copies alone and reaps only dead
+    // ones — no PID-liveness probing needed.
+    for (auto it = std::filesystem::directory_iterator(base, ec);
+         !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+    {
+        std::error_code fec;
+        if (it->is_directory(fec) && !fec &&
+            it->path().filename().string().rfind(kShadowPrefix, 0) == 0)
+        {
+            std::error_code rec;
+            std::filesystem::remove_all(it->path(), rec); // best effort; live dirs fail
+        }
+    }
+
+    std::filesystem::path dir = base / (kShadowPrefix + std::to_string(currentPid()));
+    std::filesystem::remove_all(dir, ec); // clear a leftover from a recycled PID
+    std::filesystem::create_directories(dir, ec);
+    if (ec)
+        return {};
+    return dir;
+}
 } // namespace
 
 void loadPluginDLLs(PluginRegistry &registry, const std::filesystem::path &pluginsDir,
@@ -77,10 +120,26 @@ void loadPluginDLLs(PluginRegistry &registry, const std::filesystem::path &plugi
     }
     std::sort(files.begin(), files.end()); // deterministic load order
 
+    // Load from a private shadow copy so the build-output DLLs stay unlocked while
+    // the app runs (see shadowCopyDir). If temp is unusable, shadowDir is empty and
+    // we load each plugin in place — correct, just re-lockable by a concurrent build.
+    std::filesystem::path shadowDir = shadowCopyDir();
+
     for (auto &file : files)
     {
         std::string name = file.filename().string();
-        LibHandle h = openLib(file);
+
+        std::filesystem::path loadPath = file;
+        if (!shadowDir.empty())
+        {
+            std::error_code cec;
+            std::filesystem::path copy = shadowDir / file.filename();
+            std::filesystem::copy_file(file, copy, std::filesystem::copy_options::overwrite_existing, cec);
+            if (!cec)
+                loadPath = copy; // load the copy; original left unlocked for rebuilds
+        }
+
+        LibHandle h = openLib(loadPath);
         if (!h)
         {
             log("plugin: failed to load " + name);

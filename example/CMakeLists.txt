@@ -124,6 +124,14 @@ function(imguiide_add_plugin name factory)
 	target_compile_options(${name} PRIVATE
 		$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 		$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+	# Free a locked output before linking: a running app maps plugins/<name>.dll and
+	# would otherwise LNK1168 the relink. The app loads a shadow copy (plugin_loader
+	# .cpp), so this is belt-and-suspenders, but it also unblocks the FIRST rebuild
+	# after this change while an OLD (pre-shadow-copy) app is still running.
+	add_custom_command(TARGET ${name} PRE_LINK
+		COMMAND ${CMAKE_COMMAND} -DFILE=$<TARGET_FILE:${name}>
+		        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rename_aside.cmake
+		VERBATIM)
 	add_dependencies(example ${name}) # build + deploy the DLL whenever the exe builds
 endfunction()
 
@@ -172,6 +180,16 @@ endif()
 # separately-running ImGui-IDE.exe.
 set(IMGUIIDE_EXE_NAME "ImGui-IDE" CACHE STRING "Base name of the produced app executable")
 set_target_properties(example PROPERTIES OUTPUT_NAME "${IMGUIIDE_EXE_NAME}")
+
+# Same rename-aside trick for the exe: if the app is running from its own output
+# path, rename the running image out of the way so the linker can write a fresh
+# one (Windows keeps executing the renamed file; the new binary is used next
+# launch). Unlike the plugin DLLs there's no shadow-copy equivalent for the exe,
+# so this is the sole mechanism that lets a rebuild proceed while the app runs.
+add_custom_command(TARGET example PRE_LINK
+	COMMAND ${CMAKE_COMMAND} -DFILE=$<TARGET_FILE:example>
+	        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/rename_aside.cmake
+	VERBATIM)
 
 # Dev/test builds can retarget the whole app payload into a staging directory:
 # because the plugin DLLs and synced assets all follow $<TARGET_FILE_DIR:example>,
