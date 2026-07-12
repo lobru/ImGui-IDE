@@ -1268,6 +1268,18 @@ void Generator::emitFlowControl(const Node& node, const Pin& enteredPin, std::st
 		line(out, indent, "end");
 		emitChain(findExecOutput(node, "Completed"), out, indent);
 
+	} else if (name == "Is Valid") {
+		line(out, indent, "if (" + conditionExpression("Object") + ") ~= nil then");
+		emitChain(findExecOutput(node, "Is Valid"), out, indent + 1);
+		const Pin* invalidPin = findExecOutput(node, "Is Not Valid");
+
+		if (invalidPin && execTargetPin(invalidPin->id)) {
+			line(out, indent, "else");
+			emitChain(invalidPin, out, indent + 1);
+		}
+
+		line(out, indent, "end");
+
 	} else if (name == "For Each") {
 		std::string elem = "elem" + std::to_string(node.id);
 		std::string index = "idx" + std::to_string(node.id);

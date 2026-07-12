@@ -243,6 +243,11 @@ static const std::vector<FlowDef>& flowDefinitions() {
 			{false, BlueprintEditor::PinKind::Boolean, "Condition", "false"},
 			{true, BlueprintEditor::PinKind::Exec, "Loop Body", ""},
 			{true, BlueprintEditor::PinKind::Exec, "Completed", ""}}},
+		{"Is Valid", "Route execution by whether the object is nil", {
+			{false, BlueprintEditor::PinKind::Exec, "", ""},
+			{false, BlueprintEditor::PinKind::Wildcard, "Object", ""},
+			{true, BlueprintEditor::PinKind::Exec, "Is Valid", ""},
+			{true, BlueprintEditor::PinKind::Exec, "Is Not Valid", ""}}},
 		{"For Each", "Execute once per array element (ipairs, 1-based)", {
 			{false, BlueprintEditor::PinKind::Exec, "", ""},
 			{false, BlueprintEditor::PinKind::Wildcard, "Array", ""},
@@ -1194,6 +1199,13 @@ bool BlueprintEditor::typesCompatible(const PinType& from, const PinType& to) co
 		if (from.kind == PinKind::Integer && to.kind == PinKind::Float) {
 			return true;
 		}
+	}
+
+	// Lua truthiness: `if <anything>` is valid Lua (nil/false are falsy, everything
+	// else truthy), so a Boolean INPUT (Branch/While conditions, bool params) accepts
+	// any data connection — wire an Object straight into a Branch to nil-check it.
+	if (to.kind == PinKind::Boolean) {
+		return true;
 	}
 
 	return from.kind == to.kind;

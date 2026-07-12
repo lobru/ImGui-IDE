@@ -1812,6 +1812,37 @@ int main(int argc, char** argv)
 		      "sdk expose: exposed function spawns a node");
 	}
 
+	// ── Is Valid flow node + Lua-truthiness Boolean inputs ──────────────────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto pawn = bp.AddCallFunctionNode("UEVR_API", "Get Local Pawn", ImVec2(0, 150));
+		auto valid = bp.AddFlowControlNode("Is Valid", ImVec2(300, 0));
+		auto print = bp.AddCallFunctionNode("UEVR_API", "Print", ImVec2(600, 0));
+		CHECK(valid != 0, "isvalid: flow node exists");
+
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(valid, "", false));
+		CHECK(bp.AddLink(bp.FindPinID(pawn, "Return Value", true), bp.FindPinID(valid, "Object", false)),
+		      "isvalid: object wires into the check");
+		bp.AddLink(bp.FindPinID(valid, "Is Valid", true), bp.FindPinID(print, "", false));
+
+		std::string script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find("~= nil then") != std::string::npos, "isvalid: emits a nil check");
+
+		// Lua truthiness: an OBJECT output connects straight into a Branch Condition
+		auto branch = bp.AddFlowControlNode("Branch", ImVec2(300, 300));
+		CHECK(bp.AddLink(bp.FindPinID(pawn, "Return Value", true), bp.FindPinID(branch, "Condition", false)),
+		      "truthiness: object output accepted by a Boolean condition pin");
+		auto len = bp.AddCallFunctionNode("LuaTable", "Array Length", ImVec2(0, 450));
+		CHECK(bp.AddLink(bp.FindPinID(len, "Length", true), bp.FindPinID(branch, "Condition", false)),
+		      "truthiness: integer accepted by a Boolean condition pin (replaces link)");
+		// but exec pins still never cross into data
+		CHECK(!bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(branch, "Condition", false)),
+		      "truthiness: exec into Boolean still rejected");
+	}
+
 	// ── Registry JSON: data-driven API export/import round-trips ────────────
 	{
 		BlueprintEditor a;
