@@ -562,7 +562,8 @@ private:
 	void emitChain(const Pin* execOutput, std::string& out, int indent);
 	void emitNode(const Node& node, const Pin& enteredPin, std::string& out, int indent);
 	void emitFlowControl(const Node& node, const Pin& enteredPin, std::string& out, int indent);
-	void emitCustomLuaBlock(const Node& node, std::string& out, int indent);
+	std::string substituteParams(const std::string& text, const Node& node);
+	void emitCustomLuaFunctions(std::string& out);
 	std::string& stateLocal(const Node& node, const char* prefix, const char* initial);
 	static void line(std::string& out, int indent, const std::string& text);
 
@@ -698,6 +699,12 @@ std::string Generator::defaultLiteral(const Pin& pin) const {
 		}
 
 		default:
+			// Table-typed pins/variables (Wildcard array, or Wildcard "Map") default to
+			// an empty table so `local t = {}` + Array Add / For Each work immediately.
+			if (pin.type.kind == PinKind::Wildcard && (pin.type.isArray || pin.type.subtype == "Map")) {
+				return "{}";
+			}
+
 			return "nil";
 	}
 }
@@ -986,7 +993,18 @@ void Generator::emitNode(const Node& node, const Pin& enteredPin, std::string& o
 				}
 			}
 
-			line(out, indent, identifier(node.memberName) + " = " + value);
+			std::string name = identifier(node.memberName);
+
+			if (node.customCode == "or") {
+				// "Set If Unset" variant (see AddVariableSetIfUnsetNode): the standard
+				// UEVR-script lazy-init idiom — only evaluate/assign when still nil, so
+				// e.g. a find_uobject runs once instead of every callback invocation.
+				line(out, indent, name + " = " + name + " or (" + value + ")");
+
+			} else {
+				line(out, indent, name + " = " + value);
+			}
+
 			emitChain(findExecOutput(node, ""), out, indent);
 			break;
 		}
@@ -1047,14 +1065,40 @@ void Generator::emitNode(const Node& node, const Pin& enteredPin, std::string& o
 			break;
 
 		case NodeKind::CustomLua: {
-			for (auto output : dataOutputs(node)) {
-				line(out, indent, "local " + identifier(output->name) + " = nil");
+			// Custom Lua nodes are LOCAL FUNCTIONS (defined once at the top of the
+			// script by emitCustomLuaFunctions); the exec site just calls them with
+			// the wired input expressions and captures the returned outputs.
+			std::string args;
+
+			for (auto input : dataInputs(node)) {
+				if (!args.empty()) {
+					args += ", ";
+				}
+
+				args += inputExpression(*input, 0);
 			}
 
-			emitCustomLuaBlock(node, out, indent);
+			std::vector<const Pin*> outputs = dataOutputs(node);
+			std::string call = "bpLua" + std::to_string(node.id) + "(" + args + ")";
 
-			for (auto output : dataOutputs(node)) {
-				pinNames[output->id] = identifier(output->name);
+			if (outputs.empty()) {
+				line(out, indent, call);
+
+			} else {
+				std::string results;
+
+				for (auto output : outputs) {
+					std::string local = identifier(output->name) + std::to_string(node.id);
+
+					if (!results.empty()) {
+						results += ", ";
+					}
+
+					results += local;
+					pinNames[output->id] = local;
+				}
+
+				line(out, indent, "local " + results + " = " + call);
 			}
 
 			emitChain(findExecOutput(node, ""), out, indent);
@@ -1067,24 +1111,110 @@ void Generator::emitNode(const Node& node, const Pin& enteredPin, std::string& o
 	}
 }
 
-void Generator::emitCustomLuaBlock(const Node& node, std::string& out, int indent) {
-	// substituted directly against the raw multi-line source, NOT through expandTemplate:
-	// real Lua can legitimately contain '|' (bitwise op, string/table content), so
-	// expandTemplate's split-on-'|' multi-output segmenting must never run over free-form
-	// user code.
-	std::string substituted = substituteTokens(node.customCode, node, 0);
-	size_t start = 0;
+std::string Generator::substituteParams(const std::string& text, const Node& node) {
+	// Like substituteTokens, but for a Custom Lua node compiled as a LOCAL FUNCTION:
+	// {name} / {N} references resolve to the matching PARAMETER identifier (the
+	// wired expressions are evaluated once at the call site), never to inline
+	// expressions. Runs over raw multi-line Lua, so no '|' segment splitting.
+	std::vector<const Pin*> inputs = dataInputs(node);
+	std::string result;
+	size_t i = 0;
 
-	while (start < substituted.size()) {
-		size_t end = substituted.find('\n', start);
+	while (i < text.size()) {
+		if (text[i] == '{') {
+			size_t close = text.find('}', i);
 
-		if (end == std::string::npos) {
-			line(out, indent, substituted.substr(start));
-			break;
+			if (close != std::string::npos) {
+				std::string key = text.substr(i + 1, close - i - 1);
+				const Pin* match = nullptr;
+
+				if (!key.empty() && key.find_first_not_of("0123456789") == std::string::npos) {
+					size_t index = static_cast<size_t>(std::atoi(key.c_str()));
+					match = index < inputs.size() ? inputs[index] : nullptr;
+
+				} else {
+					for (auto input : inputs) {
+						if (identifier(input->name) == identifier(key)) {
+							match = input;
+							break;
+						}
+					}
+				}
+
+				result += match ? identifier(match->name) : "nil --[[ unknown input '" + key + "' ]]";
+				i = close + 1;
+				continue;
+			}
 		}
 
-		line(out, indent, substituted.substr(start, end - start));
-		start = end + 1;
+		result += text[i++];
+	}
+
+	return result;
+}
+
+void Generator::emitCustomLuaFunctions(std::string& out) {
+	// Every Custom Lua node becomes one local function at the top of the script:
+	// params = the node's input pins, returns = its output pins (assigned by the
+	// body). Reusable, readable, and callable from every exec site that hits it.
+	for (auto& node : bp.GetNodes()) {
+		if (node.kind != NodeKind::CustomLua) {
+			continue;
+		}
+
+		std::string params;
+
+		for (auto input : dataInputs(node)) {
+			if (!params.empty()) {
+				params += ", ";
+			}
+
+			params += identifier(input->name);
+		}
+
+		out += "-- Custom Lua node: " + node.title + "\n";
+		out += "local function bpLua" + std::to_string(node.id) + "(" + params + ")\n";
+
+		for (auto output : dataOutputs(node)) {
+			out += "    local " + identifier(output->name) + " = nil\n";
+		}
+
+		std::string bodyText = substituteParams(node.customCode, node);
+		size_t start = 0;
+
+		while (start < bodyText.size()) {
+			size_t end = bodyText.find('\n', start);
+			std::string bodyLine = bodyText.substr(start, end == std::string::npos ? std::string::npos : end - start);
+
+			if (!bodyLine.empty()) {
+				out += "    " + bodyLine + "\n";
+
+			} else {
+				out += "\n";
+			}
+
+			if (end == std::string::npos) {
+				break;
+			}
+
+			start = end + 1;
+		}
+
+		std::string returns;
+
+		for (auto output : dataOutputs(node)) {
+			if (!returns.empty()) {
+				returns += ", ";
+			}
+
+			returns += identifier(output->name);
+		}
+
+		if (!returns.empty()) {
+			out += "    return " + returns + "\n";
+		}
+
+		out += "end\n\n";
 	}
 }
 
@@ -1134,6 +1264,33 @@ void Generator::emitFlowControl(const Node& node, const Pin& enteredPin, std::st
 
 	} else if (name == "While Loop") {
 		line(out, indent, "while " + conditionExpression("Condition") + " do");
+		emitChain(findExecOutput(node, "Loop Body"), out, indent + 1);
+		line(out, indent, "end");
+		emitChain(findExecOutput(node, "Completed"), out, indent);
+
+	} else if (name == "For Each") {
+		std::string elem = "elem" + std::to_string(node.id);
+		std::string index = "idx" + std::to_string(node.id);
+
+		for (auto output : dataOutputs(node)) {
+			pinNames[output->id] = output->name == "Index" ? index : elem;
+		}
+
+		// nil-safe: reflected TArray getters return nil for an empty array
+		line(out, indent, "for " + index + ", " + elem + " in ipairs((" + conditionExpression("Array") + ") or {}) do");
+		emitChain(findExecOutput(node, "Loop Body"), out, indent + 1);
+		line(out, indent, "end");
+		emitChain(findExecOutput(node, "Completed"), out, indent);
+
+	} else if (name == "For Each (Pairs)") {
+		std::string key = "key" + std::to_string(node.id);
+		std::string value = "val" + std::to_string(node.id);
+
+		for (auto output : dataOutputs(node)) {
+			pinNames[output->id] = output->name == "Key" ? key : value;
+		}
+
+		line(out, indent, "for " + key + ", " + value + " in pairs((" + conditionExpression("Table") + ") or {}) do");
 		emitChain(findExecOutput(node, "Loop Body"), out, indent + 1);
 		line(out, indent, "end");
 		emitChain(findExecOutput(node, "Completed"), out, indent);
@@ -1222,6 +1379,9 @@ void Generator::emitFlowControl(const Node& node, const Pin& enteredPin, std::st
 std::string Generator::run() {
 	std::string body;
 
+	// Custom Lua nodes become local functions first (call sites reference them)
+	emitCustomLuaFunctions(body);
+
 	// custom events become local functions
 	for (auto& node : bp.GetNodes()) {
 		if (node.kind == NodeKind::CustomEvent) {
@@ -1268,10 +1428,18 @@ std::string Generator::run() {
 			continue; // nothing wired up
 		}
 
+		// Each callback is (a) generation-guarded so re-running the script (or the
+		// Reset BP Script button) makes the previous run's still-registered callbacks
+		// dormant — exec_lua_chunk state survives UEVR's reset_lua_scripts — and
+		// (b) pcall-wrapped so a runtime error logs instead of killing the callback.
 		body += callback + "(function(" + args + ")\n";
+		body += "    if __gen ~= __bp_gen then return end\n";
+		body += "    local __ok, __err = pcall(function()\n";
 		std::string inner;
-		emitChain(exec, inner, 1);
-		body += inner.empty() ? "    -- empty\n" : inner;
+		emitChain(exec, inner, 2);
+		body += inner.empty() ? "        -- empty\n" : inner;
+		body += "    end)\n";
+		body += "    if not __ok then print(\"[BP] error in " + snakeCase(node.memberName) + ": \" .. tostring(__err)) end\n";
 		body += "end)\n\n";
 	}
 
@@ -1279,6 +1447,10 @@ std::string Generator::run() {
 	std::string script;
 	script += "-- " + bp.GetBlueprintName() + ".lua\n";
 	script += "-- generated by BlueprintEditor (UEVR Lua backend)\n\n";
+	// Generation counter: chunk-run scripts can't unregister their callbacks, so each
+	// (re)run bumps the global and the guard in every callback silences older runs.
+	script += "__bp_gen = (__bp_gen or 0) + 1\n";
+	script += "local __gen = __bp_gen\n\n";
 
 	if (!bp.GetVariables().empty()) {
 		for (auto& variable : bp.GetVariables()) {

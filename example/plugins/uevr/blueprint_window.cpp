@@ -10,11 +10,14 @@
 
 #define _CRT_SECURE_NO_WARNINGS // std::getenv("APPDATA") for the Import Game SDK menu
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 
 #include <imgui.h>
 
@@ -27,14 +30,36 @@
 
 #include "uevr_plugin.h"
 
-void UevrPlugin::loadSdkDefinitions(BlueprintEditor &bp)
+void UevrPlugin::loadSdkDefinitions()
 {
-    // Merge the whole <exe>/sdk tree into the registry at create time: this module's
-    // own exported JSON, and dropped-in UEVR sdk_dump trees (classes/*.json +
-    // enums/*.lua). LoadSdkDir is recursive and non-throwing; malformed files are
-    // skipped (optional data — the interactive Import path surfaces errors instead).
+    // Load the whole <exe>/sdk tree into the SIDE index (not the node registry —
+    // a 10k-class dump makes the palette unusable). The index feeds Lua
+    // autocomplete; classes reach the palette via Graph > Expose SDK Class.
     if (!sdkDir.empty())
-        BlueprintRegistryJson::LoadSdkDir(bp.GetRegistry(), sdkDir);
+        BlueprintRegistryJson::LoadSdkDir(sdkIndex, sdkDir);
+    rebuildSdkWords();
+}
+
+void UevrPlugin::rebuildSdkWords()
+{
+    // Deduped class/function/property names for the Lua autocomplete trie. Capped:
+    // a full game dump has ~50k+ member names; beyond the cap the words are still
+    // reachable per-class after Expose SDK Class.
+    constexpr size_t kMaxWords = 40000;
+    std::unordered_set<std::string> seen;
+    sdkWords.clear();
+    auto add = [&](const std::string &w) {
+        if (!w.empty() && sdkWords.size() < kMaxWords && seen.insert(w).second)
+            sdkWords.push_back(w);
+    };
+    for (const auto &cls : sdkIndex.GetClasses())
+    {
+        add(cls->name);
+        for (const auto &f : cls->functions)
+            add(f.name);
+        for (const auto &p : cls->properties)
+            add(p.name);
+    }
 }
 
 BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
@@ -47,7 +72,7 @@ BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
     {
         blueprintEditor = std::make_unique<BlueprintEditor>();
         BlueprintLua::SetupUEVRRegistry(*blueprintEditor);
-        loadSdkDefinitions(*blueprintEditor); // merge any <exe>/sdk/*.json SDK dumps
+        loadSdkDefinitions(); // index <exe>/sdk dumps for autocomplete + Expose SDK Class
         blueprintEditor->SetBlueprint("UEVRScript", "UEVR");
 
         // Offer to restore an autosave from a previous (possibly crashed) session.
@@ -100,15 +125,17 @@ BlueprintEditor::PinType sidebarVarPinType(int idx)
     case 3: return BlueprintEditor::PinType(PK::Vector);
     case 4: return BlueprintEditor::PinType(PK::Integer);
     case 5: return BlueprintEditor::PinType(PK::Object, "UObject");
-
+    case 6: return BlueprintEditor::PinType(PK::Class, "UObject");
+    case 7: return BlueprintEditor::PinType(PK::Wildcard, "", true); // Table (array): local t = {}
+    case 8: return BlueprintEditor::PinType(PK::Wildcard, "Map");    // Table (map):   local t = {}
     default: return BlueprintEditor::PinType(PK::Wildcard);
     }
 }
 
-const char *pinKindLabel(BlueprintEditor::PinKind k)
+const char *pinKindLabel(const BlueprintEditor::PinType &t)
 {
     using PK = BlueprintEditor::PinKind;
-    switch (k)
+    switch (t.kind)
     {
     case PK::String: return "string";
     case PK::Float: return "number";
@@ -116,6 +143,7 @@ const char *pinKindLabel(BlueprintEditor::PinKind k)
     case PK::Boolean: return "bool";
     case PK::Vector: return "vector";
     case PK::Object: return "object";
+    case PK::Wildcard: return t.isArray ? "table" : (t.subtype == "Map" ? "map" : "?");
     default: return "?";
     }
 }
@@ -154,7 +182,8 @@ void UevrPlugin::renderBlueprintSidebar(PluginHost &host, BlueprintEditor &bp)
                 ImGui::SetKeyboardFocusHere();
             bool enter = ImGui::InputTextWithHint("##vn", "name", sidebarVarName, sizeof(sidebarVarName),
                                                   ImGuiInputTextFlags_EnterReturnsTrue);
-            const char *types[] = {"String", "Number", "Boolean", "Vector", "Integer", "Object", "Class",};
+            const char *types[] = {"String", "Number", "Boolean", "Vector", "Integer", "Object", "Class",
+                                   "Table (array)", "Table (map)"};
             ImGui::SetNextItemWidth(150.0f);
             ImGui::Combo("##vt", &sidebarVarType, types, IM_ARRAYSIZE(types));
             if ((ImGui::Button("Add") || enter) && sidebarVarName[0])
@@ -184,12 +213,17 @@ void UevrPlugin::renderBlueprintSidebar(PluginHost &host, BlueprintEditor &bp)
                 }
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("(%s)", pinKindLabel(var.type.kind));
+            ImGui::TextDisabled("(%s)", pinKindLabel(var.type));
             if (ImGui::SmallButton("Get"))
                 bp.AddVariableGetNode(var.name, bp.NextSpawnPos());
             ImGui::SameLine();
             if (ImGui::SmallButton("Set"))
                 bp.AddVariableSetNode(var.name, bp.NextSpawnPos());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Init"))
+                bp.AddVariableSetIfUnsetNode(var.name, bp.NextSpawnPos());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Set If Unset: X = X or value (lazy init, e.g. find an object once)");
             ImGui::SameLine();
             if (ImGui::SmallButton("x"))
                 toRemove = var.name;
@@ -322,9 +356,9 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                 ImGui::Separator();
                 if (ImGui::MenuItem("Import SDK (Active Doc)"))
                 {
-                    // Merge the active document into the live registry — the palette
-                    // rebuilds from it on next open. Accepts this module's own JSON,
-                    // a UEVR reflection dump (.json), or a UE4SS enum annotation (.lua).
+                    // SDK content goes to the SIDE INDEX (autocomplete + Expose SDK
+                    // Class), not the palette. Enums still go to the live registry —
+                    // they parameterize existing nodes rather than adding any.
                     std::string text = host.hostActiveText();
                     size_t firstNonSpace = text.find_first_not_of(" \t\r\n");
                     std::string error;
@@ -332,21 +366,24 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                         host.hostToast("Open an SDK .json (or enum .lua) in the editor first, then import it");
                     else if (text[firstNonSpace] == '{')
                     {
-                        if (!BlueprintRegistryJson::Load(bp.GetRegistry(), text, error))
+                        if (!BlueprintRegistryJson::Load(sdkIndex, text, error))
                             host.hostError("SDK import failed: " + error);
                         else
-                            host.hostToast("Imported SDK nodes into the palette");
+                        {
+                            rebuildSdkWords();
+                            host.hostToast("SDK indexed for autocomplete \xe2\x80\x94 use Expose SDK Class to add nodes");
+                        }
                     }
                     else if (text.find("---@enum") != std::string::npos)
                     {
                         int n = BlueprintRegistryJson::LoadEnumLua(bp.GetRegistry(), text);
-                        host.hostToast("Imported " + std::to_string(n) + " enum(s) into the palette");
+                        host.hostToast("Imported " + std::to_string(n) + " enum(s)");
                     }
                     else
                         host.hostError("Unrecognized SDK document (expected a JSON dump or a ---@enum .lua)");
                 }
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Merge the active document (JSON dump or enum .lua) into the node palette at runtime");
+                    ImGui::SetTooltip("Index the active document (JSON dump or enum .lua) for autocomplete + on-demand class exposure");
                 if (const char *appdata = std::getenv("APPDATA"))
                 {
                     // Import a game's dumped SDK straight from where UEVR writes it:
@@ -371,8 +408,10 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                             std::string game = git->path().filename().string();
                             if (ImGui::MenuItem(game.c_str()))
                             {
-                                int n = BlueprintRegistryJson::LoadSdkDir(bp.GetRegistry(), dump);
-                                host.hostToast("Imported " + std::to_string(n) + " classes from " + game);
+                                int n = BlueprintRegistryJson::LoadSdkDir(sdkIndex, dump);
+                                rebuildSdkWords();
+                                host.hostToast("Indexed " + std::to_string(n) + " classes from " + game +
+                                               " \xe2\x80\x94 autocomplete is live; use Expose SDK Class for nodes");
                             }
                             ++shown;
                         }
@@ -380,6 +419,49 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                             ImGui::TextDisabled("(no <game>/sdk_dump found)");
                         ImGui::EndMenu();
                     }
+                }
+                if (!sdkIndex.GetClasses().empty() && ImGui::BeginMenu("Expose SDK Class"))
+                {
+                    // On-demand palette exposure: search the index, click a class to
+                    // copy its functions/properties into the live registry as nodes.
+                    ImGui::SetNextItemWidth(220.0f);
+                    ImGui::InputTextWithHint("##sdkFilter", "filter classes", sdkExposeFilter, sizeof(sdkExposeFilter));
+                    ImGui::Separator();
+                    std::string filter = sdkExposeFilter;
+                    std::transform(filter.begin(), filter.end(), filter.begin(),
+                                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    int shown = 0;
+                    for (const auto &cls : sdkIndex.GetClasses())
+                    {
+                        if (shown >= 50)
+                        {
+                            ImGui::TextDisabled("(more \xe2\x80\x94 refine the filter)");
+                            break;
+                        }
+                        if (!filter.empty())
+                        {
+                            std::string lower = cls->name;
+                            std::transform(lower.begin(), lower.end(), lower.begin(),
+                                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                            if (lower.find(filter) == std::string::npos)
+                                continue;
+                        }
+                        bool exposed = bp.GetRegistry().FindClass(cls->name) != nullptr;
+                        std::string label = cls->name + (exposed ? " (exposed)" : "");
+                        if (ImGui::MenuItem(label.c_str(), nullptr, false, !exposed))
+                        {
+                            BlueprintRegistryJson::ExposeClass(bp.GetRegistry(), sdkIndex, cls->name);
+                            host.hostToast("Exposed " + cls->name + " (" +
+                                           std::to_string(cls->functions.size()) + " functions, " +
+                                           std::to_string(cls->properties.size()) + " properties)");
+                        }
+                        if (ImGui::IsItemHovered() && !cls->functions.empty())
+                            ImGui::SetTooltip("%zu functions, %zu properties", cls->functions.size(), cls->properties.size());
+                        ++shown;
+                    }
+                    if (shown == 0)
+                        ImGui::TextDisabled("(no class matches)");
+                    ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Export API to sdk/uevr_api.json"))
                 {
@@ -458,6 +540,18 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
             }
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Generate the script and run it in a running UEVR game (see UEVR Live)");
+
+            if (ImGui::MenuItem("Reset BP Script"))
+            {
+                // Chunk-run scripts survive UEVR's own reset_lua_scripts (they live in
+                // the exec_lua_chunk state), so blueprint callbacks are generation-
+                // guarded instead: bumping __bp_gen makes every registered BP callback
+                // return immediately without re-running the graph.
+                sendUevr("run", "__bp_gen = (__bp_gen or 0) + 1\nprint('[BP] blueprint callbacks reset')");
+                uevrLiveVisible = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Silence the running blueprint script's callbacks (UEVR's Reset Scripts doesn't reach chunk-run scripts)");
 
             ImGui::EndMenuBar();
         }

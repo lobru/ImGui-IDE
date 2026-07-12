@@ -288,6 +288,7 @@ public:
 	ID AddMakeStructNode(const std::string& structName, const ImVec2& pos);
 	ID AddVariableGetNode(const std::string& variableName, const ImVec2& pos);
 	ID AddVariableSetNode(const std::string& variableName, const ImVec2& pos);
+	ID AddVariableSetIfUnsetNode(const std::string& variableName, const ImVec2& pos); // X = X or value (lazy init)
 	ID AddFlowControlNode(const std::string& name, const ImVec2& pos); // "Branch", "Sequence", "For Loop", ...
 	ID AddRerouteNode(const PinType& type, const ImVec2& pos);
 	ID AddCommentNode(const std::string& text, const ImVec2& pos, const ImVec2& size);

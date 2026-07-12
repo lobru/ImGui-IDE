@@ -100,6 +100,13 @@ void UevrPlugin::contributeAutocomplete(PluginHost &, const PluginDocInfo &doc,
     // accessors. Keyed on the language, not the extension, so "Generate UEVR
     // Lua" tabs get it too.
     if (doc.languageName == "Lua")
+    {
         for (const auto &word : BlueprintLua::LuaApiIdentifiers())
             addWord(word);
+
+        // Imported SDK dumps feed autocomplete here (class + function + property
+        // names) instead of flooding the node palette — see loadSdkDefinitions.
+        for (const auto &word : sdkWords)
+            addWord(word);
+    }
 }

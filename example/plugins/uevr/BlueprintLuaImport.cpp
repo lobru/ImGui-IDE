@@ -324,6 +324,42 @@ std::vector<std::string> splitStatements(const std::string& src) {
 	return result;
 }
 
+// Removes the generator's own safety scaffolding from a statement list so imports of
+// GENERATED scripts decompose into real nodes again: the __bp_gen counter lines, the
+// per-callback generation guard, and the per-callback pcall shell (whose INNER body
+// is spliced back in as ordinary statements). Hand-written code is left untouched.
+std::vector<std::string> stripGeneratorScaffolding(std::vector<std::string> statements) {
+	std::vector<std::string> result;
+
+	for (auto& stmt : statements) {
+		if (stmt == "__bp_gen = (__bp_gen or 0) + 1" || stmt == "local __gen = __bp_gen" ||
+			stmt == "if __gen ~= __bp_gen then return end") {
+			continue;
+		}
+
+		if (startsWith(stmt, "if not __ok then") && stmt.back() == 'd') {
+			continue; // the pcall error-report line
+		}
+
+		const std::string shellOpen = "local __ok, __err = pcall(function()";
+
+		if (startsWith(stmt, shellOpen) && stmt.size() > shellOpen.size() + 4 &&
+			stmt.compare(stmt.size() - 4, 4, "end)") == 0) {
+			std::string inner = stmt.substr(shellOpen.size(), stmt.size() - shellOpen.size() - 4);
+
+			for (auto& unwrapped : stripGeneratorScaffolding(splitStatements(inner))) {
+				result.push_back(std::move(unwrapped));
+			}
+
+			continue;
+		}
+
+		result.push_back(std::move(stmt));
+	}
+
+	return result;
+}
+
 
 //
 //	Template shape matching: the inverse of Generator::substituteTokens (BlueprintLua.cpp)
@@ -1144,7 +1180,7 @@ void Importer::run(const std::vector<std::string>& topLevelStatements) {
 				eventScope.valuePins[argNames[i]] = dataOutputs[i];
 			}
 
-			processBody(splitStatements(ev->body), execOut, eventScope, 400.0f);
+			processBody(stripGeneratorScaffolding(splitStatements(ev->body)), execOut, eventScope, 400.0f);
 			continue;
 		}
 
@@ -1152,7 +1188,7 @@ void Importer::run(const std::vector<std::string>& topLevelStatements) {
 			ID node = editor.AddCustomEventNode(ce->first, nextPos(0.0f));
 			ID execOut = editor.FindPinID(node, "", true);
 			Scope customScope;
-			processBody(splitStatements(ce->second), execOut, customScope, 400.0f);
+			processBody(stripGeneratorScaffolding(splitStatements(ce->second)), execOut, customScope, 400.0f);
 			continue;
 		}
 
@@ -1219,7 +1255,7 @@ ID Importer::processBody(const std::vector<std::string>& statements, ID entryPin
 //
 
 bool BlueprintLuaImport::ImportScript(BlueprintEditor& editor, const std::string& source, std::string& error) {
-	auto topLevel = splitStatements(source);
+	auto topLevel = stripGeneratorScaffolding(splitStatements(source));
 
 	if (topLevel.empty() && !trim(source).empty()) {
 		error = "could not find any top-level statements (unbalanced block or bracket nesting?)";

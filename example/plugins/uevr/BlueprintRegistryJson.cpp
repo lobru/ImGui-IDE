@@ -509,6 +509,27 @@ int BlueprintRegistryJson::LoadEnumLua(BlueprintEditor::TypeRegistry& registry, 
 
 
 //
+//	BlueprintRegistryJson::ExposeClass
+//
+
+bool BlueprintRegistryJson::ExposeClass(BlueprintEditor::TypeRegistry& dst, const BlueprintEditor::TypeRegistry& src,
+                                        const std::string& className) {
+	const BlueprintEditor::Class* from = src.FindClass(className);
+
+	if (!from || dst.FindClass(className)) {
+		return false;
+	}
+
+	BlueprintEditor::Class& to = dst.AddClass(from->name, from->parentName, from->tooltip);
+	to.metadata = from->metadata;
+	to.properties = from->properties;
+	to.functions = from->functions;
+	to.events = from->events;
+	return true;
+}
+
+
+//
 //	BlueprintRegistryJson::LoadSdkDir
 //
 

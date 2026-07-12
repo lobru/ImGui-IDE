@@ -19,7 +19,9 @@
 
 #include "plugin_api.h"
 
-class BlueprintEditor; // heavy widget header — included only in the .cpp files
+// The widget header is needed here for the nested TypeRegistry (the SDK side index);
+// the BlueprintEditor INSTANCE stays behind a unique_ptr created in the .cpp files.
+#include "BlueprintEditor.h"
 
 class UevrPlugin : public EditorPlugin
 {
@@ -64,14 +66,18 @@ private:
     // window was never opened this session.
     BlueprintEditor &ensureBlueprintEditor();
 
-    // ── Data-driven SDK registry ────────────────────────────────────────────
-    // <exe>/sdk holds optional JSON API definitions (see BlueprintRegistryJson).
-    // Any *.json there is merged into the node registry at editor-create time, so
-    // dropping in a game's SDK dump adds its nodes without a rebuild. sdkDir is
-    // captured in onRegister; the Blueprint window's Graph menu also imports the
-    // active document and exports the live API here.
+    // ── Data-driven SDK index ───────────────────────────────────────────────
+    // Imported SDK dumps (<exe>/sdk auto-load, Import Game SDK, Import Active Doc)
+    // land in a SIDE index, not the node registry — a 10k-class dump would make
+    // the palette unusable. The index feeds (a) Lua autocomplete (sdkWords, via
+    // contributeAutocomplete) and (b) on-demand "Expose SDK Class", which copies
+    // ONE class's nodes into the live registry (BlueprintRegistryJson::ExposeClass).
     std::filesystem::path sdkDir;
-    void loadSdkDefinitions(BlueprintEditor &bp); // merge every sdkDir/*.json
+    BlueprintEditor::TypeRegistry sdkIndex;
+    std::vector<std::string> sdkWords;     // deduped class/function/property names
+    char sdkExposeFilter[128] = {0};
+    void loadSdkDefinitions();             // fill sdkIndex from sdkDir (recursive)
+    void rebuildSdkWords();
 
     // ── UEVR Live bridge (file-inbox IPC) ──────────────────────────────────
     bool uevrLiveVisible = false;

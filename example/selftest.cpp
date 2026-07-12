@@ -1719,6 +1719,99 @@ int main(int argc, char** argv)
 		      "snippets: wired For Loop generates a for-loop");
 	}
 
+	// ── Script safety + new codegen semantics ───────────────────────────────
+	{
+		using PK = BlueprintEditor::PinKind;
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+
+		// table-typed variable declares an empty table
+		bp.AddVariable("Items", BlueprintEditor::PinType(PK::Wildcard, "", true), "");
+
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto print = bp.AddCallFunctionNode("UEVR_API", "Print", ImVec2(300, 0));
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(print, "", false));
+		std::string script = BlueprintLua::GenerateScript(bp);
+
+		CHECK(script.find("__bp_gen = (__bp_gen or 0) + 1") != std::string::npos &&
+		          script.find("if __gen ~= __bp_gen then return end") != std::string::npos,
+		      "codegen: generation guard emitted (BP reset support)");
+		CHECK(script.find("pcall(function()") != std::string::npos &&
+		          script.find("if not __ok then print(") != std::string::npos,
+		      "codegen: callbacks are pcall-wrapped");
+		CHECK(script.find("local Items = {}") != std::string::npos,
+		      "codegen: table variable declares an empty table");
+
+		// Set If Unset emits the lazy-init idiom and survives save/load
+		bp.AddVariable("Pawn", BlueprintEditor::PinType(PK::Object, "UObject"), "");
+		auto lazy = bp.AddVariableSetIfUnsetNode("Pawn", ImVec2(300, 200));
+		CHECK(lazy != 0, "codegen: Set If Unset node created");
+		auto pawnFn = bp.AddCallFunctionNode("UEVR_API", "Get Local Pawn", ImVec2(0, 200));
+		bp.AddLink(bp.FindPinID(print, "", true), bp.FindPinID(lazy, "", false));
+		bp.AddLink(bp.FindPinID(pawnFn, "Return Value", true), bp.FindPinID(lazy, "Pawn", false));
+		script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find("Pawn = Pawn or (") != std::string::npos,
+		      "codegen: Set If Unset emits X = X or (value)");
+
+		BlueprintEditor reloaded;
+		CHECK(reloaded.LoadFromString(bp.SaveToString()), "codegen: graph with markers reloads");
+		CHECK(BlueprintLua::GenerateScript(reloaded).find("Pawn = Pawn or (") != std::string::npos,
+		      "codegen: the Set-If-Unset marker survives save/load");
+	}
+
+	// ── For Each flow + CustomLua-as-local-function ─────────────────────────
+	{
+		using PK = BlueprintEditor::PinKind;
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		bp.AddVariable("Items", BlueprintEditor::PinType(PK::Wildcard, "", true), "");
+
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(0, 0));
+		auto get = bp.AddVariableGetNode("Items", ImVec2(0, 150));
+		auto each = bp.AddFlowControlNode("For Each", ImVec2(300, 0));
+		CHECK(each != 0, "foreach: flow node exists");
+		auto lua = bp.AddCustomLuaNode(ImVec2(600, 0));
+		bp.AddCustomLuaPin(lua, false, "Item");
+		bp.SetCustomLuaSource(lua, "print(tostring({Item}))");
+
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(each, "", false));
+		bp.AddLink(bp.FindPinID(get, "", true), bp.FindPinID(each, "Array", false));
+		bp.AddLink(bp.FindPinID(each, "Loop Body", true), bp.FindPinID(lua, "", false));
+		bp.AddLink(bp.FindPinID(each, "Element", true), bp.FindPinID(lua, "Item", false));
+
+		std::string script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find("in ipairs(") != std::string::npos, "foreach: emits ipairs iteration");
+		CHECK(script.find("local function bpLua") != std::string::npos,
+		      "customlua: node compiled as a local function");
+		CHECK(script.find("print(tostring(Item))") != std::string::npos,
+		      "customlua: body references its parameter, not an inline expression");
+		CHECK(script.find("bpLua" + std::to_string(lua) + "(elem") != std::string::npos,
+		      "customlua: call site passes the loop element");
+	}
+
+	// ── SDK side index: ExposeClass copies one class into the live registry ─
+	{
+		BlueprintEditor::TypeRegistry sideIndex;
+		auto& cls = sideIndex.AddClass("BP_Door_C", "AActor", "a dumped game class");
+		cls.AddFunction("OpenDoor", "Game").Metadata("{target}[\"OpenDoor\"]({target})");
+		cls.AddProperty("bIsOpen", BlueprintEditor::PinType(BlueprintEditor::PinKind::Boolean), "Game");
+
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		size_t before = bp.GetRegistry().GetClasses().size();
+		CHECK(BlueprintRegistryJson::ExposeClass(bp.GetRegistry(), sideIndex, "BP_Door_C"),
+		      "sdk expose: class copied into the live registry");
+		CHECK(bp.GetRegistry().GetClasses().size() == before + 1 &&
+		          bp.GetRegistry().FindFunction("BP_Door_C", "OpenDoor") != nullptr,
+		      "sdk expose: functions arrive with the class");
+		CHECK(!BlueprintRegistryJson::ExposeClass(bp.GetRegistry(), sideIndex, "BP_Door_C"),
+		      "sdk expose: double-expose rejected");
+		CHECK(!BlueprintRegistryJson::ExposeClass(bp.GetRegistry(), sideIndex, "Missing"),
+		      "sdk expose: unknown class rejected");
+		CHECK(bp.AddCallFunctionNode("BP_Door_C", "OpenDoor", ImVec2(0, 0)) != 0,
+		      "sdk expose: exposed function spawns a node");
+	}
+
 	// ── Registry JSON: data-driven API export/import round-trips ────────────
 	{
 		BlueprintEditor a;

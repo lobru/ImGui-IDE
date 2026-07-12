@@ -46,4 +46,12 @@ namespace BlueprintRegistryJson {
 	// receives one line per file loaded / skipped. Returns the class count added.
 	int LoadSdkDir(BlueprintEditor::TypeRegistry& registry, const std::filesystem::path& dir,
 	               const std::function<void(const std::string&)>& log = {});
+
+	// Copy ONE class (functions/properties/events included) from a side SDK index
+	// into a live registry. SDK dumps are indexed OFF TO THE SIDE (for autocomplete)
+	// rather than merged into the palette wholesale — 10k classes make the node menu
+	// unusable — and individual classes are exposed on demand through this. Returns
+	// false when `className` isn't in `src` or already exists in `dst`.
+	bool ExposeClass(BlueprintEditor::TypeRegistry& dst, const BlueprintEditor::TypeRegistry& src,
+	                 const std::string& className);
 }

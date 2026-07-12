@@ -243,6 +243,20 @@ static const std::vector<FlowDef>& flowDefinitions() {
 			{false, BlueprintEditor::PinKind::Boolean, "Condition", "false"},
 			{true, BlueprintEditor::PinKind::Exec, "Loop Body", ""},
 			{true, BlueprintEditor::PinKind::Exec, "Completed", ""}}},
+		{"For Each", "Execute once per array element (ipairs, 1-based)", {
+			{false, BlueprintEditor::PinKind::Exec, "", ""},
+			{false, BlueprintEditor::PinKind::Wildcard, "Array", ""},
+			{true, BlueprintEditor::PinKind::Exec, "Loop Body", ""},
+			{true, BlueprintEditor::PinKind::Wildcard, "Element", ""},
+			{true, BlueprintEditor::PinKind::Integer, "Index", ""},
+			{true, BlueprintEditor::PinKind::Exec, "Completed", ""}}},
+		{"For Each (Pairs)", "Execute once per key/value of a table (pairs)", {
+			{false, BlueprintEditor::PinKind::Exec, "", ""},
+			{false, BlueprintEditor::PinKind::Wildcard, "Table", ""},
+			{true, BlueprintEditor::PinKind::Exec, "Loop Body", ""},
+			{true, BlueprintEditor::PinKind::Wildcard, "Key", ""},
+			{true, BlueprintEditor::PinKind::Wildcard, "Value", ""},
+			{true, BlueprintEditor::PinKind::Exec, "Completed", ""}}},
 		{"Do Once", "Only execute once until reset", {
 			{false, BlueprintEditor::PinKind::Exec, "", ""},
 			{false, BlueprintEditor::PinKind::Exec, "Reset", ""},
@@ -950,6 +964,20 @@ BlueprintEditor::ID BlueprintEditor::AddVariableSetNode(const std::string& varia
 	return finishNode(node);
 }
 
+BlueprintEditor::ID BlueprintEditor::AddVariableSetIfUnsetNode(const std::string& variableName, const ImVec2& pos) {
+	// The lazy-init idiom: codegen emits `X = X or (value)`, so the value expression
+	// only evaluates while X is still nil (e.g. find_uobject runs once, not per tick).
+	ID id = AddVariableSetNode(variableName, pos);
+
+	if (Node* node = findNode(id)) {
+		node->title = "Set " + variableName + " (if unset)";
+		node->subtitle = "X = X or value";
+		node->customCode = "or"; // codegen marker, serialized with the node
+	}
+
+	return id;
+}
+
 BlueprintEditor::ID BlueprintEditor::AddFlowControlNode(const std::string& name, const ImVec2& pos) {
 	for (auto& def : flowDefinitions()) {
 		if (name == def.name) {
@@ -1631,7 +1659,10 @@ std::string BlueprintEditor::serializeGraph(bool selectionOnly, const char* magi
 			static_cast<double>(node.commentSize.x), static_cast<double>(node.commentSize.y));
 		out += buffer;
 
-		if (node.kind == NodeKind::CustomLua) {
+		// customCode: the CustomLua source, and small per-node markers on other kinds
+		// (e.g. "or" on a Set-If-Unset VariableSet). The parser applies it regardless
+		// of kind, so serializing whenever non-empty is backward compatible.
+		if (!node.customCode.empty()) {
 			out += "lua " + escapeString(node.customCode) + "\n";
 		}
 
@@ -3566,6 +3597,17 @@ void BlueprintEditor::buildPalette() {
 		set.pins.push_back(std::make_pair(variable.type, true));
 		set.spawn = [this, variableName](const ImVec2& pos) { return AddVariableSetNode(variableName, pos); };
 		palette.push_back(std::move(set));
+
+		PaletteAction lazySet;
+		lazySet.category = "Variables";
+		lazySet.name = "Set " + variable.name + " (If Unset)";
+		lazySet.keywords = "variable lazy init or nil once";
+		lazySet.pins.push_back(std::make_pair(PinType(PinKind::Exec), false));
+		lazySet.pins.push_back(std::make_pair(PinType(PinKind::Exec), true));
+		lazySet.pins.push_back(std::make_pair(variable.type, false));
+		lazySet.pins.push_back(std::make_pair(variable.type, true));
+		lazySet.spawn = [this, variableName](const ImVec2& pos) { return AddVariableSetIfUnsetNode(variableName, pos); };
+		palette.push_back(std::move(lazySet));
 	}
 
 	// utilities
