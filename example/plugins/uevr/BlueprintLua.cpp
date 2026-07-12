@@ -628,6 +628,29 @@ std::string Generator::substituteTokens(const std::string& text, const Node& nod
 }
 
 std::string Generator::callExpression(const Node& node, size_t outputIndex, int depth) {
+	// "Make Struct" node (AddMakeStructNode): a Lua table literal keyed by the exact
+	// UE property names — how UEVR constructs a script-struct argument. Keys are the
+	// raw property names (UE names are valid Lua identifiers).
+	if (node.memberName == "$MakeStruct") {
+		std::string body;
+
+		for (auto input : dataInputs(node)) {
+			std::string value = inputExpression(*input, depth + 1);
+
+			if (value.rfind("nil", 0) == 0) {
+				continue; // skip unset object/struct fields (nil keys are no-ops anyway)
+			}
+
+			if (!body.empty()) {
+				body += ", ";
+			}
+
+			body += input->name + " = " + value;
+		}
+
+		return "{" + body + "}";
+	}
+
 	const BlueprintEditor::Function* function = registry.FindFunction(node.className, node.memberName);
 
 	if (function) {

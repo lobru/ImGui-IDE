@@ -871,6 +871,30 @@ BlueprintEditor::ID BlueprintEditor::AddPropertySetNode(const std::string& class
 	return finishNode(node);
 }
 
+BlueprintEditor::ID BlueprintEditor::AddMakeStructNode(const std::string& structName, const ImVec2& pos) {
+	const Class* cls = registry.FindClass(structName);
+
+	if (!cls) {
+		return 0;
+	}
+
+	// A pure node: memberName is the "$MakeStruct" sentinel the code generator keys
+	// on (see BlueprintLua.cpp callExpression). One input pin per property, one
+	// output pin carrying the struct itself.
+	Node& node = createNode(NodeKind::CallFunction, pos);
+	node.className = structName;
+	node.memberName = "$MakeStruct";
+	node.title = "Make " + structName;
+	node.pure = true;
+
+	for (auto& property : cls->properties) {
+		addPin(node, property.name, property.type, false);
+	}
+
+	addPin(node, structName, PinType(PinKind::Struct, structName), true);
+	return finishNode(node);
+}
+
 BlueprintEditor::ID BlueprintEditor::AddVariableGetNode(const std::string& variableName, const ImVec2& pos) {
 	const Variable* variable = findVariable(variableName);
 
@@ -3581,6 +3605,41 @@ void BlueprintEditor::renderGraphContextMenu() {
 		ImGui::SetNextItemWidth(-FLT_MIN);
 		ImGui::InputTextWithHint("##search", "Search", searchBuffer, sizeof(searchBuffer));
 		ImGui::Separator();
+
+		// Context-sensitive "Make <Struct>" (Unreal UX): dragging from a struct input
+		// pin offers a Make Struct node whose { field = value } table output feeds it.
+		if (pending && !pending->isOutput && pending->type.kind == PinKind::Struct &&
+			!pending->type.subtype.empty() && registry.FindClass(pending->type.subtype)) {
+			std::string makeLabel = "Make " + pending->type.subtype;
+
+			if (ImGui::Selectable(makeLabel.c_str())) {
+				ID id = AddMakeStructNode(pending->type.subtype, popupGraphPos);
+
+				if (id) {
+					SelectNode(id);
+					Node* node = findNode(id);
+
+					if (node && pendingLinkPin) {
+						for (auto& pin : node->pins) {
+							std::string error;
+
+							if (canConnect(pendingLinkPin, pin.id, error)) {
+								if (connect(pendingLinkPin, pin.id)) {
+									recordUndo();
+								}
+
+								break;
+							}
+						}
+					}
+				}
+
+				pendingLinkPin = 0;
+				ImGui::CloseCurrentPopup();
+			}
+
+			ImGui::Separator();
+		}
 
 		// filter the palette
 		std::string search = toLower(searchBuffer);

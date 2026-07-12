@@ -1723,6 +1723,33 @@ int main(int argc, char** argv)
 
 		CHECK(bp.RemoveVariable("Health") && bp.GetVariables().empty(), "variables: remove");
 	}
+
+	// ── Make Struct: field inputs → { Key = value } table for struct args ──
+	{
+		using PK = BlueprintEditor::PinKind;
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		auto& reg = bp.GetRegistry();
+		auto& s = reg.AddClass("FMyStruct", "", "test struct");
+		s.AddProperty("X", BlueprintEditor::PinType(PK::Float), "");
+		s.AddProperty("Name", BlueprintEditor::PinType(PK::String), "");
+		reg.AddClass("Consumer", "", "").AddFunction("Use", "")
+			.Static().In("S", BlueprintEditor::PinType(PK::Struct, "FMyStruct")).Metadata("use({0})");
+
+		auto mk = bp.AddMakeStructNode("FMyStruct", ImVec2(0, 0));
+		CHECK(mk != 0, "make struct: node created");
+		CHECK(bp.SetPinDefaultValue(bp.FindPinID(mk, "X", false), "1.5"), "make struct: set X field");
+		CHECK(bp.SetPinDefaultValue(bp.FindPinID(mk, "Name", false), "hi"), "make struct: set Name field");
+
+		auto ev = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(-300, 0));
+		auto call = bp.AddCallFunctionNode("Consumer", "Use", ImVec2(300, 0));
+		bp.AddLink(bp.FindPinID(ev, "", true), bp.FindPinID(call, "", false));           // exec
+		bp.AddLink(bp.FindPinID(mk, "FMyStruct", true), bp.FindPinID(call, "S", false));  // struct data
+		std::string script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find("X = 1.5") != std::string::npos, "make struct: numeric field in table");
+		CHECK(script.find("Name = \"hi\"") != std::string::npos, "make struct: string field quoted in table");
+		CHECK(script.find("use({") != std::string::npos, "make struct: table passed as the struct arg");
+	}
 #endif // IMGUIIDE_PLUGIN_UEVR
 
 	if (gFailures == 0) {

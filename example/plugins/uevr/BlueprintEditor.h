@@ -277,6 +277,10 @@ public:
 	ID AddCallFunctionNode(const std::string& className, const std::string& functionName, const ImVec2& pos);
 	ID AddPropertyGetNode(const std::string& className, const std::string& propertyName, const ImVec2& pos);
 	ID AddPropertySetNode(const std::string& className, const std::string& propertyName, const ImVec2& pos);
+	// "Make <Struct>": a pure node with one input pin per property of the struct
+	// class, output = the struct. Codegen emits a Lua table { Prop = value, ... },
+	// which is how UEVR passes struct args. Returns 0 if the class isn't known.
+	ID AddMakeStructNode(const std::string& structName, const ImVec2& pos);
 	ID AddVariableGetNode(const std::string& variableName, const ImVec2& pos);
 	ID AddVariableSetNode(const std::string& variableName, const ImVec2& pos);
 	ID AddFlowControlNode(const std::string& name, const ImVec2& pos); // "Branch", "Sequence", "For Loop", ...
