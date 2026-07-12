@@ -21,6 +21,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "plugin_api.h"
 
@@ -31,6 +32,7 @@ public:
     const char *displayName() const override { return "Unreal Engine integration"; }
 
     void onRegister(PluginHost &host) override;
+    void onFrame(PluginHost &host) override; // renders the scaffolding wizard modals
     void onMenu(PluginHost &host, PluginMenu which) override;
     void contributeAutocomplete(PluginHost &host, const PluginDocInfo &doc,
                                 const std::function<void(const std::string &)> &addWord) override;
@@ -45,6 +47,20 @@ private:
     std::filesystem::path menuCachedRoot = std::filesystem::path("\x01");
     std::filesystem::path menuProj, menuEngine;
     std::string           menuAssoc;
+
+    // ── Scaffolding wizards (menu sets a request; onFrame opens the modal) ──
+    bool requestClassWizard = false;
+    bool requestVerseWizard = false;
+    char classNameBuf[128] = {0};
+    int  classParentIdx = 0;
+    int  classModuleIdx = 0;
+    std::vector<std::filesystem::path> classModules; // Source/* module dirs, filled on open
+    char verseNameBuf[128] = {0};
+    void renderClassWizard(PluginHost &host);
+    void renderVerseWizard(PluginHost &host);
+
+    // Parse the active .uasset/.umap's header/name-table/imports and open a report.
+    void inspectActiveUAsset(PluginHost &host);
 };
 
 // Factory used by plugin_registry.cpp (declared there under the same #ifdef).

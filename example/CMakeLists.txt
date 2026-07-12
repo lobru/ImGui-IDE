@@ -130,7 +130,9 @@ endfunction()
 if(IMGUIIDE_PLUGIN_UNREAL)
 	imguiide_add_plugin(imguiide_unreal createUnrealPlugin
 		plugins/unreal/unreal_plugin.cpp
-		plugins/unreal/unreal.cpp)
+		plugins/unreal/unreal.cpp
+		plugins/unreal/unreal_codegen.cpp
+		plugins/unreal/unreal_uasset.cpp)
 	target_include_directories(imguiide_unreal PRIVATE plugins/unreal)
 	target_link_libraries(imguiide_unreal PRIVATE nlohmann_json) # unreal.cpp parses .uproject JSON
 	target_compile_definitions(imguiide_unreal PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
@@ -244,7 +246,8 @@ target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto)
 # The UE + Blueprint tests are gated on their plugin flags; compile the (now
 # plugin-owned) sources into selftest when the flag is on so they still run.
 if(IMGUIIDE_PLUGIN_UNREAL)
-	target_sources(selftest PRIVATE plugins/unreal/unreal.cpp plugins/unreal/unreal_plugin.cpp)
+	target_sources(selftest PRIVATE plugins/unreal/unreal.cpp plugins/unreal/unreal_plugin.cpp
+		plugins/unreal/unreal_codegen.cpp plugins/unreal/unreal_uasset.cpp)
 	target_include_directories(selftest PRIVATE plugins/unreal)
 	target_compile_definitions(selftest PRIVATE IMGUIIDE_PLUGIN_UNREAL=1)
 endif()

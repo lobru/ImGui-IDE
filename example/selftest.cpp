@@ -23,7 +23,9 @@
 #include "plugin_registry.h"
 #ifdef IMGUIIDE_PLUGIN_UNREAL
 #include "unreal.h"
+#include "unreal_codegen.h"
 #include "unreal_plugin.h"
+#include "unreal_uasset.h"
 #endif
 #ifdef IMGUIIDE_PLUGIN_UEVR
 #include "BlueprintEditor.h"
@@ -1159,6 +1161,7 @@ int main(int argc, char** argv)
 			void hostOpenLuaTab(const std::string&) override {}
 			std::string hostActiveText() const override { return {}; }
 			std::string hostActiveSelection() const override { return {}; }
+			std::string hostActiveFilename() const override { return {}; }
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
 			void hostSendToClaude(const std::string&) override {}
@@ -1209,6 +1212,101 @@ int main(int argc, char** argv)
 		CHECK(colorAt(cpp, "TESTING x;\n", 0, 0) == plainId, "UE C++: SCREAMING_CASE not treated as a type");
 		CHECK(colorAt(cpp, "Total x;\n", 0, 0) == plainId, "UE C++: normal CamelCase (Total) not a type");
 	}
+
+	// ── UE class-wizard codegen ─────────────────────────────────────────────
+	{
+		using namespace unreal::codegen;
+		ClassSpec actor{"MyActor", "AActor", "MyGame"};
+		CHECK(prefixedClassName(actor) == "AMyActor", "ue codegen: A prefix from actor parent");
+		std::string h = generateClassHeader(actor);
+		CHECK(h.find("UCLASS()") != std::string::npos &&
+		          h.find("class MYGAME_API AMyActor : public AActor") != std::string::npos &&
+		          h.find("GENERATED_BODY()") != std::string::npos &&
+		          h.find("#include \"MyActor.generated.h\"") != std::string::npos,
+		      "ue codegen: actor header has UCLASS/API/GENERATED_BODY/.generated.h");
+		std::string c = generateClassSource(actor);
+		CHECK(c.find("AMyActor::AMyActor()") != std::string::npos &&
+		          c.find("PrimaryActorTick.bCanEverTick = true") != std::string::npos &&
+		          c.find("Super::Tick(DeltaTime)") != std::string::npos,
+		      "ue codegen: actor source has ctor/tick boilerplate");
+
+		ClassSpec comp{"MyComp", "UActorComponent", "MyGame"};
+		CHECK(prefixedClassName(comp) == "UMyComp", "ue codegen: U prefix from component parent");
+		CHECK(generateClassHeader(comp).find("TickComponent") != std::string::npos,
+		      "ue codegen: component header has TickComponent");
+
+		ClassSpec pawn{"MyPawn", "APawn", "MyGame"};
+		CHECK(generateClassHeader(pawn).find("SetupPlayerInputComponent") != std::string::npos,
+		      "ue codegen: pawn header binds input");
+
+		ClassSpec obj{"MyData", "UObject", "MyGame"};
+		CHECK(generateClassSource(obj).find("::MyData()") == std::string::npos,
+		      "ue codegen: plain UObject source is boilerplate-free");
+		CHECK(generateClassHeader(ClassSpec{"X", "NotAParent", "M"}).empty(),
+		      "ue codegen: unknown parent rejected");
+
+		// Verse scaffold
+		CHECK(sanitizeVerseName("My Device!") == "my_device", "verse: name sanitized to snake_case");
+		CHECK(sanitizeVerseName("9lives") == "device_9lives", "verse: leading digit prefixed");
+		std::string v = generateVerseDevice("hud_timer");
+		CHECK(v.find("hud_timer := class(creative_device):") != std::string::npos &&
+		          v.find("OnBegin<override>()<suspends>:void=") != std::string::npos,
+		      "verse: creative_device scaffold shape");
+	}
+
+	// ── UAsset package reader (synthetic versioned package) ────────────────
+	{
+		using namespace unreal::uasset;
+		std::string pkg;
+		auto putU32 = [&](uint32_t v) { pkg.append(reinterpret_cast<const char*>(&v), 4); };
+		auto putU16 = [&](uint16_t v) { pkg.append(reinterpret_cast<const char*>(&v), 2); };
+		auto putStr = [&](const std::string& s) { putU32(static_cast<uint32_t>(s.size() + 1)); pkg += s; pkg += '\0'; };
+
+		putU32(0x9E2A83C1u);            // tag
+		putU32(static_cast<uint32_t>(-7)); // legacy version (UE4-era)
+		putU32(0);                      // legacy UE3
+		putU32(522);                    // FileVersionUE4 (>= all our gates)
+		putU32(0);                      // licensee
+		putU32(0);                      // custom versions: none
+		putU32(0);                      // TotalHeaderSize (unused by the parser)
+		putStr("None");                 // folder
+		putU32(0x00000001u);            // flags
+		putU32(3);                      // NameCount
+		size_t nameOffsetPos = pkg.size();
+		putU32(0);                      // NameOffset (patched)
+		putStr("");                     // LocalizationId (>=516) — serialized empty string
+		putU32(0); putU32(0);           // gatherable text (>=459)
+		putU32(0); putU32(0);           // exports
+		putU32(1);                      // ImportCount
+		size_t importOffsetPos = pkg.size();
+		putU32(0);                      // ImportOffset (patched)
+
+		uint32_t nameOffset = static_cast<uint32_t>(pkg.size());
+		std::memcpy(&pkg[nameOffsetPos], &nameOffset, 4);
+		for (const char* n : {"/Script/Engine", "StaticMesh", "SM_Rock"}) {
+			putStr(n);
+			putU16(0); putU16(0);       // name hashes (>=504)
+		}
+
+		uint32_t importOffset = static_cast<uint32_t>(pkg.size());
+		std::memcpy(&pkg[importOffsetPos], &importOffset, 4);
+		putU32(0); putU32(0);           // ClassPackage FName -> names[0]
+		putU32(1); putU32(0);           // ClassName    FName -> names[1]
+		putU32(0);                      // OuterIndex
+		putU32(2); putU32(0);           // ObjectName   FName -> names[2]
+
+		Summary s = parse(pkg.data(), pkg.size());
+		CHECK(s.valid, "uasset: synthetic package parses");
+		CHECK(s.fileVersionUE4 == 522 && !s.unversioned, "uasset: versions read");
+		CHECK(s.names.size() == 3 && s.names[1] == "StaticMesh", "uasset: name table read");
+		CHECK(s.imports.size() == 1 && s.imports[0].classPackage == "/Script/Engine" &&
+		          s.imports[0].className == "StaticMesh" && s.imports[0].objectName == "SM_Rock",
+		      "uasset: import map resolves FNames");
+		CHECK(report(s, "test").find("SM_Rock") != std::string::npos, "uasset: report includes imports");
+
+		Summary bad = parse("nope", 4);
+		CHECK(!bad.valid && !bad.error.empty(), "uasset: non-package rejected with a reason");
+	}
 #endif // IMGUIIDE_PLUGIN_UNREAL
 
 	// ── Plugin registry: runtime enable/disable + persistence ─────────────
@@ -1224,6 +1322,7 @@ int main(int argc, char** argv)
 			void hostOpenLuaTab(const std::string&) override {}
 			std::string hostActiveText() const override { return {}; }
 			std::string hostActiveSelection() const override { return {}; }
+			std::string hostActiveFilename() const override { return {}; }
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
 			void hostSendToClaude(const std::string&) override {}

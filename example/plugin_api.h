@@ -73,6 +73,7 @@ public:
     virtual void hostOpenLuaTab(const std::string &text) = 0; // new untitled Lua tab
     virtual std::string hostActiveText() const = 0;           // active doc's full text ("" if none)
     virtual std::string hostActiveSelection() const = 0;      // active doc's selection ("" if none)
+    virtual std::string hostActiveFilename() const = 0;       // active doc's path ("" if none; "untitled" if unsaved)
 
     // feedback + running
     virtual void hostToast(const std::string &text) = 0;

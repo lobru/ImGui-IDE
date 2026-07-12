@@ -6,12 +6,16 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
+#include <system_error>
 #include <vector>
 
 #include <imgui.h>
 
 #include "unreal.h"
+#include "unreal_codegen.h"
 #include "unreal_plugin.h"
+#include "unreal_uasset.h"
 
 // Unreal / COM-style type-name convention: a prefix in {F,U,A,T,E,I,S} followed
 // by an uppercase letter, and CamelCase (has a lowercase char — so SCREAMING_CASE
@@ -74,6 +78,181 @@ void UnrealPlugin::onRegister(PluginHost &host)
         unrealTypeLike); // catch unlisted F*/U*/A*/T*/E*/I*/S* types
 }
 
+void UnrealPlugin::onFrame(PluginHost &host)
+{
+    // The wizards are modals: a menu click sets the request, the popup opens here
+    // (OpenPopup and BeginPopupModal must share an ID scope, and menu items close
+    // their own popup stack the frame they're clicked).
+    if (requestClassWizard)
+    {
+        requestClassWizard = false;
+        ImGui::OpenPopup("New UE C++ Class###ueClassWizard");
+    }
+    if (requestVerseWizard)
+    {
+        requestVerseWizard = false;
+        ImGui::OpenPopup("New Verse Device###ueVerseWizard");
+    }
+    renderClassWizard(host);
+    renderVerseWizard(host);
+}
+
+void UnrealPlugin::renderClassWizard(PluginHost &host)
+{
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("New UE C++ Class###ueClassWizard", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    auto &parents = unreal::codegen::parentClasses();
+    ImGui::TextDisabled("Generates the same boilerplate as the UE editor's class wizard.");
+    ImGui::Separator();
+
+    if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere();
+    ImGui::InputTextWithHint("Name", "MyActor (no A/U prefix)", classNameBuf, sizeof(classNameBuf));
+
+    if (ImGui::BeginCombo("Parent", parents[static_cast<size_t>(classParentIdx)].name))
+    {
+        for (int i = 0; i < static_cast<int>(parents.size()); i++)
+        {
+            if (ImGui::Selectable(parents[static_cast<size_t>(i)].name, i == classParentIdx))
+                classParentIdx = i;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", parents[static_cast<size_t>(i)].blurb);
+        }
+        ImGui::EndCombo();
+    }
+
+    std::string modulePreview = classModules.empty()
+                                    ? std::string("(no Source/ modules found)")
+                                    : classModules[static_cast<size_t>(classModuleIdx)].filename().string();
+    if (ImGui::BeginCombo("Module", modulePreview.c_str()))
+    {
+        for (int i = 0; i < static_cast<int>(classModules.size()); i++)
+        {
+            std::string label = classModules[static_cast<size_t>(i)].filename().string();
+            if (ImGui::Selectable(label.c_str(), i == classModuleIdx))
+                classModuleIdx = i;
+        }
+        ImGui::EndCombo();
+    }
+
+    // keep the name a valid bare identifier
+    std::string name;
+    for (char c : std::string(classNameBuf))
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_')
+            name += c;
+    bool nameOk = !name.empty() && !std::isdigit(static_cast<unsigned char>(name[0]));
+
+    ImGui::Separator();
+    if (!nameOk || classModules.empty())
+        ImGui::BeginDisabled();
+    if (ImGui::Button("Create"))
+    {
+        auto moduleDir = classModules[static_cast<size_t>(classModuleIdx)];
+        unreal::codegen::ClassSpec spec{name, parents[static_cast<size_t>(classParentIdx)].name,
+                                        moduleDir.filename().string()};
+        auto [headerPath, sourcePath] = unreal::codegen::classFilePaths(moduleDir, name);
+        std::error_code ec;
+        if (std::filesystem::exists(headerPath, ec) || std::filesystem::exists(sourcePath, ec))
+            host.hostError(name + ".h/.cpp already exists in " + moduleDir.filename().string());
+        else
+        {
+            std::ofstream h(headerPath, std::ios::binary), c(sourcePath, std::ios::binary);
+            if (!h || !c)
+                host.hostError("Could not write into " + moduleDir.string());
+            else
+            {
+                h << unreal::codegen::generateClassHeader(spec);
+                c << unreal::codegen::generateClassSource(spec);
+                h.close();
+                c.close();
+                host.hostOpenFile(sourcePath.string());
+                host.hostOpenFile(headerPath.string());
+                host.hostToast("Created " + unreal::codegen::prefixedClassName(spec) +
+                               " \xe2\x80\x94 rebuild + regenerate the compile DB to index it");
+                classNameBuf[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+        }
+    }
+    if (!nameOk || classModules.empty())
+        ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void UnrealPlugin::renderVerseWizard(PluginHost &host)
+{
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("New Verse Device###ueVerseWizard", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextDisabled("Scaffolds a UEFN creative_device class (.verse).");
+    ImGui::Separator();
+    if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere();
+    ImGui::InputTextWithHint("Device", "my_device", verseNameBuf, sizeof(verseNameBuf));
+
+    std::string name = unreal::codegen::sanitizeVerseName(verseNameBuf);
+    ImGui::TextDisabled("-> %s.verse", name.c_str());
+
+    ImGui::Separator();
+    if (ImGui::Button("Create"))
+    {
+        std::error_code ec;
+        std::filesystem::path dir = menuProj.parent_path();
+        if (std::filesystem::is_directory(dir / "Content", ec))
+            dir /= "Content";
+        std::filesystem::path path = dir / (name + ".verse");
+        if (std::filesystem::exists(path, ec))
+            host.hostError(path.filename().string() + " already exists");
+        else
+        {
+            std::ofstream f(path, std::ios::binary);
+            if (!f)
+                host.hostError("Could not write " + path.string());
+            else
+            {
+                f << unreal::codegen::generateVerseDevice(name);
+                f.close();
+                host.hostOpenFile(path.string());
+                host.hostToast("Created " + path.filename().string());
+                verseNameBuf[0] = '\0';
+                ImGui::CloseCurrentPopup();
+            }
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+void UnrealPlugin::inspectActiveUAsset(PluginHost &host)
+{
+    std::filesystem::path asset = host.hostActiveFilename();
+    auto summary = unreal::uasset::parseFile(asset);
+    std::string text = unreal::uasset::report(summary, asset.filename().string());
+
+    // open the report as a file (survives as a normal read-only-ish tab)
+    std::error_code ec;
+    std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / "ImGuiIDE";
+    std::filesystem::create_directories(dir, ec);
+    std::filesystem::path out = dir / (asset.stem().string() + ".uasset-report.txt");
+    std::ofstream f(out, std::ios::binary | std::ios::trunc);
+    if (f)
+    {
+        f << text;
+        f.close();
+        host.hostOpenFile(out.string());
+    }
+    else
+        host.hostError("Could not write the report to " + out.string());
+}
+
 void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
 {
     if (which != PluginMenu::Project)
@@ -109,6 +288,31 @@ void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
     }
     if (!cpp)
         ImGui::TextDisabled("(Blueprint-only project \xe2\x80\x94 no C++ Source/)");
+    ImGui::Separator();
+    if (ImGui::MenuItem("New C++ Class...", nullptr, false, cpp))
+    {
+        classModules = unreal::codegen::moduleDirs(menuProj);
+        classModuleIdx = 0;
+        requestClassWizard = true; // the modal opens in onFrame
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Generate a UCLASS header/source pair into a Source/ module (like the UE class wizard)");
+    if (ImGui::MenuItem("New Verse Device..."))
+        requestVerseWizard = true;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Scaffold a UEFN creative_device .verse file");
+    {
+        std::filesystem::path active = host.hostActiveFilename();
+        std::string ext = active.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        bool isPackage = ext == ".uasset" || ext == ".umap";
+        if (ImGui::MenuItem("Inspect Package (.uasset)", nullptr, false, isPackage))
+            inspectActiveUAsset(host);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(isPackage ? "Parse the active package's header, name table and imports into a report"
+                                        : "Open a .uasset/.umap file first (its tab must be active)");
+    }
     ImGui::Separator();
     if (ImGui::MenuItem("Launch Unreal Editor", nullptr, false,
                         haveEngine && !unreal::editorBinary(menuEngine).empty()))
