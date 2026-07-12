@@ -1735,7 +1735,15 @@ int main(int argc, char** argv)
 		          reloaded.GetVariables()[0].name == "Health",
 		      "variables: survive save/load");
 
-		CHECK(bp.RemoveVariable("Health") && bp.GetVariables().empty(), "variables: remove");
+		// rename updates the variable AND the Get node that references it
+		auto getN2 = bp.AddVariableGetNode("Health", ImVec2(0, 400));
+		CHECK(getN2 != 0, "variables: Get node for rename test");
+		CHECK(bp.RenameVariable("Health", "HP"), "variables: rename");
+		CHECK(bp.GetVariables()[0].name == "HP", "variables: name updated in list");
+		CHECK(bp.GetNode(getN2) && bp.GetNode(getN2)->memberName == "HP", "variables: rename propagates to Get node");
+		CHECK(!bp.RenameVariable("HP", ""), "variables: empty rename rejected");
+		CHECK(!bp.RenameVariable("HP", "HP"), "variables: no-op rename rejected");
+		CHECK(bp.RemoveVariable("HP") && bp.GetVariables().empty(), "variables: remove");
 	}
 
 	// ── Make Struct: field inputs → { Key = value } table for struct args ──

@@ -48,6 +48,8 @@ private:
     void renderBlueprintSidebar(PluginHost &host, BlueprintEditor &bp);
     char sidebarVarName[128] = {0};
     int  sidebarVarType = 0;
+    char sidebarRenameBuf[128] = {0};
+    std::string sidebarRenameVar; // variable being renamed (double-click), "" if none
 
     // Autosave + crash recovery: the dirty graph is periodically written to a tmp
     // file; on first open, if one is found (e.g. after a crash) recovery is offered.

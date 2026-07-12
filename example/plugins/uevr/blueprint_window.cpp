@@ -167,10 +167,21 @@ void UevrPlugin::renderBlueprintSidebar(PluginHost &host, BlueprintEditor &bp)
 
         ImGui::Separator();
         std::string toRemove;
+        bool requestRename = false;
         for (const auto &var : bp.GetVariables())
         {
             ImGui::PushID(var.name.c_str());
-            ImGui::TextUnformatted(var.name.c_str());
+            ImGui::Selectable(var.name.c_str(), false, 0, ImVec2(ImGui::CalcTextSize(var.name.c_str()).x, 0.0f));
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("double-click to rename");
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                {
+                    sidebarRenameVar = var.name;
+                    std::snprintf(sidebarRenameBuf, sizeof(sidebarRenameBuf), "%s", var.name.c_str());
+                    requestRename = true;
+                }
+            }
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", pinKindLabel(var.type.kind));
             if (ImGui::SmallButton("Get"))
@@ -185,6 +196,26 @@ void UevrPlugin::renderBlueprintSidebar(PluginHost &host, BlueprintEditor &bp)
         }
         if (!toRemove.empty())
             bp.RemoveVariable(toRemove);
+
+        // Rename popup (opened after the loop so its ID isn't inside a per-var PushID).
+        if (requestRename)
+            ImGui::OpenPopup("##bpVarRename");
+        if (ImGui::BeginPopup("##bpVarRename"))
+        {
+            if (ImGui::IsWindowAppearing())
+                ImGui::SetKeyboardFocusHere();
+            bool done = ImGui::InputText("##rn", sidebarRenameBuf, sizeof(sidebarRenameBuf),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            done |= ImGui::Button("Rename");
+            if (done && sidebarRenameBuf[0] && !sidebarRenameVar.empty())
+            {
+                bp.RenameVariable(sidebarRenameVar, sidebarRenameBuf);
+                sidebarRenameVar.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
 
         if (bp.GetVariables().empty())
             ImGui::TextDisabled("(no variables yet)");

@@ -641,6 +641,38 @@ bool BlueprintEditor::RemoveVariable(const std::string& name) {
 	return false;
 }
 
+bool BlueprintEditor::RenameVariable(const std::string& oldName, const std::string& newName) {
+	if (newName.empty() || oldName == newName || findVariable(newName)) {
+		return false;
+	}
+
+	Variable* target = nullptr;
+
+	for (auto& variable : variables) {
+		if (variable.name == oldName) {
+			target = &variable;
+			break;
+		}
+	}
+
+	if (!target) {
+		return false;
+	}
+
+	target->name = newName;
+
+	for (auto& node : nodes) {
+		if ((node.kind == NodeKind::VariableGet || node.kind == NodeKind::VariableSet) && node.memberName == oldName) {
+			node.memberName = newName;
+			node.title = newName;
+		}
+	}
+
+	recordUndo();
+	dirty = true;
+	return true;
+}
+
 ImVec2 BlueprintEditor::NextSpawnPos() {
 	// top-left of the visible canvas (canvasPos is set during Render), cascaded so
 	// repeated sidebar clicks fan out instead of stacking.
@@ -2166,10 +2198,16 @@ void BlueprintEditor::handlePinInteraction(Pin& pin, const ImVec2& center) {
 	ImGui::PushID(pin.id);
 	ImGui::InvisibleButton("##pin", ImVec2(radius * 2.0f, radius * 2.0f));
 
-	// manual hover tracking (used when links are dropped and for context menus)
-	if (hoveredPin == 0 && hoveredNode == 0 && ImGui::IsWindowHovered() &&
-		io.MousePos.x >= center.x - radius && io.MousePos.x <= center.x + radius &&
-		io.MousePos.y >= center.y - radius && io.MousePos.y <= center.y + radius) {
+	// manual hover tracking (used when links are dropped and for context menus).
+	// While dragging a link the pin is a DROP TARGET, so (a) ignore hoveredNode --
+	// otherwise an earlier-rendered node's body blocks a later node's pin, which made
+	// dropping onto input pins much harder than onto outputs -- and (b) widen the
+	// snap radius so the wire connects when released merely NEAR a pin.
+	bool dragging = action == Action::dragLink;
+	float hoverR = dragging ? radius * 1.9f : radius;
+	if (hoveredPin == 0 && (hoveredNode == 0 || dragging) && ImGui::IsWindowHovered() &&
+		io.MousePos.x >= center.x - hoverR && io.MousePos.x <= center.x + hoverR &&
+		io.MousePos.y >= center.y - hoverR && io.MousePos.y <= center.y + hoverR) {
 		hoveredPin = pin.id;
 	}
 

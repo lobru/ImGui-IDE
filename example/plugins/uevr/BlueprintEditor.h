@@ -264,6 +264,9 @@ public:
 	// manage blueprint member variables
 	bool AddVariable(const std::string& name, const PinType& type, const std::string& defaultValue = "");
 	bool RemoveVariable(const std::string& name);
+	// rename a variable and every Get/Set node that references it; false if newName
+	// is empty, unchanged, already taken, or oldName isn't a variable.
+	bool RenameVariable(const std::string& oldName, const std::string& newName);
 	inline const std::vector<Variable>& GetVariables() const { return variables; }
 
 	// A graph-space position for programmatically-added nodes (e.g. from a sidebar):
