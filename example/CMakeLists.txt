@@ -102,7 +102,7 @@ option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin (DLL)" ON
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
 if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR)
-	set_property(TARGET imgui imguifd PROPERTY POSITION_INDEPENDENT_CODE ON)
+	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # imguiide_add_plugin(<target> <factory> <sources...>)
@@ -150,7 +150,10 @@ if(IMGUIIDE_PLUGIN_UEVR)
 		plugins/uevr/BlueprintLuaImport.cpp
 		plugins/uevr/BlueprintRegistryJson.cpp)
 	target_include_directories(imguiide_uevr PRIVATE plugins/uevr)
-	target_link_libraries(imguiide_uevr PRIVATE nlohmann_json) # BlueprintRegistryJson parses/emits SDK JSON
+	# nlohmann_json: BlueprintRegistryJson parses/emits SDK JSON. TextEditorLib: Custom
+	# Lua nodes embed the app's own TextEditor widget (self-contained static copy in the
+	# DLL; Lua highlighting reads only its own statics, so no cross-DLL shared state).
+	target_link_libraries(imguiide_uevr PRIVATE nlohmann_json TextEditorLib)
 	target_compile_definitions(imguiide_uevr PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
 endif()
 

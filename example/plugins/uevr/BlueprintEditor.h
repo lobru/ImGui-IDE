@@ -22,6 +22,8 @@
 
 #include "imgui.h"
 
+class TextEditor; // Custom Lua nodes embed the app's own syntax-highlighting editor
+
 
 //
 //	BlueprintEditor
@@ -438,6 +440,19 @@ private:
 	void renderCommentNode(Node& node);
 	void renderRerouteNode(Node& node);
 	void renderCustomLuaNode(Node& node);
+
+	// Per-CustomLua-node embedded TextEditor (the app's own editor widget: Lua
+	// highlighting, real cursor/selection/undo inside the node). Runtime-only —
+	// never serialized; text syncs both ways with Node::customCode each frame.
+	// shared_ptr so TextEditor can stay forward-declared here.
+	struct CustomLuaEditorState {
+		std::shared_ptr<TextEditor> editor;
+		size_t lastUndoIndex = 0;  // editor undo counter at last sync (change detector)
+		bool undoPending = false;  // edits made, graph undo snapshot not yet recorded
+		double lastEditTime = 0.0; // for the debounce that records the graph undo
+	};
+	std::unordered_map<ID, CustomLuaEditorState> luaEditors;
+	CustomLuaEditorState& ensureLuaEditor(const Node& node);
 	void renderDefaultEditor(Pin& pin, const ImVec2& pos, float width);
 	float defaultEditorWidth(const Pin& pin) const;
 	bool pinHasDefaultEditor(const Pin& pin) const;

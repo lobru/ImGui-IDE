@@ -23,6 +23,8 @@
 
 #include "imgui.h"
 
+#include "TextEditor.h"
+
 #include "BlueprintEditor.h"
 
 
@@ -159,18 +161,8 @@ static bool tokenizeLine(const std::string& line, std::vector<std::string>& toke
 }
 
 
-// grows a std::string-backed InputTextMultiline buffer in place (standard ImGui idiom
-// for editing arbitrary-length text without a fixed char[] cap — CustomLua nodes hold
-// hand-written Lua source that shouldn't silently truncate)
-static int customLuaTextCallback(ImGuiInputTextCallbackData* data) {
-	if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
-		std::string* text = static_cast<std::string*>(data->UserData);
-		text->resize(static_cast<size_t>(data->BufTextLen));
-		data->Buf = text->data();
-	}
-
-	return 0;
-}
+// (Custom Lua source is edited with the app's own TextEditor widget — see
+// renderCustomLuaNode / ensureLuaEditor — not a raw InputTextMultiline.)
 
 
 //
@@ -2716,6 +2708,21 @@ void BlueprintEditor::renderRerouteNode(Node& node) {
 //	BlueprintEditor::renderCustomLuaNode
 //
 
+BlueprintEditor::CustomLuaEditorState& BlueprintEditor::ensureLuaEditor(const Node& node) {
+	CustomLuaEditorState& state = luaEditors[node.id];
+
+	if (!state.editor) {
+		state.editor = std::make_shared<TextEditor>();
+		state.editor->SetLanguage(TextEditor::Language::Lua());
+		state.editor->SetShowLineNumbersEnabled(false);      // node boxes are small
+		state.editor->SetShowScrollbarMiniMapEnabled(false);
+		state.editor->SetText(node.customCode);
+		state.lastUndoIndex = state.editor->GetUndoIndex();
+	}
+
+	return state;
+}
+
 void BlueprintEditor::renderCustomLuaNode(Node& node) {
 	ImGuiIO& io = ImGui::GetIO();
 	float z = zoom;
@@ -2968,19 +2975,41 @@ void BlueprintEditor::renderCustomLuaNode(Node& node) {
 		AddCustomLuaPin(node.id, true);
 	}
 
-	// the Lua source box fills whatever body space remains down to the resize grip
+	// the Lua source box fills whatever body space remains down to the resize grip.
+	// It's a real embedded TextEditor (the app's own widget): Lua syntax highlighting,
+	// proper cursor/selection/undo — not a plain InputTextMultiline.
 	float codeY = buttonsY + rowH;
 	ImVec2 codePos(p0.x + inset, codeY);
 	ImVec2 codeSize(std::max(40.0f, p1.x - p0.x - 2.0f * inset), std::max(40.0f, p1.y - 6.0f * z - codeY));
 
 	ImGui::SetCursorScreenPos(codePos);
 
-	if (ImGui::InputTextMultiline("##luasource", node.customCode.data(), node.customCode.size() + 1, codeSize,
-			ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackResize, customLuaTextCallback, &node.customCode)) {
+	CustomLuaEditorState& state = ensureLuaEditor(node);
+	TextEditor& ed = *state.editor;
+	size_t undoNow = ed.GetUndoIndex();
+
+	if (undoNow != state.lastUndoIndex) {
+		// user edited inside the widget since last frame → push into the node
+		state.lastUndoIndex = undoNow;
+		node.customCode = ed.GetText();
+		state.undoPending = true;
+		state.lastEditTime = ImGui::GetTime();
 		edited = true;
+		dirty = true;
+
+	} else if (ed.GetText() != node.customCode) {
+		// node text changed from OUTSIDE the widget (graph undo/redo, SetCustomLuaSource,
+		// import) → pull it into the editor
+		ed.SetText(node.customCode);
+		state.lastUndoIndex = ed.GetUndoIndex();
 	}
 
-	if (ImGui::IsItemDeactivatedAfterEdit()) {
+	ed.Render("##luasource", codeSize, true);
+
+	// Record ONE graph-undo snapshot per editing burst (debounced) instead of one per
+	// keystroke — the widget itself provides fine-grained undo while typing.
+	if (state.undoPending && ImGui::GetTime() - state.lastEditTime > 0.6) {
+		state.undoPending = false;
 		recordUndo();
 	}
 
