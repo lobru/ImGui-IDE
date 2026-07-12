@@ -82,12 +82,25 @@ constexpr const char *kSdkDumpChunk = R"LUA((function()
             seen[full] = true
             local sup = c:get_super_struct()
             local props = {}
-            local pok, info = pcall(function() return o:get_property_info() end)
-            if pok and info then
-                for _, p in ipairs(info) do
-                    props[#props + 1] = '{"name":"' .. esc(p.name) .. '","type":"' .. esc(p.type) .. '"}'
+            -- Walk the UStruct's FField chain (get_child_properties -> get_next).
+            -- (There is no get_property_info() in the UEVR API — the earlier version
+            -- called that and silently produced zero properties for every class.)
+            pcall(function()
+                local f = c:get_child_properties()
+                local guard = 0
+                while f ~= nil and guard < 4096 do
+                    guard = guard + 1
+                    local fn = f:get_fname()
+                    local nm = fn and fn:to_string() or ""
+                    local tn = ""
+                    local fc = f:get_class()
+                    if fc ~= nil then tn = fc:get_name() end
+                    if nm ~= "" then
+                        props[#props + 1] = '{"name":"' .. esc(nm) .. '","type":"' .. esc(tn) .. '"}'
+                    end
+                    f = f:get_next()
                 end
-            end
+            end)
             out[#out + 1] = '{"name":"' .. esc(c:get_fname():to_string())
                 .. '","super":"' .. esc(sup and sup:get_fname():to_string() or "")
                 .. '","full_name":"' .. esc(full)
