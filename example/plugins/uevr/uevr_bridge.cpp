@@ -27,6 +27,7 @@
 #include <imgui.h>
 
 #include "BlueprintEditor.h"
+#include "BlueprintRegistryJson.h"
 #include "uevr_plugin.h"
 
 namespace
@@ -57,6 +58,47 @@ bool looksTabDelimited(const std::string &text)
     }
     return any;
 }
+
+// Live SDK dump: sent through the existing "inspect" round trip (an inspect payload
+// is spliced into `return <payload>`, so an IIFE expression carries a whole program).
+// Walks a seed set of live objects (pawn / controller / engine — "spawned objects
+// only"), emits ONE class entry per distinct leaf class with its get_property_info()
+// fields, in the same JSON shape as a UEVR Class Browser dump. The SDKDUMP: marker
+// routes the response into the SDK index instead of the Inspect tab.
+constexpr const char *kSdkDumpChunk = R"LUA((function()
+    local out = {}
+    local seen = {}
+    local function esc(s)
+        s = tostring(s or "")
+        return s:gsub("\\", "\\\\"):gsub("\"", "\\\"")
+    end
+    local function dump(o)
+        if o == nil then return end
+        pcall(function()
+            local c = o:get_class()
+            if c == nil then return end
+            local full = c:get_full_name()
+            if seen[full] then return end
+            seen[full] = true
+            local sup = c:get_super_struct()
+            local props = {}
+            local pok, info = pcall(function() return o:get_property_info() end)
+            if pok and info then
+                for _, p in ipairs(info) do
+                    props[#props + 1] = '{"name":"' .. esc(p.name) .. '","type":"' .. esc(p.type) .. '"}'
+                end
+            end
+            out[#out + 1] = '{"name":"' .. esc(c:get_fname():to_string())
+                .. '","super":"' .. esc(sup and sup:get_fname():to_string() or "")
+                .. '","full_name":"' .. esc(full)
+                .. '","functions":[],"properties":[' .. table.concat(props, ",") .. ']}'
+        end)
+    end
+    pcall(function() dump(uevr.api:get_local_pawn(0)) end)
+    pcall(function() dump(uevr.api:get_player_controller(0)) end)
+    pcall(function() dump(uevr.api:get_engine()) end)
+    return "SDKDUMP:{\"classes\":[" .. table.concat(out, ",") .. "]}"
+end)())LUA";
 
 std::vector<BridgeRow> parseTabDelimited(const std::string &text)
 {
@@ -144,7 +186,28 @@ void UevrPlugin::pollUevrBridge()
         else if (kind == "modules")
             uevrModules = body;
         else if (kind == "inspect")
-            uevrInspect = body;
+        {
+            // A live SDK dump rides the inspect round trip with a marker so it feeds
+            // the SDK index (autocomplete + Expose SDK Class) instead of the tab.
+            size_t marker = body.find("SDKDUMP:");
+            if (marker != std::string::npos)
+            {
+                std::string json = body.substr(marker + 8);
+                std::string error;
+                size_t before = sdkIndex.GetClasses().size();
+                if (BlueprintRegistryJson::Load(sdkIndex, json, error))
+                {
+                    rebuildSdkWords();
+                    uevrOutputLog.push_back("[sdk] indexed " +
+                                            std::to_string(sdkIndex.GetClasses().size() - before) +
+                                            " live classes (autocomplete + Expose SDK Class)");
+                }
+                else
+                    uevrOutputLog.push_back("[sdk] live dump parse failed: " + error);
+            }
+            else
+                uevrInspect = body;
+        }
         else if (kind == "watch")
         {
             // response is one "type\tpreview" line per expression, in the same order
@@ -231,6 +294,16 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
     if (ImGui::Button("Clear"))
         uevrOutputLog.clear();
     ImGui::SameLine();
+    if (ImGui::Button("Import SDK from Game"))
+    {
+        // Dump the live seed objects' classes (pawn/controller/engine) into the SDK
+        // index over the bridge — no file dump needed. Result lands via the poll.
+        uevrOutputLog.push_back("> [import sdk from game]");
+        sendUevr("inspect", kSdkDumpChunk);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Index the classes of live objects (pawn, controller, engine) for autocomplete + Expose SDK Class");
+    ImGui::SameLine();
     if (ImGui::Button("Reset Scripts"))
     {
         // Tell the running game to reload all its UEVR Lua scripts (game-side calls
@@ -262,7 +335,48 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
             if (ImGui::Button("Refresh"))
                 sendUevr("globals", "");
             ImGui::BeginChild("##uevrGlobals", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
-            ImGui::TextUnformatted(uevrGlobals.empty() ? "(refresh to query the game)" : uevrGlobals.c_str());
+            if (uevrGlobals.empty())
+            {
+                ImGui::TextUnformatted("(refresh to query the game)");
+            }
+            else if (looksTabDelimited(uevrGlobals))
+            {
+                // newer bridges emit name\ttype\tvalue rows -> render a real table
+                auto rows = parseTabDelimited(uevrGlobals);
+                if (ImGui::BeginTable("##uevrGlobalsTable", 4,
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
+                {
+                    ImGui::TableSetupColumn("Global");
+                    ImGui::TableSetupColumn("Type");
+                    ImGui::TableSetupColumn("Value");
+                    ImGui::TableSetupColumn("##ins", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+                    ImGui::TableHeadersRow();
+                    for (size_t i = 0; i < rows.size(); ++i)
+                    {
+                        auto &row = rows[i];
+                        ImGui::PushID(static_cast<int>(i));
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(row.name.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(row.type.c_str());
+                        ImGui::TableNextColumn();
+                        ImGui::TextUnformatted(row.value.c_str());
+                        ImGui::TableNextColumn();
+                        if (ImGui::SmallButton("ins") && !row.name.empty())
+                            insertLiveValueAsNode(row.name, row.name);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Insert a Custom Lua node reading this global");
+                        ImGui::PopID();
+                    }
+                    ImGui::EndTable();
+                }
+            }
+            else
+            {
+                // older bridge builds return the legacy text blob
+                ImGui::TextUnformatted(uevrGlobals.c_str());
+            }
             host.hostMiddleMousePanScroll(101);
             ImGui::EndChild();
             ImGui::EndTabItem();

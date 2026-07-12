@@ -1719,6 +1719,68 @@ int main(int argc, char** argv)
 		      "snippets: wired For Loop generates a for-loop");
 	}
 
+	// ── Table snippets + table UI template ──────────────────────────────────
+	{
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		auto& snippets = BlueprintSnippets::All();
+		CHECK(snippets.size() >= 7, "snippets: table/map/guarded snippets registered");
+
+		auto ev = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(-400, 0));
+		snippets[1].insert(bp); // "For Each over table"
+		CHECK(bp.GetVariables().size() == 1 && bp.GetVariables()[0].name == "Items",
+		      "snippet table: creates the Items variable");
+
+		BlueprintEditor::ID addNode = 0;
+		for (auto& n : bp.GetNodes())
+			if (n.memberName == "Array Add")
+				addNode = n.id;
+		CHECK(addNode != 0, "snippet table: Array Add present");
+		bp.AddLink(bp.FindPinID(ev, "", true), bp.FindPinID(addNode, "", false));
+		std::string script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find("table.insert(") != std::string::npos && script.find("in ipairs(") != std::string::npos,
+		      "snippet table: append + iterate codegen");
+
+		BlueprintEditor bp2;
+		BlueprintLua::SetupUEVRRegistry(bp2);
+		auto ev2 = bp2.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(-400, 0));
+		snippets[3].insert(bp2); // "Guarded pawn fetch"
+		BlueprintEditor::ID initNode = 0;
+		for (auto& n : bp2.GetNodes())
+			if (n.kind == BlueprintEditor::NodeKind::VariableSet)
+				initNode = n.id;
+		CHECK(initNode != 0, "snippet guarded: Set If Unset present");
+		bp2.AddLink(bp2.FindPinID(ev2, "", true), bp2.FindPinID(initNode, "", false));
+		std::string s2 = BlueprintLua::GenerateScript(bp2);
+		CHECK(s2.find("Pawn = Pawn or (") != std::string::npos && s2.find("~= nil then") != std::string::npos,
+		      "snippet guarded: lazy init + Is Valid gate codegen");
+
+		BlueprintEditor tpl;
+		BlueprintLua::SetupUEVRRegistry(tpl);
+		BlueprintTemplates::All()[5].build(tpl); // "List a table in a UI panel"
+		std::string t = BlueprintLua::GenerateScript(tpl);
+		CHECK(t.find("begin_window") != std::string::npos && t.find("in ipairs(") != std::string::npos &&
+		          t.find("imgui.text(") != std::string::npos && t.find("end_window") != std::string::npos,
+		      "template table-ui: window + iteration + per-row text");
+	}
+
+	// ── Live SDK dump: the bridge's SDKDUMP JSON loads into an index ────────
+	{
+		// The exact shape kSdkDumpChunk emits (leaf class + super + properties).
+		std::string json = R"JSON({"classes":[{"name":"BP_PlayerPawn_C","super":"Character",
+			"full_name":"BlueprintGeneratedClass /Game/BP_PlayerPawn.BP_PlayerPawn_C",
+			"functions":[],"properties":[{"name":"Health","type":"FloatProperty"},
+			{"name":"Inventory","type":"ArrayProperty"}]}]})JSON";
+		BlueprintEditor::TypeRegistry index;
+		std::string error;
+		CHECK(BlueprintRegistryJson::Load(index, json, error), "live sdk: dump JSON loads");
+		const auto* cls = index.FindClass("BP_PlayerPawn_C");
+		CHECK(cls != nullptr && cls->parentName == "Character" && cls->properties.size() == 2,
+		      "live sdk: class + properties indexed");
+		CHECK(cls->properties[0].type.kind == BlueprintEditor::PinKind::Float,
+		      "live sdk: property types map to pin kinds");
+	}
+
 	// ── Script safety + new codegen semantics ───────────────────────────────
 	{
 		using PK = BlueprintEditor::PinKind;

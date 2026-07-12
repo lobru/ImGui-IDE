@@ -81,6 +81,29 @@ void buildFormattedLog(BlueprintEditor &bp)
     bp.AddLink(bp.FindPinID(append, "Return Value", true), bp.FindPinID(print, "Message", false));  // -> Print
     bp.SetPinDefaultValue(bp.FindPinID(append, "A", false), "dt=");
 }
+// "Draw UI -> window listing a table": Items variable + For Each -> imgui.text rows.
+void buildTableUiList(BlueprintEditor &bp)
+{
+    bp.ClearGraph();
+    bp.AddVariable("Items", BlueprintEditor::PinType(BlueprintEditor::PinKind::Wildcard, "", true), "");
+
+    ID draw = bp.AddEventNode("UEVR", "Draw UI", ImVec2(-460.0f, 0.0f));
+    ID begin = bp.AddCallFunctionNode("ImGui", "Begin Window", ImVec2(-180.0f, 0.0f));
+    ID get = bp.AddVariableGetNode("Items", ImVec2(-180.0f, 170.0f));
+    ID each = bp.AddFlowControlNode("For Each", ImVec2(120.0f, 0.0f));
+    ID toStr = bp.AddCallFunctionNode("LuaString", "To String", ImVec2(120.0f, 220.0f));
+    ID text = bp.AddCallFunctionNode("ImGui", "Text", ImVec2(430.0f, 60.0f));
+    ID end = bp.AddCallFunctionNode("ImGui", "End Window", ImVec2(430.0f, -80.0f));
+
+    bp.AddLink(bp.FindPinID(draw, "", true), bp.FindPinID(begin, "", false));
+    bp.SetPinDefaultValue(bp.FindPinID(begin, "Name", false), "Items");
+    bp.AddLink(bp.FindPinID(begin, "", true), bp.FindPinID(each, "", false));
+    bp.AddLink(bp.FindPinID(get, "", true), bp.FindPinID(each, "Array", false));
+    bp.AddLink(bp.FindPinID(each, "Loop Body", true), bp.FindPinID(text, "", false));
+    bp.AddLink(bp.FindPinID(each, "Element", true), bp.FindPinID(toStr, "Value", false));
+    bp.AddLink(bp.FindPinID(toStr, "Return Value", true), bp.FindPinID(text, "Text", false));
+    bp.AddLink(bp.FindPinID(each, "Completed", true), bp.FindPinID(end, "", false));
+}
 } // namespace
 
 namespace BlueprintTemplates
@@ -93,6 +116,7 @@ const std::vector<Template> &All()
         {"Log the player pawn", "Print the local pawn's full name each tick.", buildLogPawn},
         {"HMD-gated action", "Only run when the VR headset is active (Branch on Is HMD Active).", buildHmdGate},
         {"Log with delta time", "Print a string built from the tick's Delta Seconds.", buildFormattedLog},
+        {"List a table in a UI panel", "Items table listed as imgui text rows every Draw UI.", buildTableUiList},
     };
     return templates;
 }
