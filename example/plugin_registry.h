@@ -20,6 +20,18 @@
 class PluginRegistry
 {
 public:
+    // Plugins can come from DLLs (see plugin_loader.cpp) whose code — including the
+    // EditorPlugin vtable — is unmapped as the process tears down. Deleting a plugin
+    // then would dispatch a virtual dtor through freed memory (access violation on
+    // shutdown). Plugins live for the whole process and hold no resources needing an
+    // explicit dtor, so release (intentionally leak) them here; the OS reclaims the
+    // memory. This sidesteps the cross-DLL delete-at-teardown hazard entirely.
+    ~PluginRegistry()
+    {
+        for (auto &p : plugins)
+            p.release();
+    }
+
     void add(std::unique_ptr<EditorPlugin> plugin)
     {
         if (plugin)
