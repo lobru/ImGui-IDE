@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <set>
 
 #include "imgui.h"
 
@@ -381,9 +382,31 @@ BlueprintEditor::Enumeration& BlueprintEditor::TypeRegistry::AddEnum(const std::
 	return *enums.back();
 }
 
+// UE C++ prefixes (A=actor, U=uobject-derived, F=struct, I=interface) vs the
+// unprefixed names UEVR runtime reflection uses: "AActor"<->"Actor",
+// "UObject"<->"Object", "UClass"<->"Class". Strip a single leading prefix letter
+// only when the NEXT char is uppercase, so real names keep theirs ("AudioComp",
+// "Item", "Object"). Lets built-in nodes (prefixed) interoperate with dumped
+// classes (unprefixed) throughout type checking + lookup.
+std::string BlueprintEditor::TypeRegistry::normalizeClassName(const std::string& n) {
+	if (n.size() >= 2 && (n[0] == 'A' || n[0] == 'U' || n[0] == 'F' || n[0] == 'I') &&
+	    n[1] >= 'A' && n[1] <= 'Z') {
+		return n.substr(1);
+	}
+	return n;
+}
+
 const BlueprintEditor::Class* BlueprintEditor::TypeRegistry::FindClass(const std::string& name) const {
 	for (auto& cls : classes) {
 		if (cls->name == name) {
+			return cls.get();
+		}
+	}
+
+	// Prefix-insensitive fallback: "AActor" resolves a dumped "Actor" and vice versa.
+	std::string want = normalizeClassName(name);
+	for (auto& cls : classes) {
+		if (normalizeClassName(cls->name) == want) {
 			return cls.get();
 		}
 	}
@@ -457,15 +480,17 @@ bool BlueprintEditor::TypeRegistry::IsChildOf(const std::string& child, const st
 		return true;
 	}
 
-	const Class* cls = FindClass(child);
-	int depth = 0;
+	std::string want = normalizeClassName(parent);
 
-	if (child == parent) {
+	if (normalizeClassName(child) == want) {
 		return true;
 	}
 
+	const Class* cls = FindClass(child);
+	int depth = 0;
+
 	while (cls && depth++ < 64) {
-		if (cls->name == parent) {
+		if (normalizeClassName(cls->name) == want) {
 			return true;
 		}
 
@@ -1028,8 +1053,18 @@ BlueprintEditor::ID BlueprintEditor::AddCustomLuaNode(const ImVec2& pos) {
 }
 
 void BlueprintEditor::ensureClassAvailable(const std::string& className) {
-	if (className.empty() || registry.FindClass(className) || !auxRegistry) {
+	if (className.empty() || !auxRegistry) {
 		return;
+	}
+
+	// EXACT presence check — not FindClass, which prefix-folds and would treat the
+	// built-in "AActor" as the dumped "Actor" and skip pulling its (many) members.
+	// The two coexist: AActor (built-in, visible) + Actor (dumped, hidden); the
+	// prefix fold in IsChildOf/typesCompatible lets them interoperate.
+	for (auto& c : registry.GetClasses()) {
+		if (c->name == className) {
+			return;
+		}
 	}
 
 	const Class* src = auxRegistry->FindClass(className);
@@ -1048,6 +1083,7 @@ void BlueprintEditor::ensureClassAvailable(const std::string& className) {
 	dst.properties = src->properties;
 	dst.functions = src->functions;
 	dst.events = src->events;
+	dst.paletteHidden = true; // usable via Cast / contextual drag, hidden from All Actions
 }
 
 BlueprintEditor::ID BlueprintEditor::AddCastNode(const std::string& className, const ImVec2& pos) {
@@ -3684,6 +3720,12 @@ void BlueprintEditor::buildPalette() {
 
 	// functions and properties from all registered classes
 	for (auto& registered : registry.GetClasses()) {
+		// On-demand SDK classes (Cast / contextual pick / Expose) are reachable when
+		// dragging from a typed pin, but must NOT flood the flat "All Actions" list.
+		if (registered->paletteHidden) {
+			continue;
+		}
+
 		for (auto& function : registered->functions) {
 			PaletteAction paletteAction;
 			paletteAction.category = function.category.empty() ? registered->name : function.category;
@@ -3900,49 +3942,51 @@ void BlueprintEditor::renderGraphContextMenu() {
 		if (pending && pending->isOutput &&
 			(pending->type.kind == PinKind::Object || isClassLike(pending->type)) &&
 			!pending->type.subtype.empty()) {
-			// Walk the class + ancestors across both registries.
-			std::vector<std::string> chain;
+			// Walk the class + ancestors, gathering the class from BOTH the live
+			// registry AND the SDK index at each step. Prefix folding means a pin
+			// typed "AActor" (built-in) also pulls the dumped "Actor" and its members,
+			// so SpawnActor's output offers Actor's SDK methods without flooding the
+			// flat palette. Sources are {ownerClassName, Class*}.
+			std::vector<std::pair<std::string, const Class*>> sources;
 			std::string walk = pending->type.subtype;
 
 			for (int guard = 0; guard < 64 && !walk.empty(); ++guard) {
-				const Class* c = registry.FindClass(walk);
+				const Class* r = registry.FindClass(walk);
+				const Class* a = auxRegistry ? auxRegistry->FindClass(walk) : nullptr;
+				const Class* step = r ? r : a; // drive the parent walk off whichever exists
 
-				if (!c && auxRegistry) {
-					c = auxRegistry->FindClass(walk);
-				}
-
-				if (!c) {
+				if (!step) {
 					break;
 				}
 
-				chain.push_back(c->name);
-				walk = c->parentName;
+				if (r) {
+					sources.push_back(std::make_pair(r->name, r));
+				}
+
+				if (a && a != r) {
+					sources.push_back(std::make_pair(a->name, a));
+				}
+
+				walk = step->parentName;
 			}
 
-			if (!chain.empty()) {
+			if (!sources.empty()) {
 				std::string header = "Members of " + pending->type.subtype;
 				ImGui::SetNextItemOpen(true, ImGuiCond_Once);
 
 				if (ImGui::TreeNode(header.c_str())) {
 					int shown = 0;
+					std::set<std::string> seenMembers; // dedup same-named members across sources
+					auto matchesSearch = [&](const std::string& n) {
+						return search.empty() || toLower(n).find(search) != std::string::npos;
+					};
 
-					for (auto& clsName : chain) {
-						const Class* c = registry.FindClass(clsName);
-
-						if (!c && auxRegistry) {
-							c = auxRegistry->FindClass(clsName);
-						}
-
-						if (!c) {
-							continue;
-						}
-
-						auto matchesSearch = [&](const std::string& n) {
-							return search.empty() || toLower(n).find(search) != std::string::npos;
-						};
+					for (auto& srcPair : sources) {
+						const std::string& clsName = srcPair.first;
+						const Class* c = srcPair.second;
 
 						for (auto& fn : c->functions) {
-							if (shown >= 200 || !matchesSearch(fn.name)) {
+							if (shown >= 300 || !matchesSearch(fn.name) || !seenMembers.insert("f:" + fn.name).second) {
 								continue;
 							}
 
@@ -3970,7 +4014,7 @@ void BlueprintEditor::renderGraphContextMenu() {
 						}
 
 						for (auto& prop : c->properties) {
-							if (shown >= 200 || !matchesSearch(prop.name)) {
+							if (shown >= 300 || !matchesSearch(prop.name) || !seenMembers.insert("p:" + prop.name).second) {
 								continue;
 							}
 

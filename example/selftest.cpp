@@ -2075,6 +2075,43 @@ int main(int argc, char** argv)
 		      "sdk contextual: typed object connects to the member's Target");
 	}
 
+	// ── UE prefix folding (AActor<->Actor) + no palette flood (the reported bug) ─
+	{
+		// A dumped class uses the UNPREFIXED reflection name ("Actor"); built-in
+		// api_fast returns the C++-prefixed "AActor". They must interoperate, and the
+		// dumped class must NOT appear in the flat palette.
+		BlueprintEditor::TypeRegistry idx;
+		auto &act = idx.AddClass("Actor", "Object", "dumped actor");
+		act.AddFunction("SetActorTickEnabled", "").In("bEnabled", BlueprintEditor::PinType(BlueprintEditor::PinKind::Boolean))
+			.Metadata("{target}:call(\"SetActorTickEnabled\", {0})");
+
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		bp.SetAuxRegistry(&idx);
+
+		CHECK(bp.GetRegistry().IsChildOf("AActor", "Actor"), "naming: AActor is-a Actor (prefix folded)");
+		CHECK(bp.GetRegistry().IsChildOf("Actor", "AActor"), "naming: Actor is-a AActor (symmetric fold)");
+
+		auto spawn = bp.AddCallFunctionNode("UEVR_API", "Spawn Actor (Fast)", ImVec2(0, 0)); // returns Object "AActor"
+		CHECK(spawn != 0, "naming: Spawn Actor (Fast) exists");
+		bp.ensureClassAvailable("Actor"); // as a contextual pick / Cast would
+		auto tick = bp.AddCallFunctionNode("Actor", "SetActorTickEnabled", ImVec2(300, 0));
+		CHECK(tick != 0, "naming: a node for the dumped Actor method spawns");
+
+		BlueprintEditor::ID ret = bp.FindPinID(spawn, "Return Value", true);
+		BlueprintEditor::ID tgt = bp.FindPinID(tick, "Target", false);
+		BlueprintEditor::ID bEnabled = bp.FindPinID(tick, "bEnabled", false);
+		CHECK(ret != 0 && tgt != 0 && bEnabled != 0, "naming: pins found");
+		CHECK(bp.CanConnectPins(ret, tgt),
+		      "naming: AActor Return Value connects to the Actor method's Target (was: only the bool)");
+		CHECK(bp.AutoConnectForTest(ret, tick) == tgt,
+		      "naming: auto-connect lands on Target, not bEnabled");
+
+		const auto *actorCls = bp.GetRegistry().FindClass("Actor");
+		CHECK(actorCls != nullptr && actorCls->paletteHidden,
+		      "flood: a contextually-added SDK class is hidden from the flat palette");
+	}
+
 	// ── Is Valid flow node + Lua-truthiness Boolean inputs ──────────────────
 	{
 		BlueprintEditor bp;

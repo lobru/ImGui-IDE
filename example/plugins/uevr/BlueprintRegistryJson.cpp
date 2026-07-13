@@ -525,6 +525,7 @@ bool BlueprintRegistryJson::ExposeClass(BlueprintEditor::TypeRegistry& dst, cons
 	to.properties = from->properties;
 	to.functions = from->functions;
 	to.events = from->events;
+	to.paletteHidden = true; // reachable via contextual drag, never in the flat palette
 	return true;
 }
 

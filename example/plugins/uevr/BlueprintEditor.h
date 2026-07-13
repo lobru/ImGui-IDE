@@ -129,6 +129,10 @@ public:
 		std::string parentName;
 		std::string tooltip;
 		std::string metadata; // free-form binding data for code generators (e.g. a Lua target expression)
+		// Reachable for node-spawning + codegen, but NOT listed in the global "All
+		// Actions" palette. Set on SDK classes pulled in on demand (Cast / contextual
+		// member pick), so imported classes never flood the flat node list.
+		bool paletteHidden = false;
 		std::vector<Property> properties;
 		std::vector<Function> functions;
 		std::vector<Function> events;
@@ -176,6 +180,9 @@ public:
 
 		// does the walk up the parent chain: IsChildOf("ACharacter", "AActor") is true
 		bool IsChildOf(const std::string& child, const std::string& parent) const;
+
+		// UE prefix folding so "AActor"==?"Actor" etc. across built-ins vs dumps.
+		static std::string normalizeClassName(const std::string& name);
 
 		inline const std::vector<std::unique_ptr<Class>>& GetClasses() const { return classes; }
 		inline const std::vector<std::unique_ptr<Enumeration>>& GetEnums() const { return enums; }
