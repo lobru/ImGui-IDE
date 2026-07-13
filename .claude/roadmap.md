@@ -45,14 +45,14 @@ iteration where possible; big ones have substeps.
         0.5s; consider worker rebuild).
 
 ### Nav panel UX
-- [~] **Sort + Add-Source-Location live in the Filters popup** (shipped e292aa6 /
-      df8945c). USER WANTS them moved INTO the nav panel itself, cleanly, compact,
-      without eating vertical space. (Inline header row / small icon controls.)
+- [x] **Sort + Add-Source-Location inline in the nav header** (7e85e73) — compact
+      "Sort" menu + "+Dir" buttons in the button row; popup keeps checkboxes +
+      manage-list only.
 
 ### Installer / updater / registry
-- [ ] **Registry path for the last app path** — write install/exe path (+ maybe
-      last project) to HKCU so installer/updater/shell can find the app.
-- [ ] **Update the installer** to match current build + write that registry key.
+- [x] **Registry path** (a1ca0fe) — HKCU\Software\ImGui-IDE ExePath + InstallDir on
+      startup, LastProject on project switch.
+- [ ] **Update the installer** to match current build + read/write that registry key.
 - [ ] **Cut a release + push the in-app updater feed** so Help ▸ Check for Updates
       sees the new build.
 
