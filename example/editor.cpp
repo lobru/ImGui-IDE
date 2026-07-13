@@ -1933,14 +1933,52 @@ Editor::navCachedDir(const std::filesystem::path &dir)
             break;
         slot.entries.push_back(e);
     }
-    std::sort(slot.entries.begin(), slot.entries.end(), [](const auto &a, const auto &b) {
+    int sortMode = navSortMode;
+    auto lowerName = [](const std::filesystem::directory_entry &e) {
+        auto n = e.path().filename().string();
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        return n;
+    };
+    std::sort(slot.entries.begin(), slot.entries.end(), [&](const auto &a, const auto &b) {
+        // Folders always sort before files, regardless of mode.
         bool aDir = a.is_directory(), bDir = b.is_directory();
         if (aDir != bDir)
             return aDir;
-        auto an = a.path().filename().string(), bn = b.path().filename().string();
-        std::transform(an.begin(), an.end(), an.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-        std::transform(bn.begin(), bn.end(), bn.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-        return an < bn; });
+
+        std::error_code sec;
+        switch (sortMode)
+        {
+        case 1: // Modified — newest first (directory_entry caches the stat from the walk)
+        {
+            auto at = a.last_write_time(sec);
+            auto bt = b.last_write_time(sec);
+            if (at != bt)
+                return at > bt;
+            break; // tie -> fall through to name
+        }
+        case 2: // Size — largest first (folders compared by name, they have no meaningful size)
+            if (!aDir)
+            {
+                auto as = a.file_size(sec);
+                auto bs = b.file_size(sec);
+                if (as != bs)
+                    return as > bs;
+            }
+            break;
+        case 3: // Type — by extension, then name
+        {
+            auto ae = a.path().extension().string(), be = b.path().extension().string();
+            std::transform(ae.begin(), ae.end(), ae.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            std::transform(be.begin(), be.end(), be.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            if (ae != be)
+                return ae < be;
+            break;
+        }
+        default:
+            break;
+        }
+        return lowerName(a) < lowerName(b); // Name mode, and tie-breaker for the others
+    });
     slot.scanned = now;
     return slot.entries;
 }
@@ -2644,6 +2682,16 @@ void Editor::renderNavigationPanel()
             ImGui::Checkbox("Wrap project path", &navPathWrap);
             if (!ueSourceDir.empty())
                 ImGui::Checkbox(("Show " + ueSourceLabel).c_str(), &navShowUeSource);
+            ImGui::Separator();
+            // Sort order (folders always list before files). Changing it re-scans.
+            const char *sortItems[] = {"Name", "Modified (newest)", "Size (largest)", "Type"};
+            ImGui::TextDisabled("Sort by");
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("##navSort", &navSortMode, sortItems, IM_ARRAYSIZE(sortItems)))
+            {
+                navMarkListDirty(); // rebuild the cached listings with the new order
+                saveSettings();
+            }
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -7220,6 +7268,12 @@ void Editor::loadSettings()
                 navCodeOnly = (v == "1" || v == "true");
             else if (k == "nav_flat")
                 navFlatFiles = (v == "1" || v == "true");
+            else if (k == "nav_sort")
+            {
+                navSortMode = std::atoi(v.c_str());
+                if (navSortMode < 0 || navSortMode > 3)
+                    navSortMode = 0;
+            }
             else if (k == "nav_path_wrap")
                 navPathWrap = (v == "1" || v == "true");
             else if (k == "nav_ue_source")
@@ -7346,6 +7400,7 @@ void Editor::saveSettings()
     f << "nav_show_excl=" << (navShowExcluded ? "1" : "0") << "\n";
     f << "nav_code_only=" << (navCodeOnly ? "1" : "0") << "\n";
     f << "nav_flat=" << (navFlatFiles ? "1" : "0") << "\n";
+    f << "nav_sort=" << navSortMode << "\n";
     f << "nav_path_wrap=" << (navPathWrap ? "1" : "0") << "\n";
     f << "nav_ue_source=" << (navShowUeSource ? "1" : "0") << "\n";
     f << "font_size=" << prefFontSize << "\n";

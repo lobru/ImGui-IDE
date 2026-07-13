@@ -522,6 +522,7 @@ private:
 	// Nav tree context menu state — set when a file/folder is right-clicked.
 	std::string  navContextPath;            // path the menu acts on this frame
 	bool         navShowDotFiles = false;   // toggle in nav header
+	int          navSortMode     = 0;       // 0=Name, 1=Modified (newest first), 2=Size (largest first), 3=Type
 	bool         navShowExcluded = false;   // expose hidden-from-view items
 	bool         navCodeOnly     = false;   // hide non-source files
 	bool         navFlatFiles    = false;   // collapse folder bodies (show folders only)
