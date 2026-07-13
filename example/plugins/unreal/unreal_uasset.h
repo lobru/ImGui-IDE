@@ -70,4 +70,9 @@ Summary parseFile(const std::filesystem::path& path);
 // Appends a Blueprint section when analyzeBlueprint detects one.
 std::string report(const Summary& summary, const std::string& title);
 
+// The same inspection as structured JSON — opened with a .json extension so the
+// editor colours + folds it, and usable directly as an export. Includes a
+// "blueprint" object when the asset is a Blueprint.
+std::string toJson(const Summary& summary, const std::string& title);
+
 } // namespace unreal::uasset

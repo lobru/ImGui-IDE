@@ -234,13 +234,14 @@ void UnrealPlugin::renderVerseWizard(PluginHost &host)
 void UnrealPlugin::inspectUAssetPath(PluginHost &host, const std::filesystem::path &asset)
 {
     auto summary = unreal::uasset::parseFile(asset);
-    std::string text = unreal::uasset::report(summary, asset.filename().string());
+    // Emit JSON and open it with a .json extension: the editor colours + folds it,
+    // gives smart navigation, and the tab is a ready-to-Save-As export.
+    std::string text = unreal::uasset::toJson(summary, asset.filename().string());
 
-    // open the report as a file (survives as a normal read-only-ish tab)
     std::error_code ec;
     std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / "ImGuiIDE";
     std::filesystem::create_directories(dir, ec);
-    std::filesystem::path out = dir / (asset.stem().string() + ".uasset-report.txt");
+    std::filesystem::path out = dir / (asset.stem().string() + ".uasset.json");
     std::ofstream f(out, std::ios::binary | std::ios::trunc);
     if (f)
     {

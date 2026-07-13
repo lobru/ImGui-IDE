@@ -1413,6 +1413,14 @@ int main(int argc, char** argv)
 		CHECK(report(bpSum, "bp").find("Blueprint asset") != std::string::npos,
 		      "blueprint: report gains a Blueprint section");
 
+		// JSON export: valid-shaped, carries the blueprint object + names/imports.
+		std::string js = toJson(bpSum, "bp.uasset");
+		CHECK(js.front() == '{' && js.find("\"blueprint\"") != std::string::npos &&
+		          js.find("\"generatedClass\": \"BP_Door_C\"") != std::string::npos,
+		      "json export: structured JSON with the blueprint object");
+		CHECK(js.find("\"names\"") != std::string::npos && js.find("\"imports\"") != std::string::npos,
+		      "json export: includes names + imports");
+
 		// The plugin claims .uasset (binary) so opening one shows a report in a tab
 		// instead of launching the external app — else inspection is unreachable.
 		struct CapHost : PluginHost {
@@ -1445,8 +1453,8 @@ int main(int argc, char** argv)
 		{ std::ofstream(tmp, std::ios::binary).write(pkg.data(), (std::streamsize) pkg.size()); }
 		UnrealPlugin plugin;
 		CHECK(plugin.openFile(host, tmp), "uasset open: plugin claims a .uasset");
-		CHECK(host.opened.find(".uasset-report.txt") != std::string::npos,
-		      "uasset open: it opens an inspection report tab, not the external app");
+		CHECK(host.opened.find(".uasset.json") != std::string::npos,
+		      "uasset open: it opens a JSON inspection tab (coloured/foldable), not the external app");
 		host.opened.clear();
 		CHECK(!plugin.openFile(host, "notes.txt") && host.opened.empty(),
 		      "uasset open: non-asset files are left for the host");

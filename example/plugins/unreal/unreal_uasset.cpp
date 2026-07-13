@@ -289,6 +289,83 @@ BlueprintSummary analyzeBlueprint(const Summary& s) {
 	return b;
 }
 
+// Minimal JSON string escaping (quotes, backslash, control chars).
+static std::string jsonEscape(const std::string& s) {
+	std::string out;
+	for (char c : s) {
+		switch (c) {
+		case '"':  out += "\\\""; break;
+		case '\\': out += "\\\\"; break;
+		case '\n': out += "\\n"; break;
+		case '\r': out += "\\r"; break;
+		case '\t': out += "\\t"; break;
+		default:
+			if (static_cast<unsigned char>(c) < 0x20) {
+				char buf[8];
+				std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+				out += buf;
+			} else {
+				out += c;
+			}
+		}
+	}
+	return out;
+}
+
+std::string toJson(const Summary& s, const std::string& title) {
+	auto q = [](const std::string& v) { return "\"" + jsonEscape(v) + "\""; };
+	std::string out = "{\n";
+	out += "  \"title\": " + q(title) + ",\n";
+	out += "  \"valid\": " + std::string(s.valid ? "true" : "false") + ",\n";
+
+	if (!s.valid) {
+		out += "  \"error\": " + q(s.error) + "\n}\n";
+		return out;
+	}
+
+	char flags[16];
+	std::snprintf(flags, sizeof(flags), "\"0x%08X\"", s.packageFlags);
+	out += "  \"fileVersionUE4\": " + std::to_string(s.fileVersionUE4) + ",\n";
+	out += "  \"fileVersionUE5\": " + std::to_string(s.fileVersionUE5) + ",\n";
+	out += "  \"fileVersionLicensee\": " + std::to_string(s.fileVersionLicensee) + ",\n";
+	out += "  \"unversioned\": " + std::string(s.unversioned ? "true" : "false") + ",\n";
+	out += "  \"packageFlags\": " + std::string(flags) + ",\n";
+	out += "  \"totalHeaderSize\": " + std::to_string(s.totalHeaderSize) + ",\n";
+	if (!s.folderName.empty() && s.folderName != "None") {
+		out += "  \"folder\": " + q(s.folderName) + ",\n";
+	}
+	out += "  \"counts\": { \"names\": " + std::to_string(s.nameCount) +
+	       ", \"imports\": " + std::to_string(s.importCount) +
+	       ", \"exports\": " + std::to_string(s.exportCount) + " },\n";
+
+	BlueprintSummary bp = analyzeBlueprint(s);
+	if (bp.isBlueprint) {
+		out += "  \"blueprint\": {\n";
+		out += "    \"generatedClass\": " + q(bp.generatedClass) + ",\n";
+		out += "    \"parentClass\": " + q(bp.parentClass) + ",\n";
+		out += "    \"referencedClasses\": [";
+		for (size_t i = 0; i < bp.classes.size(); ++i) {
+			out += (i ? ", " : "") + q(bp.classes[i]);
+		}
+		out += "]\n  },\n";
+	}
+
+	out += "  \"imports\": [\n";
+	for (size_t i = 0; i < s.imports.size(); ++i) {
+		const Import& imp = s.imports[i];
+		out += "    { \"classPackage\": " + q(imp.classPackage) + ", \"className\": " + q(imp.className) +
+		       ", \"objectName\": " + q(imp.objectName) + " }" + (i + 1 < s.imports.size() ? "," : "") + "\n";
+	}
+	out += "  ],\n";
+
+	out += "  \"names\": [";
+	for (size_t i = 0; i < s.names.size(); ++i) {
+		out += (i ? ", " : "") + q(s.names[i]);
+	}
+	out += "]\n}\n";
+	return out;
+}
+
 std::string report(const Summary& s, const std::string& title) {
 	std::string out = "UAsset inspection — " + title + "\n";
 	out += std::string(out.size() - 1, '=') + "\n\n";
