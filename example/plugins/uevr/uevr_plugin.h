@@ -98,6 +98,27 @@ private:
     // both tab- and space-delimited bridge output (see parseBridgeRows).
     void renderBridgeTable(const char *id, const std::string &text, const char *filter, int cols, bool allowInsert);
 
+    // ── Interactive Globals tree (lazy Lua-object inspection) ───────────────
+    // Each row is a live global (or a key inside an expanded table). Table-typed
+    // rows expand on click: their keys/values are fetched on demand over the bridge
+    // (pairs() enumeration; debug.getinfo for functions), so you can drill into
+    // nested Lua tables/objects. `path` is the Lua access expression used to refetch.
+    struct GlobalNode
+    {
+        std::string key, type, value, path;
+        bool expandable = false; // type == "table" (children fetchable)
+        bool fetched = false;    // children already retrieved
+        std::vector<GlobalNode> children;
+    };
+    std::vector<GlobalNode> uevrGlobalsTree;
+    std::string uevrGlobalsSource;              // the raw dump the tree was built from
+    std::vector<std::string> uevrPendingPairs;  // paths awaiting a PAIRS response
+    void rebuildGlobalsTree();                  // (re)build the top level from uevrGlobals
+    static GlobalNode *findNodeByPath(std::vector<GlobalNode> &nodes, const std::string &path);
+    void requestGlobalChildren(GlobalNode &node);
+    void applyPairsResponse(const std::string &pathId, const std::string &rows);
+    void renderGlobalsTree(const char *filter);
+
     // Live-value → Blueprint node bridge: turns an arbitrary inspected/watched
     // expression into a Custom Lua node (see BlueprintEditor::AddCustomLuaNode) --
     // a single registry Function can't represent an arbitrary expression, but a

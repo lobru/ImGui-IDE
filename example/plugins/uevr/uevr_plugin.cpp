@@ -40,7 +40,9 @@ void UevrPlugin::onFrame(PluginHost &host)
 
 void UevrPlugin::onMenu(PluginHost &host, PluginMenu which)
 {
-    if (which == PluginMenu::View)
+    // Panel toggles live under Tools (the host's reorganized "Panels" menu). These
+    // are plugin windows, so they belong with the other tool panels, not in View.
+    if (which == PluginMenu::Tools)
     {
         if (ImGui::MenuItem("Blueprint Editor (UEVR)", nullptr, &blueprintVisible))
         {

@@ -11236,8 +11236,9 @@ void Editor::renderMenuBar()
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Focus Mode", "F11", focusMode))
-                toggleFocusMode();
-            ImGui::Separator();
+            {
+            	toggleFocusMode();
+            }
             if (ImGui::BeginMenu("Theme"))
             {
                 for (int i = 0; i < themeCount(); ++i)
@@ -11298,33 +11299,12 @@ void Editor::renderMenuBar()
                 for (auto &up : tabs)
                     up->editor.SetWordWrap(prefWordWrap);
             }
-
             ImGui::Separator();
-            if (ImGui::MenuItem("Navigation Panel", nullptr, &navPanelVisible))
+           	if (ImGui::MenuItem("Navigation Panel", nullptr, &navPanelVisible))
             {
             }
-            if (ImGui::MenuItem("Symbols", nullptr, &symbolsPanelVisible))
-            {
-            }
-            // Plugins contribute their window toggles here (Blueprint, UEVR Live).
-            pluginRegistry.menu(*this, PluginMenu::View);
-            if (ImGui::MenuItem("C/C++ IntelliSense (clangd)", nullptr, &lspEnabled))
-            {
-                if (lspEnabled)
-                    startLspForProject();
-                else
-                    lspClient.stop();
-            }
-            if (ImGui::MenuItem("Output", "F5", &script->visible))
-            {
-            }
-            if (ImGui::MenuItem("Developer Tools", nullptr, &devToolsVisible))
-            {
-            }
-            if (ImGui::MenuItem("External Changes", nullptr, &externalChangesVisible))
-            {
-            }
-            // Markdown preview — context-sensitive: only when the active document
+
+        	// Markdown preview — context-sensitive: only when the active document
             // is a markdown file (not an always-on global toggle).
             {
                 auto ext = std::filesystem::path(doc().filename).extension().string();
@@ -11355,8 +11335,8 @@ void Editor::renderMenuBar()
                 {
                     toggleHeaderSource();
                 }
-                ImGui::Separator();
             }
+
             ImGui::Separator();
             if (ImGui::MenuItem("Split Right", SHORTCUT "\\"))
             {
@@ -11398,7 +11378,19 @@ void Editor::renderMenuBar()
 
             ImGui::EndMenu();
         }
-
+        if (ImGui::BeginMenu("Tools"))
+        {
+            // Plugins contribute their tool-panel toggles here (Blueprint, UEVR Live).
+            pluginRegistry.menu(*this, PluginMenu::Tools);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Developer Tools", nullptr, &devToolsVisible))
+            {
+            }
+            if (ImGui::MenuItem("External Changes", nullptr, &externalChangesVisible))
+            {
+            }
+            ImGui::EndMenu();
+        }
         // PROJECT — build / run / project tooling.
         if (ImGui::BeginMenu("Project"))
         {
@@ -11411,6 +11403,7 @@ void Editor::renderMenuBar()
                 }
                 if (!inRepo)
                     ImGui::TextDisabled("(not a git repository)");
+
                 if (ImGui::MenuItem("Fetch", nullptr, false, inRepo))
                 {
                     runGit("fetch");
@@ -11443,11 +11436,7 @@ void Editor::renderMenuBar()
                     std::snprintf(gitRevBuf, sizeof(gitRevBuf), "HEAD");
                     gitRevCompareRequest = true;
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Diff Against File…"))
-                {
-                    openDiffOtherDialog();
-                }
+
                 if (ImGui::MenuItem("Clone Repository from URL…"))
                 {
                     gitCloneUrl[0] = '\0';
@@ -11463,6 +11452,17 @@ void Editor::renderMenuBar()
                     gitCloneRequest = true;
                 }
                 ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Symbols", nullptr, &symbolsPanelVisible))
+            {
+            }
+
+            if (ImGui::MenuItem("IntelliSense / LS", nullptr, &lspEnabled))
+            {
+                if (lspEnabled)
+                    startLspForProject();
+                else
+                    lspClient.stop();
             }
 
             if (ImGui::MenuItem("Build Project", "F6"))
@@ -11481,7 +11481,9 @@ void Editor::renderMenuBar()
             {
                 runScriptForDoc();
             }
-
+            if (ImGui::MenuItem("Output", "F5", &script->visible))
+            {
+            }
             // Project-type plugins (e.g. Unreal) contribute their submenu here.
             pluginRegistry.menu(*this, PluginMenu::Project);
 

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -134,6 +135,62 @@ std::vector<BridgeRow> parseTabDelimited(const std::string &text)
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+// Quote a string as a Lua string literal (double-quoted, minimal escaping).
+std::string luaQuote(const std::string &s)
+{
+    std::string out = "\"";
+    for (char c : s)
+    {
+        if (c == '\\' || c == '"')
+            out += '\\';
+        out += c;
+    }
+    out += "\"";
+    return out;
+}
+
+// Build a one-shot Lua chunk (ridden over the "inspect" round trip) that enumerates
+// the pairs() of the value at `pathExpr` and returns "PAIRS:<path>\n" + one
+// key\ttype\tvalue\tchildpath row per entry. debug.getinfo names functions; nested
+// tables report their element count so they can be drilled into further. The
+// child path is computed server-side so the IDE can refetch any node directly.
+const char *kPairsTemplate = R"LUA((function()
+local Pstr=@PSTR@
+local ok,t=pcall(function() return @PEXPR@ end)
+local function fmt(v)
+  local ty=type(v)
+  if ty=='string' then local s=v:gsub('\n','\\n'):gsub('\r',''); if #s>80 then s=s:sub(1,80)..'..' end; return string.format('%q',s) end
+  if ty=='number' or ty=='boolean' then return tostring(v) end
+  if ty=='nil' then return 'nil' end
+  if ty=='function' then local i=debug.getinfo(v,'S'); if i then return 'fn@'..tostring(i.short_src)..':'..tostring(i.linedefined) end return 'function' end
+  if ty=='table' then local n=0 for _ in pairs(v) do n=n+1 end return 'table[#'..n..']' end
+  return ty
+end
+local out={}
+if ok and type(t)=='table' then
+  for k,v in pairs(t) do
+    local kl if type(k)=='string' then kl=string.format('%q',k) else kl=tostring(k) end
+    local acc=Pstr..'['..kl..']'
+    out[#out+1]=tostring(k)..'\t'..type(v)..'\t'..(fmt(v):gsub('\t',' '))..'\t'..acc
+  end
+end
+return 'PAIRS:'..Pstr..'\n'..table.concat(out,'\n')
+end)())LUA";
+
+std::string buildPairsChunk(const std::string &pathExpr)
+{
+    std::string chunk = kPairsTemplate;
+    // @PSTR@ = the path as a Lua string literal; @PEXPR@ = the path as code.
+    auto replace = [&](const std::string &token, const std::string &with) {
+        size_t p;
+        while ((p = chunk.find(token)) != std::string::npos)
+            chunk.replace(p, token.size(), with);
+    };
+    replace("@PSTR@", luaQuote(pathExpr));
+    replace("@PEXPR@", pathExpr);
+    return chunk;
 }
 
 // Rstrip helper.
@@ -282,6 +339,16 @@ void UevrPlugin::pollUevrBridge()
         {
             // A live SDK dump rides the inspect round trip with a marker so it feeds
             // the SDK index (autocomplete + Expose SDK Class) instead of the tab.
+            // A lazy Globals-tree expansion rides the inspect round trip too.
+            if (body.rfind("PAIRS:", 0) == 0)
+            {
+                size_t nlp = body.find('\n');
+                std::string pathId = body.substr(6, (nlp == std::string::npos ? body.size() : nlp) - 6);
+                std::string rows = (nlp == std::string::npos) ? "" : body.substr(nlp + 1);
+                applyPairsResponse(pathId, rows);
+                continue;
+            }
+
             size_t marker = body.find("SDKDUMP:");
             if (marker != std::string::npos)
             {
@@ -401,6 +468,157 @@ void UevrPlugin::renderBridgeTable(const char *id, const std::string &text, cons
     }
 }
 
+// Depth-first search for the node whose path matches, so an async PAIRS response
+// can attach its children to the exact node the user expanded.
+UevrPlugin::GlobalNode *UevrPlugin::findNodeByPath(std::vector<GlobalNode> &nodes, const std::string &path)
+{
+    for (auto &n : nodes)
+    {
+        if (n.path == path)
+            return &n;
+        if (GlobalNode *hit = findNodeByPath(n.children, path))
+            return hit;
+    }
+    return nullptr;
+}
+
+void UevrPlugin::rebuildGlobalsTree()
+{
+    uevrGlobalsSource = uevrGlobals;
+    uevrGlobalsTree.clear();
+    for (auto &row : parseBridgeRows(uevrGlobals, 3))
+    {
+        GlobalNode node;
+        node.key = row.name;
+        node.type = row.type;
+        node.value = row.value;
+        node.path = "_G[" + luaQuote(row.name) + "]"; // top-level globals live in _G
+        node.expandable = (row.type == "table");
+        uevrGlobalsTree.push_back(std::move(node));
+    }
+}
+
+void UevrPlugin::requestGlobalChildren(GlobalNode &node)
+{
+    if (std::find(uevrPendingPairs.begin(), uevrPendingPairs.end(), node.path) != uevrPendingPairs.end())
+        return; // already in flight — don't spam the bridge every frame while open
+    uevrPendingPairs.push_back(node.path);
+    sendUevr("inspect", buildPairsChunk(node.path));
+}
+
+void UevrPlugin::applyPairsResponse(const std::string &pathId, const std::string &rows)
+{
+    uevrPendingPairs.erase(std::remove(uevrPendingPairs.begin(), uevrPendingPairs.end(), pathId),
+                           uevrPendingPairs.end());
+    GlobalNode *node = findNodeByPath(uevrGlobalsTree, pathId);
+    if (!node)
+        return;
+
+    node->children.clear();
+    std::istringstream ss(rows);
+    std::string line;
+    while (std::getline(ss, line))
+    {
+        if (line.empty())
+            continue;
+        // key \t type \t value \t childpath
+        size_t t1 = line.find('\t');
+        size_t t2 = (t1 == std::string::npos) ? std::string::npos : line.find('\t', t1 + 1);
+        size_t t3 = (t2 == std::string::npos) ? std::string::npos : line.find('\t', t2 + 1);
+        if (t3 == std::string::npos)
+            continue;
+        GlobalNode child;
+        child.key = line.substr(0, t1);
+        child.type = line.substr(t1 + 1, t2 - t1 - 1);
+        child.value = line.substr(t2 + 1, t3 - t2 - 1);
+        child.path = line.substr(t3 + 1);
+        child.expandable = (child.type == "table");
+        node->children.push_back(std::move(child));
+    }
+    std::sort(node->children.begin(), node->children.end(),
+              [](const GlobalNode &a, const GlobalNode &b) { return a.key < b.key; });
+    node->fetched = true;
+}
+
+void UevrPlugin::renderGlobalsTree(const char *filter)
+{
+    if (uevrGlobals != uevrGlobalsSource)
+        rebuildGlobalsTree();
+
+    if (uevrGlobalsTree.empty())
+    {
+        ImGui::TextUnformatted("(refresh to query the game)");
+        return;
+    }
+
+    std::string needle = filter ? filter : "";
+    std::transform(needle.begin(), needle.end(), needle.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (!ImGui::BeginTable("##uevrGlobalsTree", 3,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
+        return;
+
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+    ImGui::TableHeadersRow();
+
+    std::function<void(GlobalNode &)> row = [&](GlobalNode &n) {
+        ImGui::PushID(n.path.c_str());
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanFullWidth;
+        if (!n.expandable)
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet;
+
+        bool open = ImGui::TreeNodeEx(n.key.c_str(), flags);
+        if (open && n.expandable && !n.fetched)
+            requestGlobalChildren(n); // lazily fetch this table's keys/values
+
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(n.type.c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(n.value.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("ins"))
+            insertLiveValueAsNode(n.path, n.key);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Insert a Custom Lua node reading %s", n.path.c_str());
+
+        if (open && n.expandable)
+        {
+            if (!n.fetched && n.children.empty())
+            {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("  (loading...)");
+            }
+            for (auto &c : n.children)
+                row(c);
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    };
+
+    for (auto &n : uevrGlobalsTree)
+    {
+        if (!needle.empty())
+        {
+            std::string low = n.key;
+            std::transform(low.begin(), low.end(), low.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (low.find(needle) == std::string::npos)
+                continue;
+        }
+        row(n);
+    }
+
+    ImGui::EndTable();
+}
+
 void UevrPlugin::renderUevrLive(PluginHost &host)
 {
     if (!uevrLiveVisible)
@@ -502,7 +720,7 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
             ImGui::SetNextItemWidth(200.0f);
             ImGui::InputTextWithHint("##gfilter", "filter", globalsFilter, sizeof(globalsFilter));
             ImGui::BeginChild("##uevrGlobals", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
-            renderBridgeTable("##uevrGlobalsTable", uevrGlobals, globalsFilter, 3, true);
+            renderGlobalsTree(globalsFilter); // expandable: drill into tables/objects
             host.hostMiddleMousePanScroll(101);
             ImGui::EndChild();
             ImGui::EndTabItem();
