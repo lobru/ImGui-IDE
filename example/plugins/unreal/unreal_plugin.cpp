@@ -307,10 +307,10 @@ void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
         std::transform(ext.begin(), ext.end(), ext.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
         bool isPackage = ext == ".uasset" || ext == ".umap";
-        if (ImGui::MenuItem("Inspect Package (.uasset)", nullptr, false, isPackage))
+        if (ImGui::MenuItem("Inspect Package / Blueprint (.uasset)", nullptr, false, isPackage))
             inspectActiveUAsset(host);
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(isPackage ? "Parse the active package's header, name table and imports into a report"
+            ImGui::SetTooltip(isPackage ? "Report the package header + import map; detects Blueprints (generated class, parent, referenced classes)"
                                         : "Open a .uasset/.umap file first (its tab must be active)");
     }
     ImGui::Separator();

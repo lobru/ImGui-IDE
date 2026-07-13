@@ -237,6 +237,58 @@ Summary parseFile(const std::filesystem::path& path) {
 	return parse(bytes.data(), bytes.size());
 }
 
+BlueprintSummary analyzeBlueprint(const Summary& s) {
+	BlueprintSummary b;
+	auto contains = [](const std::string& hay, const char* needle) {
+		return hay.find(needle) != std::string::npos;
+	};
+
+	for (auto& imp : s.imports) {
+		// A UClass import ("className == Class") is a class this asset references —
+		// the native parent is among these, alongside any component classes.
+		if (imp.className == "Class") {
+			b.classes.push_back(imp.objectName);
+		}
+
+		if (contains(imp.className, "BlueprintGeneratedClass") ||
+			contains(imp.objectName, "BlueprintGeneratedClass") ||
+			imp.className == "Blueprint" || imp.objectName == "Blueprint" ||
+			imp.className == "WidgetBlueprintGeneratedClass" ||
+			imp.className == "AnimBlueprintGeneratedClass") {
+			b.isBlueprint = true;
+		}
+	}
+
+	for (auto& n : s.names) {
+		if (n == "BlueprintGeneratedClass" || n == "WidgetBlueprintGeneratedClass" ||
+			n == "AnimBlueprintGeneratedClass") {
+			b.isBlueprint = true;
+		}
+	}
+
+	// The generated class is the "*_C" name-table entry (BP_Door -> BP_Door_C).
+	for (auto& n : s.names) {
+		if (n.size() > 2 && n.compare(n.size() - 2, 2, "_C") == 0 &&
+			n.find(' ') == std::string::npos && n.find('/') == std::string::npos) {
+			b.generatedClass = n;
+			break;
+		}
+	}
+
+	// Best-effort parent: the first referenced class that isn't a BP/meta class.
+	for (auto& c : b.classes) {
+		if (c == "BlueprintGeneratedClass" || c == "WidgetBlueprintGeneratedClass" ||
+			c == "AnimBlueprintGeneratedClass" || c == "Blueprint" || c == "Object" ||
+			c == "Class" || c == "Package") {
+			continue;
+		}
+		b.parentClass = c;
+		break;
+	}
+
+	return b;
+}
+
 std::string report(const Summary& s, const std::string& title) {
 	std::string out = "UAsset inspection — " + title + "\n";
 	out += std::string(out.size() - 1, '=') + "\n\n";
@@ -244,6 +296,23 @@ std::string report(const Summary& s, const std::string& title) {
 	if (!s.valid) {
 		out += "PARSE FAILED: " + s.error + "\n";
 		return out;
+	}
+
+	// Blueprint-level summary first (the most useful view when the asset is a BP).
+	BlueprintSummary bp = analyzeBlueprint(s);
+	if (bp.isBlueprint) {
+		out += "Blueprint asset\n---------------\n";
+		out += "  Generated class:  " + (bp.generatedClass.empty() ? "(unknown)" : bp.generatedClass) + "\n";
+		out += "  Parent (guess):   " + (bp.parentClass.empty() ? "(unknown)" : bp.parentClass) + "\n";
+		if (!bp.classes.empty()) {
+			out += "  Referenced classes:";
+			for (auto& c : bp.classes) {
+				out += " " + c;
+			}
+			out += "\n";
+		}
+		out += "  Note: functions/variables/components need the export graph "
+			   "(UAssetAPI/CUE4Parse); the above is derived from the package header.\n\n";
 	}
 
 	out += "File versions:  UE4 " + std::to_string(s.fileVersionUE4) +

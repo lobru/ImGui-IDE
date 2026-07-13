@@ -1395,6 +1395,23 @@ int main(int argc, char** argv)
 
 		Summary bad = parse("nope", 4);
 		CHECK(!bad.valid && !bad.error.empty(), "uasset: non-package rejected with a reason");
+
+		// analyzeBlueprint: a non-BP asset isn't flagged; a BP-shaped one is, with
+		// its generated class + a best-effort parent.
+		BlueprintSummary nb = analyzeBlueprint(s);
+		CHECK(!nb.isBlueprint, "blueprint: a StaticMesh package is not a Blueprint");
+
+		Summary bpSum;
+		bpSum.valid = true;
+		bpSum.names = {"BP_Door", "BP_Door_C", "Actor", "BlueprintGeneratedClass"};
+		bpSum.imports.push_back(Import{"/Script/Engine", "Class", "Actor", 0});
+		bpSum.imports.push_back(Import{"/Script/Engine", "BlueprintGeneratedClass", "BP_Door_C", 0});
+		BlueprintSummary bp = analyzeBlueprint(bpSum);
+		CHECK(bp.isBlueprint, "blueprint: BlueprintGeneratedClass import detected");
+		CHECK(bp.generatedClass == "BP_Door_C", "blueprint: generated class is the *_C name");
+		CHECK(bp.parentClass == "Actor", "blueprint: best-effort parent is the referenced native class");
+		CHECK(report(bpSum, "bp").find("Blueprint asset") != std::string::npos,
+		      "blueprint: report gains a Blueprint section");
 	}
 #endif // IMGUIIDE_PLUGIN_UNREAL
 

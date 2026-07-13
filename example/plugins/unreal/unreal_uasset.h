@@ -48,11 +48,26 @@ struct Summary {
 	std::vector<Import> imports;    // the import map (may be empty if unparseable)
 };
 
+// Blueprint-level view derived from the header (import map + name table). No export
+// graph is parsed — full function/variable/component enumeration needs the export
+// map (UAssetAPI/CUE4Parse); these fields are a best-effort, clearly-labelled
+// heuristic that is reliable for detection, the generated class, and the parent.
+struct BlueprintSummary {
+	bool isBlueprint = false;
+	std::string generatedClass;          // e.g. "BP_Door_C" (a "*_C" name-table entry)
+	std::string parentClass;             // best-effort native parent (e.g. "Actor")
+	std::vector<std::string> classes;    // referenced UClass imports (parent + components + ...)
+};
+
+// Classify a parsed package as a Blueprint and pull what the header reliably yields.
+BlueprintSummary analyzeBlueprint(const Summary& summary);
+
 // Parse a package from a memory buffer / from disk.
 Summary parse(const void* data, size_t size);
 Summary parseFile(const std::filesystem::path& path);
 
 // A human-readable multi-line report of a Summary (what the IDE displays/opens).
+// Appends a Blueprint section when analyzeBlueprint detects one.
 std::string report(const Summary& summary, const std::string& title);
 
 } // namespace unreal::uasset
