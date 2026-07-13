@@ -219,6 +219,26 @@ static std::filesystem::path get_module_path()
 #endif
 }
 
+// Launch another copy of this executable as a separate instance. `--new` bypasses
+// per-project coalescing, so this always opens a distinct window; an optional
+// project root opens that folder in the new window. Best-effort (no-op on failure).
+static void spawnNewInstance(const std::string &projectRoot)
+{
+    std::filesystem::path exe = get_module_path();
+#ifdef _WIN32
+    std::string args = "--new";
+    if (!projectRoot.empty())
+        args += " --project \"" + projectRoot + "\"";
+    ShellExecuteA(nullptr, "open", exe.string().c_str(), args.c_str(), nullptr, SW_SHOWNORMAL);
+#else
+    std::string cmd = "\"" + exe.string() + "\" --new";
+    if (!projectRoot.empty())
+        cmd += " --project \"" + projectRoot + "\"";
+    cmd += " &";
+    (void)std::system(cmd.c_str());
+#endif
+}
+
 // Copy the bundled *.lang into the writable user languages dir as editable
 // starting points — but only if that dir has no .lang yet, so it never clobbers
 // the user's edits or re-adds files they deleted. NOTE: an unedited copy here
@@ -10988,6 +11008,18 @@ void Editor::renderMenuBar()
             {
                 openProjectFolderPicker();
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("New Window"))
+            {
+                spawnNewInstance(""); // a fresh, projectless instance
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Open another ImGui-IDE window (run multiple instances side by side)");
+            if (ImGui::MenuItem("New Window (this project)", nullptr, false, !projectRoot.empty()))
+            {
+                spawnNewInstance(projectRoot.string()); // second window on the same project
+            }
+            ImGui::Separator();
             // Plugins contribute File-menu items here (e.g. UEVR "Open Script").
             pluginRegistry.menu(*this, PluginMenu::File);
             // Recent lists: show the FILENAME as the menu label (full absolute

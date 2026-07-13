@@ -275,7 +275,12 @@ int main(int argc, char** argv) {
 	{
 		bool forceNew = false;
 		for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--new") forceNew = true;
-		if (!forceNew) {
+		// Coalesce ONLY when we have a real project key. A projectless launch
+		// (key "none") now opens its own window instead of collapsing every bare
+		// launch into one — so you can run several instances side by side (each on
+		// a different project). Per-project coalescing is unchanged: relaunching a
+		// project that is already open still reuses that window.
+		if (!forceNew && instanceKey != "none") {
 			std::string mutexName = "Local\\ImGuiIDE_Instance_" + instanceKey;
 			HANDLE inst = CreateMutexA(nullptr, FALSE, mutexName.c_str());
 			if (inst && GetLastError() == ERROR_ALREADY_EXISTS) {
