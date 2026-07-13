@@ -203,7 +203,8 @@ static const char* nodeKindNames[] = {
 	"FlowControl",
 	"Reroute",
 	"Comment",
-	"CustomLua"
+	"CustomLua",
+	"Cast"
 };
 
 // built-in flow control node definitions (Unreal's standard macros)
@@ -1023,6 +1024,48 @@ BlueprintEditor::ID BlueprintEditor::AddCustomLuaNode(const ImVec2& pos) {
 	node.commentSize = ImVec2(260.0f, 160.0f);
 	addPin(node, "", PinType(PinKind::Exec), false);
 	addPin(node, "", PinType(PinKind::Exec), true);
+	return finishNode(node);
+}
+
+void BlueprintEditor::ensureClassAvailable(const std::string& className) {
+	if (className.empty() || registry.FindClass(className) || !auxRegistry) {
+		return;
+	}
+
+	const Class* src = auxRegistry->FindClass(className);
+
+	if (!src) {
+		return;
+	}
+
+	// Pull ancestors first so the parent chain (and inherited members) resolves.
+	if (!src->parentName.empty()) {
+		ensureClassAvailable(src->parentName);
+	}
+
+	Class& dst = registry.AddClass(src->name, src->parentName, src->tooltip);
+	dst.metadata = src->metadata;
+	dst.properties = src->properties;
+	dst.functions = src->functions;
+	dst.events = src->events;
+}
+
+BlueprintEditor::ID BlueprintEditor::AddCastNode(const std::string& className, const ImVec2& pos) {
+	if (className.empty()) {
+		return 0;
+	}
+
+	ensureClassAvailable(className); // so the output's class is a real, spawnable type
+
+	Node& node = createNode(NodeKind::Cast, pos);
+	node.className = className;
+	node.memberName = "Cast";
+	node.title = "Cast To " + className;
+	node.subtitle = "is_a(\"" + className + "\")";
+	node.pure = true;
+
+	addPin(node, "Object", PinType(PinKind::Object, "UObject"), false);
+	addPin(node, "As " + className, PinType(PinKind::Object, className), true);
 	return finishNode(node);
 }
 
@@ -3846,8 +3889,173 @@ void BlueprintEditor::renderGraphContextMenu() {
 			ImGui::Separator();
 		}
 
-		// filter the palette
+		// Class-contextual members (Unreal UX): dragging from a TYPED object pin lists
+		// that class's functions + properties — pulled from the live registry AND the
+		// imported SDK side index (auxRegistry), so SDK members are reachable on the
+		// object that has them WITHOUT flooding the global palette. The class comes from
+		// the pin's subtype (established by an event's typed output, a Cast node, or a
+		// get-objects-by-class result). Members are copied into the registry on first use.
 		std::string search = toLower(searchBuffer);
+
+		if (pending && pending->isOutput &&
+			(pending->type.kind == PinKind::Object || isClassLike(pending->type)) &&
+			!pending->type.subtype.empty()) {
+			// Walk the class + ancestors across both registries.
+			std::vector<std::string> chain;
+			std::string walk = pending->type.subtype;
+
+			for (int guard = 0; guard < 64 && !walk.empty(); ++guard) {
+				const Class* c = registry.FindClass(walk);
+
+				if (!c && auxRegistry) {
+					c = auxRegistry->FindClass(walk);
+				}
+
+				if (!c) {
+					break;
+				}
+
+				chain.push_back(c->name);
+				walk = c->parentName;
+			}
+
+			if (!chain.empty()) {
+				std::string header = "Members of " + pending->type.subtype;
+				ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+
+				if (ImGui::TreeNode(header.c_str())) {
+					int shown = 0;
+
+					for (auto& clsName : chain) {
+						const Class* c = registry.FindClass(clsName);
+
+						if (!c && auxRegistry) {
+							c = auxRegistry->FindClass(clsName);
+						}
+
+						if (!c) {
+							continue;
+						}
+
+						auto matchesSearch = [&](const std::string& n) {
+							return search.empty() || toLower(n).find(search) != std::string::npos;
+						};
+
+						for (auto& fn : c->functions) {
+							if (shown >= 200 || !matchesSearch(fn.name)) {
+								continue;
+							}
+
+							std::string label = fn.name + "##fn_" + clsName;
+
+							if (ImGui::Selectable(label.c_str())) {
+								ensureClassAvailable(clsName);
+								ID id = AddCallFunctionNode(clsName, fn.name, popupGraphPos);
+
+								if (id) {
+									SelectNode(id);
+
+									if (Node* n = findNode(id)) {
+										if (pendingLinkPin) {
+											autoConnectPendingToNode(pendingLinkPin, *n);
+										}
+									}
+								}
+
+								pendingLinkPin = 0;
+								ImGui::CloseCurrentPopup();
+							}
+
+							++shown;
+						}
+
+						for (auto& prop : c->properties) {
+							if (shown >= 200 || !matchesSearch(prop.name)) {
+								continue;
+							}
+
+							std::string label = "Get " + prop.name + "##prop_" + clsName;
+
+							if (ImGui::Selectable(label.c_str())) {
+								ensureClassAvailable(clsName);
+								ID id = AddPropertyGetNode(clsName, prop.name, popupGraphPos);
+
+								if (id) {
+									SelectNode(id);
+
+									if (Node* n = findNode(id)) {
+										if (pendingLinkPin) {
+											autoConnectPendingToNode(pendingLinkPin, *n);
+										}
+									}
+								}
+
+								pendingLinkPin = 0;
+								ImGui::CloseCurrentPopup();
+							}
+
+							++shown;
+						}
+					}
+
+					if (shown == 0) {
+						ImGui::TextDisabled(search.empty() ? "(no members)" : "(no member matches)");
+					}
+
+					ImGui::TreePop();
+				}
+
+				ImGui::Separator();
+			}
+		}
+
+		// "Cast To <Class>" (establishes an object's class so its members become
+		// reachable): when dragging from an object output, type a class name in the
+		// search box to cast to it. Sourced from the SDK index; capped.
+		if (pending && pending->isOutput && pending->type.kind == PinKind::Object &&
+			auxRegistry && search.size() >= 2) {
+			int castsShown = 0;
+
+			if (ImGui::TreeNodeEx("Cast To...", ImGuiTreeNodeFlags_DefaultOpen)) {
+				for (auto& c : auxRegistry->GetClasses()) {
+					if (castsShown >= 20) {
+						ImGui::TextDisabled("(refine the search)");
+						break;
+					}
+
+					if (toLower(c->name).find(search) == std::string::npos) {
+						continue;
+					}
+
+					std::string label = "Cast To " + c->name + "##cast";
+
+					if (ImGui::Selectable(label.c_str())) {
+						ID id = AddCastNode(c->name, popupGraphPos);
+
+						if (id) {
+							SelectNode(id);
+
+							if (Node* n = findNode(id)) {
+								if (pendingLinkPin) {
+									autoConnectPendingToNode(pendingLinkPin, *n);
+								}
+							}
+						}
+
+						pendingLinkPin = 0;
+						ImGui::CloseCurrentPopup();
+					}
+
+					++castsShown;
+				}
+
+				ImGui::TreePop();
+			}
+
+			ImGui::Separator();
+		}
+
+		// filter the palette
 		std::vector<const PaletteAction*> filtered;
 
 		for (auto& paletteAction : palette) {

@@ -945,6 +945,22 @@ std::string Generator::outputExpression(const Pin& pin, int depth) {
 			return callExpression(*node, 0, depth);
 		}
 
+		case NodeKind::Cast: {
+			// is_a-guarded downcast: the input object if it is-a the target class,
+			// else nil. The object subexpression is short-circuited so a nil input
+			// never indexes. className carries the target class.
+			std::string obj = "nil";
+
+			for (auto& input : node->pins) {
+				if (!input.isOutput) {
+					obj = inputExpression(input, depth + 1);
+					break;
+				}
+			}
+
+			return "(" + obj + " and " + obj + ":is_a(\"" + node->className + "\") and " + obj + " or nil)";
+		}
+
 		case NodeKind::CustomLua:
 			// pinNames is checked at the top of this function already; reaching here
 			// means this output was read before the node executed on this chain

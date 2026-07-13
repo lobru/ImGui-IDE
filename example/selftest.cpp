@@ -245,6 +245,19 @@ int main(int argc, char** argv)
 		CHECK(z.start.line == 0 && z.end.line == 2, "Ctrl+L repeat: selection grows down one line");
 	}
 
+	// ── SelectAll reaches the true top-left even from a mid-line cursor ──
+	{
+		TextEditor ed;
+		ed.SetText("hello world\nsecond line\nthird\n");
+		ed.SetCursor(1, 3); // caret mid second line
+		ed.SelectAll();
+		auto sel = ed.GetMainCursorSelection();
+		CHECK(sel.start.line == 0 && sel.start.column == 0,
+		      "SelectAll anchors at line 0, column 0 (regression: kept the cursor's column)");
+		CHECK(sel.end.line == 3 || sel.end.line == 2,
+		      "SelectAll extends to the last line");
+	}
+
 	// ── Comment toggles: single-line uses "--", block uses "--[[ ]]" ──
 	{
 		// Ctrl+/ on a Lua line should prefix "--", NOT the block opener "--[[".
@@ -323,6 +336,25 @@ int main(int argc, char** argv)
 			"backslash-continued macro body is highlighted as code (do = keyword)");
 		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 2, 0) != kPre,
 			"line after the continuation is back to normal code");
+	}
+
+	// ── Multi-line (2+ backslash-continued) macro: every continuation body line
+	//    is highlighted as code, and normal code resumes cleanly afterwards ──
+	{
+		const int kKeyword = static_cast<int>(TextEditor::Color::keyword);
+		std::string cpp =
+			"#define FOO(x) \\\n"      // 0 directive
+			"    do { \\\n"            // 1 continuation -> col4 'do'
+			"        x; \\\n"          // 2 continuation
+			"    } while (0)\n"        // 3 continuation -> col6 'while'
+			"int after = 1;\n";        // 4 normal
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 1, 4) == kKeyword,
+			"multiline macro: 1st continuation body is code (do = keyword)");
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 3, 6) == kKeyword,
+			"multiline macro: last continuation body is code (while = keyword)");
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 4, 0) ==
+			  colorAt(TextEditor::Language::Cpp(), "int x;\n", 0, 0),
+			"multiline macro: code after the macro colors like normal code (no state bleed)");
 	}
 
 	// ── Tree-sitter symbol extraction (go-to-def/decl foundation) ──
@@ -1980,6 +2012,50 @@ int main(int argc, char** argv)
 		CHECK(getProp != 0 && bp.FindPinID(getProp, "Object", false) != 0 &&
 		          bp.FindPinID(getProp, "Name", false) != 0,
 		      "fast: generic Get Property (Fast) takes object + name, any-typed return");
+	}
+
+	// ── SDK contextual exposure: Cast node + aux registry (no palette flood) ─
+	{
+		using PK = BlueprintEditor::PinKind;
+
+		// a "dumped" game class living ONLY in the side index
+		BlueprintEditor::TypeRegistry sdk;
+		auto &door = sdk.AddClass("BP_Door_C", "AActor", "a dumped game class");
+		door.AddFunction("OpenDoor", "Game").Metadata("{target}:call(\"OpenDoor\")");
+		door.AddProperty("bIsOpen", BlueprintEditor::PinType(PK::Boolean), "Game");
+
+		BlueprintEditor bp;
+		BlueprintLua::SetupUEVRRegistry(bp);
+		bp.SetAuxRegistry(&sdk);
+
+		// the dumped class must NOT be in the live registry/palette yet
+		CHECK(bp.GetRegistry().FindClass("BP_Door_C") == nullptr,
+		      "sdk contextual: imported class is not dumped into the global palette");
+
+		// Cast establishes the class: output pin is typed BP_Door_C, class lazily copied
+		auto pawn = bp.AddCallFunctionNode("UEVR_API", "Get Local Pawn", ImVec2(0, 0));
+		auto cast = bp.AddCastNode("BP_Door_C", ImVec2(250, 0));
+		CHECK(cast != 0, "sdk contextual: Cast node created");
+		CHECK(bp.GetRegistry().FindClass("BP_Door_C") != nullptr,
+		      "sdk contextual: Cast lazily copies the class into the live registry");
+		BlueprintEditor::ID castOut = bp.FindPinID(cast, "As BP_Door_C", true);
+		CHECK(castOut != 0 && bp.GetPin(castOut)->type.subtype == "BP_Door_C",
+		      "sdk contextual: Cast output is typed as the target class");
+
+		// now a member call on the cast output generates + guards correctly
+		bp.AddLink(bp.FindPinID(pawn, "Return Value", true), bp.FindPinID(cast, "Object", false));
+		auto open = bp.AddCallFunctionNode("BP_Door_C", "OpenDoor", ImVec2(500, 0));
+		CHECK(open != 0, "sdk contextual: a node for the exposed class's function spawns");
+		auto tick = bp.AddEventNode("UEVR", "Pre Engine Tick", ImVec2(-300, 0));
+		bp.AddLink(bp.FindPinID(tick, "", true), bp.FindPinID(open, "", false));
+		bp.AddLink(castOut, bp.FindPinID(open, "Target", false));
+		std::string script = BlueprintLua::GenerateScript(bp);
+		CHECK(script.find(":is_a(\"BP_Door_C\")") != std::string::npos,
+		      "sdk contextual: Cast emits an is_a-guarded downcast");
+
+		// classLike interop: the typed cast output still connects where a UObject is wanted
+		CHECK(bp.CanConnectPins(castOut, bp.FindPinID(open, "Target", false)),
+		      "sdk contextual: typed object connects to the member's Target");
 	}
 
 	// ── Is Valid flow node + Lua-truthiness Boolean inputs ──────────────────

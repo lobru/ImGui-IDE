@@ -73,6 +73,10 @@ BlueprintEditor &UevrPlugin::ensureBlueprintEditor()
         blueprintEditor = std::make_unique<BlueprintEditor>();
         BlueprintLua::SetupUEVRRegistry(*blueprintEditor);
         loadSdkDefinitions(); // index <exe>/sdk dumps for autocomplete + Expose SDK Class
+        // The editor consults the SDK side index for class-contextual drag menus (drag
+        // from a typed object pin -> that class's imported members) and lazily copies
+        // used classes into its registry — no global palette flood.
+        blueprintEditor->SetAuxRegistry(&sdkIndex);
         blueprintEditor->SetBlueprint("UEVRScript", "UEVR");
 
         // Offer to restore an autosave from a previous (possibly crashed) session.

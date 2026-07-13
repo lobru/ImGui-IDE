@@ -199,7 +199,8 @@ public:
 		FlowControl,
 		Reroute,
 		Comment,
-		CustomLua
+		CustomLua,
+		Cast        // is_a-guarded downcast: types an object pin as a class (className)
 	};
 
 	struct Pin {
@@ -293,6 +294,19 @@ public:
 	ID AddRerouteNode(const PinType& type, const ImVec2& pos);
 	ID AddCommentNode(const std::string& text, const ImVec2& pos, const ImVec2& size);
 	ID AddCustomLuaNode(const ImVec2& pos); // exec in/out only, empty source, no dynamic pins
+	// "Cast To <Class>": an is_a-guarded downcast. In = an object, Out "As <Class>" =
+	// the same object TYPED as `className` (nil if the runtime is_a fails), so dragging
+	// from the output surfaces that class's SDK members. Establishes an object's class
+	// when it isn't already statically known. Returns 0 if className is empty.
+	ID AddCastNode(const std::string& className, const ImVec2& pos);
+
+	// The SDK "side index" (imported UEVR dumps). BORROWED, not owned. Consulted for
+	// class-contextual drag menus and lazily copied into the live registry on demand
+	// (ensureClassAvailable) so imported classes never flood the global palette.
+	inline void SetAuxRegistry(const TypeRegistry* aux) { auxRegistry = aux; }
+	// Copy `className` (and its ancestors) from the aux index into the live registry if
+	// missing, so its nodes can be spawned. No-op if already present or not in the index.
+	void ensureClassAvailable(const std::string& className);
 
 	// CustomLua node mutators: the shared surface used both by the in-editor UI and by
 	// external code (e.g. a bridge plugin) that wants to insert a live value as a node
@@ -497,6 +511,7 @@ private:
 
 	// reflection registry and blueprint identity
 	TypeRegistry registry;
+	const TypeRegistry* auxRegistry = nullptr; // borrowed SDK side index (see SetAuxRegistry)
 	std::string blueprintName = "NewBlueprint";
 	std::string blueprintParentClass = "AActor";
 	std::vector<Variable> variables;
