@@ -3476,10 +3476,22 @@ void Editor::rebuildProjectIndex()
             // (ImGui, glm, etc.) should be indexed so its symbols resolve for
             // go-to-def + autocomplete. Still skip build output, VCS, node_modules
             // (huge/minified), NuGet packages (compiled), and Backup folders.
+            std::string l = n;
+            std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            // Unreal Engine generates enormous non-source trees; never index them.
+            if (n == "Intermediate" || n == "Binaries" || n == "Saved" ||
+                n == "DerivedDataCache" || n == "Build")
+                return true;
+            // cmake-build-debug / cmake-build-release / cmake-build-* (CLion, etc.)
+            if (l.rfind("cmake-build", 0) == 0)
+                return true;
             return n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
                    n == "bin" || n == "obj" || n == "out" || n == "build" ||
                    n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
                    n == "__pycache__" || n == "packages" ||
+                   n == ".cache" || n == ".gradle" || n == "dist" || n == "coverage" ||
+                   n == ".next" || n == ".nuxt" || n == ".tox" ||
+                   n == "venv" || n == ".venv" ||
                    n == "Backup" || n == "backup" || n == "Backups" || n == "backups";
         };
         static const std::unordered_set<std::string> defKw = {
