@@ -47,7 +47,10 @@ void cleanupStaleUpdate(const std::string& targetExe);
 // User-Agent + Accept, so it doubles as the GitHub-API/raw fetch for the repo
 // browser. Worker-thread safe. Returns false (and sets err) on transport failure;
 // a reached server sets status + body regardless of the HTTP code.
-bool apiGet(const std::string& url, int& status, std::string& body, std::string& err);
+// `bearer` (optional) is a GitHub PAT — sent as an Authorization: Bearer header for
+// private repos / a higher rate limit. Never persisted by the caller.
+bool apiGet(const std::string& url, int& status, std::string& body, std::string& err,
+            const std::string& bearer = "");
 
 // Open a URL in the default browser.
 void openUrl(const std::string& url);

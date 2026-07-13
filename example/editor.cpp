@@ -12225,6 +12225,37 @@ std::string jsonStringField(const std::string &json, const std::string &key, siz
     return {};
 }
 
+// Decode standard base64 (skips embedded newlines / non-alphabet chars, stops at
+// '='). Used for the GitHub contents API, whose "content" is newline-wrapped base64.
+std::string base64Decode(const std::string &in)
+{
+    static const char T[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int rev[256];
+    for (int i = 0; i < 256; ++i)
+        rev[i] = -1;
+    for (int i = 0; i < 64; ++i)
+        rev[(unsigned char)T[i]] = i;
+    std::string out;
+    int val = 0, bits = -8;
+    for (unsigned char c : in)
+    {
+        if (rev[c] < 0)
+        {
+            if (c == '=')
+                break;
+            continue; // whitespace / newline
+        }
+        val = (val << 6) + rev[c];
+        bits += 6;
+        if (bits >= 0)
+        {
+            out += char((val >> bits) & 0xFF);
+            bits -= 8;
+        }
+    }
+    return out;
+}
+
 // Pull the blob (file) paths out of a GitHub git/trees response.
 std::vector<std::string> parseTreeBlobs(const std::string &json)
 {
@@ -12248,7 +12279,8 @@ std::vector<std::string> parseTreeBlobs(const std::string &json)
 }
 } // namespace
 
-void Editor::fetchGithubTree(const std::string &owner, const std::string &repo, const std::string &ref)
+void Editor::fetchGithubTree(const std::string &owner, const std::string &repo, const std::string &ref,
+                             const std::string &token)
 {
     auto gb = ghBrowse;
     if (gb->loading.exchange(true))
@@ -12258,14 +12290,14 @@ void Editor::fetchGithubTree(const std::string &owner, const std::string &repo, 
         gb->status = "Fetching " + owner + "/" + repo + " \xe2\x80\xa6";
         gb->files.clear();
     }
-    std::thread([gb, owner, repo, ref]() {
+    std::thread([gb, owner, repo, ref, token]() {
         std::string useRef = ref;
         std::string err, body;
         int status = 0;
         // Resolve the default branch when none was given.
         if (useRef.empty())
         {
-            if (updater::apiGet("https://api.github.com/repos/" + owner + "/" + repo, status, body, err) &&
+            if (updater::apiGet("https://api.github.com/repos/" + owner + "/" + repo, status, body, err, token) &&
                 status == 200)
             {
                 size_t e = std::string::npos;
@@ -12280,7 +12312,7 @@ void Editor::fetchGithubTree(const std::string &owner, const std::string &repo, 
                               "/git/trees/" + useRef + "?recursive=1";
         std::vector<std::string> files;
         std::string statusLine;
-        if (updater::apiGet(treeUrl, status, body, err) && status == 200)
+        if (updater::apiGet(treeUrl, status, body, err, token) && status == 200)
         {
             files = parseTreeBlobs(body);
             statusLine = std::to_string(files.size()) + " files in " + owner + "/" + repo + "@" + useRef;
@@ -12308,18 +12340,36 @@ void Editor::fetchGithubTree(const std::string &owner, const std::string &repo, 
 }
 
 void Editor::fetchGithubFile(const std::string &owner, const std::string &repo, const std::string &ref,
-                             const std::string &path)
+                             const std::string &path, const std::string &token)
 {
     auto gb = ghBrowse;
     std::filesystem::path cacheRoot = userConfigDir() / "github" / owner / repo;
-    std::thread([gb, owner, repo, ref, path, cacheRoot]() {
-        std::string err, body;
+    std::thread([gb, owner, repo, ref, path, token, cacheRoot]() {
+        std::string err, body, content;
         int status = 0;
-        std::string rawUrl = "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + ref + "/" + path;
-        if (!updater::apiGet(rawUrl, status, body, err) || status != 200)
+        if (token.empty())
+        {
+            // Public: the raw endpoint returns the file bytes directly.
+            std::string rawUrl = "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + ref + "/" + path;
+            if (updater::apiGet(rawUrl, status, body, err) && status == 200)
+                content = body;
+        }
+        else
+        {
+            // Private / authenticated: the contents API returns base64 (raw.github
+            // doesn't honor PATs). Extract + decode the "content" field.
+            std::string api = "https://api.github.com/repos/" + owner + "/" + repo +
+                              "/contents/" + path + "?ref=" + ref;
+            if (updater::apiGet(api, status, body, err, token) && status == 200)
+            {
+                size_t e = std::string::npos;
+                content = base64Decode(jsonStringField(body, "content", 0, e));
+            }
+        }
+        if (status != 200)
         {
             std::lock_guard<std::mutex> lk(gb->mutex);
-            gb->status = "Open failed (" + path + "): HTTP " + std::to_string(status);
+            gb->status = "Open failed (" + path + "): " + (err.empty() ? "HTTP " + std::to_string(status) : err);
             return;
         }
         // Stage to a local temp path mirroring the repo layout, then let the UI open
@@ -12329,7 +12379,7 @@ void Editor::fetchGithubFile(const std::string &owner, const std::string &repo, 
         std::filesystem::create_directories(dest.parent_path(), ec);
         {
             std::ofstream f(dest, std::ios::binary | std::ios::trunc);
-            f << body;
+            f << content;
         }
         {
             std::lock_guard<std::mutex> lk(gb->mutex);
@@ -12367,20 +12417,23 @@ void Editor::renderGithubBrowser()
         return;
     }
 
-    ImGui::TextDisabled("Browse a public GitHub repo read-only (no clone).");
+    ImGui::TextDisabled("Browse a GitHub repo read-only (no clone). Token optional.");
     ImGui::SetNextItemWidth(-FLT_MIN);
     bool go = ImGui::InputTextWithHint("##ghrepo", "owner/repo", ghOwnerRepoBuf, sizeof(ghOwnerRepoBuf),
                                        ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SetNextItemWidth(160.0f);
     ImGui::InputTextWithHint("##ghref", "branch (blank=default)", ghRefBuf, sizeof(ghRefBuf));
     ImGui::SameLine();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##ghtok", "PAT (private repos / rate limit; not saved)", ghToken, sizeof(ghToken),
+                             ImGuiInputTextFlags_Password);
     bool loading = ghBrowse->loading.load();
     if ((ImGui::Button(loading ? "Fetching\xe2\x80\xa6" : "Fetch") || go) && !loading)
     {
         std::string ownerRepo = ghOwnerRepoBuf;
         auto slash = ownerRepo.find('/');
         if (slash != std::string::npos && slash > 0 && slash + 1 < ownerRepo.size())
-            fetchGithubTree(ownerRepo.substr(0, slash), ownerRepo.substr(slash + 1), ghRefBuf);
+            fetchGithubTree(ownerRepo.substr(0, slash), ownerRepo.substr(slash + 1), ghRefBuf, ghToken);
         else
         {
             std::lock_guard<std::mutex> lk(ghBrowse->mutex);
@@ -12425,7 +12478,7 @@ void Editor::renderGithubBrowser()
             break;
         }
         if (ImGui::Selectable(f.c_str()))
-            fetchGithubFile(owner, repo, ref, f);
+            fetchGithubFile(owner, repo, ref, f, ghToken);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Open %s read-only", f.c_str());
     }

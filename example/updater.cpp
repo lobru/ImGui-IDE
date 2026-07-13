@@ -20,7 +20,7 @@ std::wstring widen(const std::string& s) { return std::wstring(s.begin(), s.end(
 // GET `url`, filling `status` (HTTP code) and either `body` or, if `sink` is set,
 // streaming the bytes to that file. Returns false only on transport failure.
 bool httpGet(const std::wstring& url, int& status, std::string& body, std::string& err,
-             std::ofstream* sink = nullptr)
+             std::ofstream* sink = nullptr, const std::wstring& extraHeaders = L"")
 {
     status = 0;
     body.clear();
@@ -66,9 +66,10 @@ bool httpGet(const std::wstring& url, int& status, std::string& body, std::strin
         return false;
     }
 
-    const wchar_t* headers = L"User-Agent: ImGui-IDE-Updater\r\n"
-                             L"Accept: application/vnd.github+json\r\n";
-    BOOL ok = WinHttpSendRequest(hReq, headers, (DWORD) -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+    std::wstring headers = L"User-Agent: ImGui-IDE-Updater\r\n"
+                           L"Accept: application/vnd.github+json\r\n" +
+                           extraHeaders;
+    BOOL ok = WinHttpSendRequest(hReq, headers.c_str(), (DWORD) -1L, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
     if (ok)
         ok = WinHttpReceiveResponse(hReq, nullptr);
 
@@ -363,10 +364,13 @@ void cleanupStaleUpdate(const std::string& targetExe)
     DeleteFileA((targetExe + ".old").c_str());
 }
 
-bool apiGet(const std::string& url, int& status, std::string& body, std::string& err)
+bool apiGet(const std::string& url, int& status, std::string& body, std::string& err, const std::string& bearer)
 {
     std::wstring wurl(url.begin(), url.end()); // GitHub API / raw URLs are ASCII
-    return httpGet(wurl, status, body, err);
+    std::wstring extra;
+    if (!bearer.empty())
+        extra = L"Authorization: Bearer " + std::wstring(bearer.begin(), bearer.end()) + L"\r\n";
+    return httpGet(wurl, status, body, err, nullptr, extra);
 }
 
 void openUrl(const std::string& url)
@@ -390,7 +394,7 @@ Release fetchLatest(const std::string&, const std::string&, bool)
     return r;
 }
 bool download(const std::string&, const std::string&) { return false; }
-bool apiGet(const std::string&, int&, std::string&, std::string&) { return false; }
+bool apiGet(const std::string&, int&, std::string&, std::string&, const std::string&) { return false; }
 std::string runningExePath() { return {}; }
 void relaunch(const std::string&) {}
 bool applyUpdate(const std::string&, const std::string&, std::string& err)

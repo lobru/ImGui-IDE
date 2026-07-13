@@ -976,10 +976,12 @@ private:
 	char  ghOwnerRepoBuf[256] = {}; // "owner/repo"
 	char  ghRefBuf[64] = {};        // branch/tag/sha; blank = default branch
 	char  ghFileFilter[128] = {};
+	char  ghToken[256] = {};        // GitHub PAT — SESSION ONLY, never persisted
 	void  renderGithubBrowser();
-	void  fetchGithubTree(const std::string& owner, const std::string& repo, const std::string& ref);
+	void  fetchGithubTree(const std::string& owner, const std::string& repo, const std::string& ref,
+	                      const std::string& token);
 	void  fetchGithubFile(const std::string& owner, const std::string& repo, const std::string& ref,
-	                      const std::string& path);
+	                      const std::string& path, const std::string& token);
 	void  pollGithubBrowser();
 	bool        gitDiscardRequest = false;
 	bool        gitCloneRequest   = false;
