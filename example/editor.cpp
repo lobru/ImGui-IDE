@@ -12225,6 +12225,38 @@ std::string jsonStringField(const std::string &json, const std::string &key, siz
     return {};
 }
 
+// A folder/file node for the GitHub browser's tree view, built from the flat blob
+// path list. std::map keeps children name-sorted; folders sort before files at
+// render time.
+struct GhTreeNode
+{
+    std::map<std::string, GhTreeNode> dirs;
+    std::vector<std::pair<std::string, std::string>> files; // {display name, full path}
+};
+
+// Build a directory tree from sorted "a/b/c.h" blob paths.
+GhTreeNode buildGhTree(const std::vector<std::string> &paths)
+{
+    GhTreeNode root;
+    for (const auto &p : paths)
+    {
+        GhTreeNode *cur = &root;
+        size_t start = 0;
+        while (true)
+        {
+            size_t slash = p.find('/', start);
+            if (slash == std::string::npos)
+            {
+                cur->files.emplace_back(p.substr(start), p);
+                break;
+            }
+            cur = &cur->dirs[p.substr(start, slash - start)];
+            start = slash + 1;
+        }
+    }
+    return root;
+}
+
 // Decode standard base64 (skips embedded newlines / non-alphabet chars, stops at
 // '='). Used for the GitHub contents API, whose "content" is newline-wrapped base64.
 std::string base64Decode(const std::string &in)
@@ -12462,25 +12494,59 @@ void Editor::renderGithubBrowser()
                    [](unsigned char c) { return (char)std::tolower(c); });
 
     ImGui::BeginChild("##ghfiles", ImVec2(0, 0), ImGuiChildFlags_Borders);
-    int shown = 0;
-    for (const auto &f : files)
+    if (!needle.empty())
     {
-        if (!needle.empty())
+        // Filtered: a flat matching list (a tree of scattered matches reads poorly).
+        int shown = 0;
+        for (const auto &f : files)
         {
             std::string low = f;
             std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return (char)std::tolower(c); });
             if (low.find(needle) == std::string::npos)
                 continue;
+            if (shown++ >= 2000)
+            {
+                ImGui::TextDisabled("(more — refine the filter)");
+                break;
+            }
+            if (ImGui::Selectable(f.c_str()))
+                fetchGithubFile(owner, repo, ref, f, ghToken);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Open %s read-only", f.c_str());
         }
-        if (shown++ >= 2000)
+    }
+    else
+    {
+        // Unfiltered: a collapsible folder tree (rebuilt only when the repo changes).
+        static std::string cacheSig;
+        static GhTreeNode cacheTree;
+        std::string sig = owner + "/" + repo + "@" + ref + "#" + std::to_string(files.size());
+        if (sig != cacheSig)
         {
-            ImGui::TextDisabled("(more — refine the filter)");
-            break;
+            cacheTree = buildGhTree(files);
+            cacheSig = sig;
         }
-        if (ImGui::Selectable(f.c_str()))
-            fetchGithubFile(owner, repo, ref, f, ghToken);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Open %s read-only", f.c_str());
+        std::function<void(const GhTreeNode &)> draw = [&](const GhTreeNode &node) {
+            for (const auto &d : node.dirs)
+            {
+                if (ImGui::TreeNodeEx(d.first.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
+                {
+                    draw(d.second);
+                    ImGui::TreePop();
+                }
+            }
+            for (const auto &f : node.files)
+            {
+                ImGui::TreeNodeEx(f.first.c_str(),
+                                  ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
+                                      ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Bullet);
+                if (ImGui::IsItemClicked())
+                    fetchGithubFile(owner, repo, ref, f.second, ghToken);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Open %s read-only", f.second.c_str());
+            }
+        };
+        draw(cacheTree);
     }
     ImGui::EndChild();
     ImGui::End();
