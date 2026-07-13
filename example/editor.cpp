@@ -8736,6 +8736,11 @@ void Editor::openFile(const std::string &path)
             openPdfFile(path);
             return;
         }
+        // Let a plugin claim a binary type before we hand it to the OS — the Unreal
+        // plugin turns a .uasset/.umap into an inspection report opened in a tab, so
+        // it's viewable in-app instead of launching the external default app.
+        if ((ext == ".exe" || isBinaryExt(ext)) && pluginRegistry.openFile(*this, path))
+            return;
         if (ext == ".exe")
         {
             navOpenExternally(path);
@@ -8760,6 +8765,10 @@ void Editor::openFile(const std::string &path)
                 {
                     if (probe[i] == '\0')
                     {
+                        // Binary-by-content (e.g. .uasset, which isn't in isBinaryExt):
+                        // offer it to a plugin before the OS opener.
+                        if (pluginRegistry.openFile(*this, path))
+                            return;
                         navOpenExternally(path);
                         return;
                     }

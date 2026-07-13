@@ -27,6 +27,7 @@ enum class PluginMenu
     Selection,
     Find,
     View,
+    Tools,
     Project,
     Help
 };
@@ -157,6 +158,13 @@ public:
 
     // extra read-only source root to expose in the nav panel for this project
     virtual std::optional<PluginSourceRoot> extraSourceRoot(const std::filesystem::path &) { return std::nullopt; }
+
+    // Claim a file the host would otherwise open in an external app (a binary type
+    // the editor can't display). Return true if handled — e.g. the Unreal plugin
+    // turns a .uasset into an inspection report and opens THAT in a tab, so binary
+    // assets are viewable in-app instead of launching the OS default. Called before
+    // the host falls back to the external opener.
+    virtual bool openFile(PluginHost &, const std::filesystem::path &) { return false; }
 
 protected:
     bool enabledState = true; // backs enabled()/setEnabled(); persisted by the registry

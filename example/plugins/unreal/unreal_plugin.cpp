@@ -231,9 +231,8 @@ void UnrealPlugin::renderVerseWizard(PluginHost &host)
     ImGui::EndPopup();
 }
 
-void UnrealPlugin::inspectActiveUAsset(PluginHost &host)
+void UnrealPlugin::inspectUAssetPath(PluginHost &host, const std::filesystem::path &asset)
 {
-    std::filesystem::path asset = host.hostActiveFilename();
     auto summary = unreal::uasset::parseFile(asset);
     std::string text = unreal::uasset::report(summary, asset.filename().string());
 
@@ -251,6 +250,22 @@ void UnrealPlugin::inspectActiveUAsset(PluginHost &host)
     }
     else
         host.hostError("Could not write the report to " + out.string());
+}
+
+void UnrealPlugin::inspectActiveUAsset(PluginHost &host)
+{
+    inspectUAssetPath(host, host.hostActiveFilename());
+}
+
+bool UnrealPlugin::openFile(PluginHost &host, const std::filesystem::path &path)
+{
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (ext != ".uasset" && ext != ".umap")
+        return false;
+    inspectUAssetPath(host, path); // report opens in a tab; no external app
+    return true;
 }
 
 void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)

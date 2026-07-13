@@ -34,6 +34,9 @@ public:
     void onRegister(PluginHost &host) override;
     void onFrame(PluginHost &host) override; // renders the scaffolding wizard modals
     void onMenu(PluginHost &host, PluginMenu which) override;
+    // Claim .uasset/.umap (binary) so opening one shows an inspection report in a
+    // tab instead of launching the external default app.
+    bool openFile(PluginHost &host, const std::filesystem::path &path) override;
     void contributeAutocomplete(PluginHost &host, const PluginDocInfo &doc,
                                 const std::function<void(const std::string &)> &addWord) override;
     std::optional<PluginBuildCommand> projectBuildCommand(const std::filesystem::path &startDir) override;
@@ -61,6 +64,7 @@ private:
 
     // Parse the active .uasset/.umap's header/name-table/imports and open a report.
     void inspectActiveUAsset(PluginHost &host);
+    void inspectUAssetPath(PluginHost &host, const std::filesystem::path &asset);
 };
 
 // Factory used by plugin_registry.cpp (declared there under the same #ifdef).

@@ -113,6 +113,16 @@ public:
         return std::nullopt;
     }
 
+    // first plugin that claims the file (before external-open) wins
+    bool openFile(PluginHost &host, const std::filesystem::path &path)
+    {
+        for (auto &p : plugins)
+            if (p->enabled())
+                if (p->openFile(host, path))
+                    return true;
+        return false;
+    }
+
     // first plugin that offers an extra nav source root for this project wins
     std::optional<PluginSourceRoot> extraSourceRoot(const std::filesystem::path &projectRoot)
     {

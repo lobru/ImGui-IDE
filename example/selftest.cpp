@@ -1412,6 +1412,45 @@ int main(int argc, char** argv)
 		CHECK(bp.parentClass == "Actor", "blueprint: best-effort parent is the referenced native class");
 		CHECK(report(bpSum, "bp").find("Blueprint asset") != std::string::npos,
 		      "blueprint: report gains a Blueprint section");
+
+		// The plugin claims .uasset (binary) so opening one shows a report in a tab
+		// instead of launching the external app — else inspection is unreachable.
+		struct CapHost : PluginHost {
+			std::string opened;
+			std::filesystem::path hostProjectRoot() const override { return {}; }
+			void hostSetProjectRoot(const std::string&) override {}
+			void hostOpenFile(const std::string& p) override { opened = p; }
+			void hostOpenLuaTab(const std::string&) override {}
+			std::string hostActiveText() const override { return {}; }
+			std::string hostActiveSelection() const override { return {}; }
+			std::string hostActiveFilename() const override { return {}; }
+			void hostToast(const std::string&) override {}
+			void hostError(const std::string&) override {}
+			void hostSendToClaude(const std::string&) override {}
+			void hostSuppressAppShortcuts() override {}
+			void hostRunInDir(const std::string&, const std::filesystem::path&) override {}
+			void hostRunProjectBuild() override {}
+			std::filesystem::path hostExeDir() const override { return {}; }
+			std::filesystem::path hostRepoRoot() const override { return {}; }
+			bool hostGetFlag(const std::string&, bool d) const override { return d; }
+			void hostSetFlag(const std::string&, bool) override {}
+			bool hostPanInverted() const override { return false; }
+			void hostMiddleMousePanScroll(int) override {}
+			void hostAugmentCppLanguage(const std::vector<std::string>&, const std::vector<std::string>&,
+			                            bool (*)(const std::string&)) override {}
+		} host;
+
+		std::error_code wec;
+		std::filesystem::path tmp = std::filesystem::temp_directory_path(wec) / "selftest_probe.uasset";
+		{ std::ofstream(tmp, std::ios::binary).write(pkg.data(), (std::streamsize) pkg.size()); }
+		UnrealPlugin plugin;
+		CHECK(plugin.openFile(host, tmp), "uasset open: plugin claims a .uasset");
+		CHECK(host.opened.find(".uasset-report.txt") != std::string::npos,
+		      "uasset open: it opens an inspection report tab, not the external app");
+		host.opened.clear();
+		CHECK(!plugin.openFile(host, "notes.txt") && host.opened.empty(),
+		      "uasset open: non-asset files are left for the host");
+		std::filesystem::remove(tmp, wec);
 	}
 #endif // IMGUIIDE_PLUGIN_UNREAL
 
