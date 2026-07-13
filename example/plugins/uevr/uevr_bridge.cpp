@@ -19,6 +19,7 @@
 #define _CRT_SECURE_NO_WARNINGS // std::getenv("APPDATA") for the bridge folder
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -130,6 +131,85 @@ std::vector<BridgeRow> parseTabDelimited(const std::string &text)
         row.name = line.substr(0, t1);
         row.type = line.substr(t1 + 1, t2 - t1 - 1);
         row.value = line.substr(t2 + 1);
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+// Rstrip helper.
+std::string rstrip(std::string s)
+{
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+        s.pop_back();
+    return s;
+}
+
+// Parse a bridge text blob into up to `maxCols` columns per row, tolerating BOTH
+// the tab-delimited format (name\ttype\tvalue) and the legacy space-padded format
+// (`%-48s type value`, columns separated by runs of 2+ spaces). Comment/section
+// lines (leading "--") and blanks are skipped, so the interactive Globals/Modules
+// tables work against the currently deployed game bridge without a game rebuild.
+std::vector<BridgeRow> parseBridgeRows(const std::string &text, int maxCols)
+{
+    std::vector<BridgeRow> rows;
+    std::istringstream ss(text);
+    std::string line;
+    while (std::getline(ss, line))
+    {
+        std::string trimmed = line;
+        size_t firstNon = trimmed.find_first_not_of(" \t\r");
+        if (firstNon == std::string::npos)
+            continue; // blank
+        if (trimmed.compare(firstNon, 2, "--") == 0)
+            continue; // header / section comment
+
+        // Split into fields on tabs, else on runs of 2+ spaces.
+        std::vector<std::string> fields;
+        if (line.find('\t') != std::string::npos)
+        {
+            size_t start = 0;
+            while (start <= line.size() && static_cast<int>(fields.size()) < maxCols)
+            {
+                size_t tab = line.find('\t', start);
+                if (tab == std::string::npos || static_cast<int>(fields.size()) == maxCols - 1)
+                {
+                    fields.push_back(rstrip(line.substr(start)));
+                    break;
+                }
+                fields.push_back(rstrip(line.substr(start, tab - start)));
+                start = tab + 1;
+            }
+        }
+        else
+        {
+            size_t i = firstNon;
+            while (i < line.size() && static_cast<int>(fields.size()) < maxCols)
+            {
+                if (static_cast<int>(fields.size()) == maxCols - 1)
+                {
+                    fields.push_back(rstrip(line.substr(i)));
+                    break;
+                }
+                // find run of 2+ spaces
+                size_t gap = line.find("  ", i);
+                if (gap == std::string::npos)
+                {
+                    fields.push_back(rstrip(line.substr(i)));
+                    break;
+                }
+                fields.push_back(rstrip(line.substr(i, gap - i)));
+                i = line.find_first_not_of(' ', gap);
+                if (i == std::string::npos)
+                    break;
+            }
+        }
+
+        if (fields.empty() || fields[0].empty())
+            continue;
+        BridgeRow row;
+        row.name = fields[0];
+        row.type = fields.size() > 1 ? fields[1] : "";
+        row.value = fields.size() > 2 ? fields[2] : "";
         rows.push_back(std::move(row));
     }
     return rows;
@@ -251,6 +331,76 @@ void UevrPlugin::pollUevrBridge()
     }
 }
 
+void UevrPlugin::renderBridgeTable(const char *id, const std::string &text, const char *filter, int cols, bool allowInsert)
+{
+    if (text.empty())
+    {
+        ImGui::TextUnformatted("(refresh to query the game)");
+        return;
+    }
+
+    std::vector<BridgeRow> rows = parseBridgeRows(text, cols);
+    if (rows.empty())
+    {
+        // Nothing parsed into columns — show the raw blob rather than an empty table.
+        ImGui::TextUnformatted(text.c_str());
+        return;
+    }
+
+    std::string needle = filter ? filter : "";
+    std::transform(needle.begin(), needle.end(), needle.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    int totalCols = cols + (allowInsert ? 1 : 0);
+    if (ImGui::BeginTable(id, totalCols,
+            ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
+    {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn(cols >= 3 ? "Global" : "Name");
+        ImGui::TableSetupColumn("Type");
+        if (cols >= 3)
+            ImGui::TableSetupColumn("Value");
+        if (allowInsert)
+            ImGui::TableSetupColumn("##ins", ImGuiTableColumnFlags_WidthFixed, 36.0f);
+        ImGui::TableHeadersRow();
+
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            auto &row = rows[i];
+            if (!needle.empty())
+            {
+                std::string low = row.name;
+                std::transform(low.begin(), low.end(), low.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (low.find(needle) == std::string::npos)
+                    continue;
+            }
+
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(row.name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(row.type.c_str());
+            if (cols >= 3)
+            {
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(row.value.c_str());
+            }
+            if (allowInsert)
+            {
+                ImGui::TableNextColumn();
+                if (ImGui::SmallButton("ins") && !row.name.empty())
+                    insertLiveValueAsNode(row.name, row.name);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Insert a Custom Lua node reading this");
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+}
+
 void UevrPlugin::renderUevrLive(PluginHost &host)
 {
     if (!uevrLiveVisible)
@@ -347,49 +497,12 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
         {
             if (ImGui::Button("Refresh"))
                 sendUevr("globals", "");
+            ImGui::SameLine();
+            static char globalsFilter[128] = {0};
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::InputTextWithHint("##gfilter", "filter", globalsFilter, sizeof(globalsFilter));
             ImGui::BeginChild("##uevrGlobals", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
-            if (uevrGlobals.empty())
-            {
-                ImGui::TextUnformatted("(refresh to query the game)");
-            }
-            else if (looksTabDelimited(uevrGlobals))
-            {
-                // newer bridges emit name\ttype\tvalue rows -> render a real table
-                auto rows = parseTabDelimited(uevrGlobals);
-                if (ImGui::BeginTable("##uevrGlobalsTable", 4,
-                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
-                {
-                    ImGui::TableSetupColumn("Global");
-                    ImGui::TableSetupColumn("Type");
-                    ImGui::TableSetupColumn("Value");
-                    ImGui::TableSetupColumn("##ins", ImGuiTableColumnFlags_WidthFixed, 36.0f);
-                    ImGui::TableHeadersRow();
-                    for (size_t i = 0; i < rows.size(); ++i)
-                    {
-                        auto &row = rows[i];
-                        ImGui::PushID(static_cast<int>(i));
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextUnformatted(row.name.c_str());
-                        ImGui::TableNextColumn();
-                        ImGui::TextUnformatted(row.type.c_str());
-                        ImGui::TableNextColumn();
-                        ImGui::TextUnformatted(row.value.c_str());
-                        ImGui::TableNextColumn();
-                        if (ImGui::SmallButton("ins") && !row.name.empty())
-                            insertLiveValueAsNode(row.name, row.name);
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("Insert a Custom Lua node reading this global");
-                        ImGui::PopID();
-                    }
-                    ImGui::EndTable();
-                }
-            }
-            else
-            {
-                // older bridge builds return the legacy text blob
-                ImGui::TextUnformatted(uevrGlobals.c_str());
-            }
+            renderBridgeTable("##uevrGlobalsTable", uevrGlobals, globalsFilter, 3, true);
             host.hostMiddleMousePanScroll(101);
             ImGui::EndChild();
             ImGui::EndTabItem();
@@ -398,8 +511,12 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
         {
             if (ImGui::Button("Refresh"))
                 sendUevr("modules", "");
+            ImGui::SameLine();
+            static char modulesFilter[128] = {0};
+            ImGui::SetNextItemWidth(200.0f);
+            ImGui::InputTextWithHint("##mfilter", "filter", modulesFilter, sizeof(modulesFilter));
             ImGui::BeginChild("##uevrModules", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
-            ImGui::TextUnformatted(uevrModules.empty() ? "(refresh to query the game)" : uevrModules.c_str());
+            renderBridgeTable("##uevrModulesTable", uevrModules, modulesFilter, 2, false);
             host.hostMiddleMousePanScroll(102);
             ImGui::EndChild();
             ImGui::EndTabItem();

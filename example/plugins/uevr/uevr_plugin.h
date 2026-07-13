@@ -91,6 +91,13 @@ private:
     void pollUevrBridge();                             // drain the out inbox (~5 Hz)
     void renderUevrLive(PluginHost &host);             // the dockable panel
 
+    // Render a bridge text blob (Globals / Modules / Inspect) as an interactive
+    // ImGui table: `cols` columns (3 = Name/Type/Value, 2 = Name/Type), filtered by
+    // `filter` (case-insensitive substring on the name). When allowInsert, each row
+    // gets an "ins" button that drops a Custom Lua node reading that name. Tolerates
+    // both tab- and space-delimited bridge output (see parseBridgeRows).
+    void renderBridgeTable(const char *id, const std::string &text, const char *filter, int cols, bool allowInsert);
+
     // Live-value → Blueprint node bridge: turns an arbitrary inspected/watched
     // expression into a Custom Lua node (see BlueprintEditor::AddCustomLuaNode) --
     // a single registry Function can't represent an arbitrary expression, but a
