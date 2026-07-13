@@ -497,7 +497,8 @@ private:
 		confirmQuit,
 		confirmError,
 		gotoLine,
-		openProject
+		openProject,
+		addSourceLoc
 	} state = State::edit;
 
 	// Goto-line dialog state
@@ -523,6 +524,14 @@ private:
 	std::string  navContextPath;            // path the menu acts on this frame
 	bool         navShowDotFiles = false;   // toggle in nav header
 	int          navSortMode     = 0;       // 0=Name, 1=Modified (newest first), 2=Size (largest first), 3=Type
+	// Extra source locations: user-added folders OUTSIDE the project root that are
+	// shown as additional nav roots AND indexed into the symbol cache (go-to-def /
+	// autocomplete). Persisted. "Include included folders in symbols."
+	std::vector<std::string> extraSourceLocations;
+	std::string navPendingRemoveSourceLoc; // deferred: set in render, applied after the loop
+	void openAddSourceLocationPicker();
+	void addSourceLocation(const std::string &path);
+	void removeSourceLocation(const std::string &path);
 	bool         navShowExcluded = false;   // expose hidden-from-view items
 	bool         navCodeOnly     = false;   // hide non-source files
 	bool         navFlatFiles    = false;   // collapse folder bodies (show folders only)

@@ -1684,6 +1684,57 @@ void Editor::openProjectFolderPicker()
     state = State::openProject;
 }
 
+void Editor::openAddSourceLocationPicker()
+{
+    if (auto *vp = ImGui::GetWindowViewport())
+        dialogViewportId = vp->ID;
+    else
+        dialogViewportId = ImGui::GetMainViewport()->ID;
+    dialogNeedsPlacement = true;
+    IGFD::FileDialogConfig config;
+    config.countSelectionMax = 1;
+    config.path = dialogStartDir();
+    config.flags = ImGuiFileDialogFlags_DontShowHiddenFiles | ImGuiFileDialogFlags_OptionalFileName;
+    populateFileDialogPlaces();
+    ImGuiFileDialog::Instance()->OpenDialog("add-source-loc", "Add Source Location (folder to index)...",
+                                            nullptr, config); // nullptr filter = folders only
+    state = State::addSourceLoc;
+}
+
+void Editor::addSourceLocation(const std::string &path)
+{
+    std::error_code ec;
+    if (path.empty() || !std::filesystem::is_directory(path, ec))
+        return;
+    auto canon = std::filesystem::weakly_canonical(path, ec);
+    std::string key = ec ? path : canon.string();
+    // De-dupe (and don't re-add the project root itself).
+    for (auto &e : extraSourceLocations)
+        if (e == key)
+            return;
+    if (!projectRoot.empty())
+    {
+        auto pc = std::filesystem::weakly_canonical(projectRoot, ec);
+        if (!ec && pc.string() == key)
+            return;
+    }
+    extraSourceLocations.push_back(key);
+    saveSettings();
+    navMarkListDirty();
+    rebuildProjectIndex(); // pick the new root up in go-to-def + autocomplete
+}
+
+void Editor::removeSourceLocation(const std::string &path)
+{
+    auto it = std::find(extraSourceLocations.begin(), extraSourceLocations.end(), path);
+    if (it == extraSourceLocations.end())
+        return;
+    extraSourceLocations.erase(it);
+    saveSettings();
+    navMarkListDirty();
+    rebuildProjectIndex();
+}
+
 bool Editor::navIsExcluded(const std::filesystem::path &p) const
 {
     if (navExcluded.empty())
@@ -2712,6 +2763,26 @@ void Editor::renderNavigationPanel()
                 navMarkListDirty(); // rebuild the cached listings with the new order
                 saveSettings();
             }
+            ImGui::Separator();
+            // Extra source locations — folders outside the project shown as roots and
+            // indexed into symbols. Listed with a remove control; add via the button.
+            ImGui::TextDisabled("Source locations");
+            for (const auto &loc : extraSourceLocations)
+            {
+                ImGui::PushID(loc.c_str());
+                if (ImGui::SmallButton("x"))
+                    navPendingRemoveSourceLoc = loc;
+                ImGui::SameLine();
+                ImGui::TextUnformatted(std::filesystem::path(loc).filename().string().c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", loc.c_str());
+                ImGui::PopID();
+            }
+            if (ImGui::SmallButton("Add source location..."))
+            {
+                ImGui::CloseCurrentPopup();
+                openAddSourceLocationPicker();
+            }
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -2784,6 +2855,43 @@ void Editor::renderNavigationPanel()
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s\n(hide via Filters for speed)", ueSourceDir.c_str());
             }
+        }
+
+        // ── Extra source locations ───────────────────────────────────────────
+        // User-added roots outside the project (indexed into symbols too). Each is
+        // a collapsible tree; right-click the header to remove it.
+        for (const auto &loc : extraSourceLocations)
+        {
+            std::error_code lec;
+            if (!std::filesystem::is_directory(loc, lec))
+                continue;
+            ImGui::Separator();
+            ImGui::PushID(loc.c_str());
+            std::string label = std::filesystem::path(loc).filename().string();
+            if (label.empty())
+                label = loc;
+            label += "  (source)";
+            bool open = ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s\n(right-click to remove)", loc.c_str());
+            if (ImGui::BeginPopupContextItem("##srcloc"))
+            {
+                if (ImGui::MenuItem("Remove source location"))
+                    navPendingRemoveSourceLoc = loc;
+                ImGui::EndPopup();
+            }
+            if (open)
+            {
+                renderDirNode(this, std::filesystem::path(loc), 1, navShowDotFiles,
+                              navContextPath, navRenameTarget, navRenameBuf, navPendingDelete);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        if (!navPendingRemoveSourceLoc.empty())
+        {
+            removeSourceLocation(navPendingRemoveSourceLoc);
+            navPendingRemoveSourceLoc.clear();
         }
 
         // ── Open elsewhere ───────────────────────────────────────────────────
@@ -3469,8 +3577,11 @@ void Editor::rebuildProjectIndex()
     // walk skips the same paths the nav tree hides — keeping them out of symbols,
     // go-to-def and autocomplete too.
     auto excludedSnap = navExcluded;
+    // Extra source locations are indexed alongside the project root (go-to-def +
+    // autocomplete over folders outside the project). Snapshot for the worker.
+    auto extraSnap = extraSourceLocations;
 
-    std::thread([st, gen, root, cachePath, excludedSnap]() {
+    std::thread([st, gen, root, cachePath, excludedSnap, extraSnap]() {
         // Snapshot the previous build's per-file cache once; reused across passes
         // to skip re-parsing files whose mtime+size are unchanged.
         std::unordered_map<std::string, ts::FileSyms> oldCache;
@@ -3626,8 +3737,24 @@ void Editor::rebuildProjectIndex()
                                // background-threaded + mtime-cached so a big walk
                                // doesn't stall the UI or re-parse unchanged files
 
+        // Scan the project root first, then each extra source location (a shared
+        // budget caps the total walk). Duplicate files across roots collapse in the
+        // aggregate/cache maps, so overlapping roots are harmless.
+        std::vector<std::filesystem::path> scanRoots;
+        scanRoots.push_back(root);
+        for (auto &e : extraSnap)
+            scanRoots.push_back(std::filesystem::path(e));
+
+        for (auto &scanRoot : scanRoots)
+        {
+            if (budget < 0)
+                break;
+            std::error_code rootEc;
+            if (!std::filesystem::is_directory(scanRoot, rootEc))
+                continue;
+
         for (auto it = std::filesystem::recursive_directory_iterator(
-                 root, std::filesystem::directory_options::skip_permission_denied, ec);
+                 scanRoot, std::filesystem::directory_options::skip_permission_denied, ec);
              it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
         {
             if (curGen != st->gen.load())
@@ -3803,6 +3930,7 @@ void Editor::rebuildProjectIndex()
                 }
             }
         }
+        } // end for each scanRoot
 
         idx->identifiers.assign(idset.begin(), idset.end());
         std::sort(idx->identifiers.begin(), idx->identifiers.end());
@@ -7294,6 +7422,11 @@ void Editor::loadSettings()
                 if (navSortMode < 0 || navSortMode > 3)
                     navSortMode = 0;
             }
+            else if (k == "extra_src")
+            {
+                if (!v.empty())
+                    extraSourceLocations.push_back(v);
+            }
             else if (k == "nav_path_wrap")
                 navPathWrap = (v == "1" || v == "true");
             else if (k == "nav_ue_source")
@@ -7421,6 +7554,8 @@ void Editor::saveSettings()
     f << "nav_code_only=" << (navCodeOnly ? "1" : "0") << "\n";
     f << "nav_flat=" << (navFlatFiles ? "1" : "0") << "\n";
     f << "nav_sort=" << navSortMode << "\n";
+    for (const auto &loc : extraSourceLocations)
+        f << "extra_src=" << loc << "\n";
     f << "nav_path_wrap=" << (navPathWrap ? "1" : "0") << "\n";
     f << "nav_ue_source=" << (navShowUeSource ? "1" : "0") << "\n";
     f << "font_size=" << prefFontSize << "\n";
@@ -9828,6 +9963,40 @@ void Editor::render()
                     target = dialog->GetCurrentPath();
                 }
                 setProjectRoot(target);
+            }
+            state = State::edit;
+            dialog->Close();
+        }
+    }
+    else if (state == State::addSourceLoc)
+    {
+        ImGuiViewport *vp = ImGui::FindViewportByID(dialogViewportId);
+        if (!vp)
+            vp = ImGui::GetMainViewport();
+        auto dialog = ImGuiFileDialog::Instance();
+        if (dialogNeedsPlacement)
+        {
+            ImGui::SetNextWindowViewport(vp->ID);
+            ImVec2 sz(vp->Size.x * 0.7f, vp->Size.y * 0.7f);
+            ImVec2 pos(vp->Pos.x + (vp->Size.x - sz.x) * 0.5f, vp->Pos.y + (vp->Size.y - sz.y) * 0.5f);
+            ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(sz, ImGuiCond_Always);
+            dialogNeedsPlacement = false;
+        }
+        bool finished = dialog->Display("add-source-loc", ImGuiWindowFlags_NoCollapse,
+                                        ImVec2(480.0f, 320.0f), vp->Size);
+        saveFileDialogPlaces();
+        if (finished)
+        {
+            if (dialog->IsOk())
+            {
+                std::string picked = dialog->GetFilePathName();
+                std::error_code ec;
+                std::filesystem::path target =
+                    (!picked.empty() && std::filesystem::is_regular_file(picked, ec))
+                        ? std::filesystem::path(picked).parent_path()
+                        : std::filesystem::path(dialog->GetCurrentPath());
+                addSourceLocation(target.string());
             }
             state = State::edit;
             dialog->Close();
