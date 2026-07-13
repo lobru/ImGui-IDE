@@ -261,12 +261,12 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 		auto cursor = cursors.getCurrent().getInteractiveEnd();
 		// In wrap mode the vertical unit is the wrapped row; no horizontal scroll.
 		int cursorVI = wordWrap ? wrapRowOfCoordinate(cursor) : lineToVisualIndex(cursor.line);
-		int firstVI  = static_cast<int>(std::floor(ImGui::GetScrollY() / glyphSize.y));
-		int lastVI   = firstVI + std::max(visibleLines - 1, 0);
+		int firstVI = static_cast<int>(std::floor(ImGui::GetScrollY() / glyphSize.y));
+		int lastVI = firstVI + std::max(visibleLines - 1, 0);
 		if (!wordWrap)
 		{
 			firstVI = lineToVisualIndex(firstVisibleLine);
-			lastVI  = lineToVisualIndex(lastVisibleLine);
+			lastVI = lineToVisualIndex(lastVisibleLine);
 		}
 
 		if (cursorVI < firstVI)
@@ -387,7 +387,7 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 	// frame; in a large document that drops the frame rate hard (240->30). Run them
 	// only once typing has settled (or immediately on a language / setting change).
 	if (documentChanged) { structureDirty = true; structureDirtyTime = ImGui::GetTime(); }
-	bool structureForce   = languageChanged || showMatchingBracketsChanged;
+	bool structureForce = languageChanged || showMatchingBracketsChanged;
 	bool structureSettled = structureDirty && (ImGui::GetTime() - structureDirtyTime) > 0.15;
 
 	if (language && documentChanged)
@@ -693,27 +693,27 @@ void TextEditor::renderMatchingBrackets()
 			// ON, renderIndentGuides() draws language-agnostic indent guides instead, so
 			// brace-less languages (Lua, Python) get guides too and we avoid doubling.
 			if (!foldRanges.foldingEnabled)
-			for (auto& bracket : bracketeer)
-			{
-				if ((bracket.end.line - bracket.start.line) > 1 &&
-					bracket.start.line <= lastVisibleLine &&
-					bracket.end.line > firstVisibleLine)
+				for (auto& bracket : bracketeer)
 				{
+					if ((bracket.end.line - bracket.start.line) > 1 &&
+						bracket.start.line <= lastVisibleLine &&
+						bracket.end.line > firstVisibleLine)
+					{
 
-					int startVI = lineToVisualIndex(bracket.start.line);
-					int endVI = lineToVisualIndex(bracket.end.line);
-					// Skip when the body of the bracket pair is entirely folded
-					// away. Otherwise we'd draw a zero- or one-pixel vertical
-					// stub between the visible `{` and `}` rows, which shows
-					// up as a stray `|` on what looks like an empty line.
-					if (startVI + 1 >= endVI) continue;
-					int guideLine = bracket.start.column <= bracket.end.column ? bracket.start.line : bracket.end.line;
-					auto lineX = cursorScreenPos.x + textOffset + columnToX(guideLine, std::min(bracket.start.column, bracket.end.column));
-					auto startY = cursorScreenPos.y + (startVI + 1) * glyphSize.y;
-					auto endY = cursorScreenPos.y + endVI * glyphSize.y;
-					drawList->AddLine(ImVec2(lineX, startY), ImVec2(lineX, endY), palette.get(Color::whitespace), 1.0f);
+						int startVI = lineToVisualIndex(bracket.start.line);
+						int endVI = lineToVisualIndex(bracket.end.line);
+						// Skip when the body of the bracket pair is entirely folded
+						// away. Otherwise we'd draw a zero- or one-pixel vertical
+						// stub between the visible `{` and `}` rows, which shows
+						// up as a stray `|` on what looks like an empty line.
+						if (startVI + 1 >= endVI) continue;
+						int guideLine = bracket.start.column <= bracket.end.column ? bracket.start.line : bracket.end.line;
+						auto lineX = cursorScreenPos.x + textOffset + columnToX(guideLine, std::min(bracket.start.column, bracket.end.column));
+						auto startY = cursorScreenPos.y + (startVI + 1) * glyphSize.y;
+						auto endY = cursorScreenPos.y + endVI * glyphSize.y;
+						drawList->AddLine(ImVec2(lineX, startY), ImVec2(lineX, endY), palette.get(Color::whitespace), 1.0f);
+					}
 				}
-			}
 
 			// render active bracket pair
 			auto active = bracketeer.getEnclosingBrackets(cursors.getMain().getInteractiveEnd());
@@ -870,7 +870,7 @@ void TextEditor::renderIndentGuides()
 	for (int vi = firstVisibleIndex; vi <= lastVisibleIndex; ++vi)
 	{
 		int line = visualIndexToLine(vi);
-		if (line < 0 || line >= (int) levels.size())
+		if (line < 0 || line >= (int)levels.size())
 			continue;
 		int depth = levels[line];
 		float y0 = cursorScreenPos.y + vi * glyphSize.y;
@@ -1186,13 +1186,13 @@ void TextEditor::renderTextWrapped()
 
 	float scrollY = ImGui::GetScrollY();
 	int firstRow = std::clamp(static_cast<int>(std::floor(scrollY / glyphSize.y)), 0, rowCount - 1);
-	int lastRow  = std::clamp(static_cast<int>(std::floor((scrollY + visibleHeight) / glyphSize.y)), 0, rowCount - 1);
+	int lastRow = std::clamp(static_cast<int>(std::floor((scrollY + visibleHeight) / glyphSize.y)), 0, rowCount - 1);
 
 	const float textLeft = origin.x + textOffset;
-	const float winLeft  = ImGui::GetWindowPos().x;
-	const float winTop   = ImGui::GetWindowPos().y;
+	const float winLeft = ImGui::GetWindowPos().x;
+	const float winTop = ImGui::GetWindowPos().y;
 	const float winRight = winLeft + ImGui::GetWindowSize().x - glyphSize.x * 1.5f - verticalScrollBarSize;
-	const float winBot   = winTop + ImGui::GetWindowSize().y;
+	const float winBot = winTop + ImGui::GetWindowSize().y;
 
 	// Whole-line gutter selections end at column 0 of the next line; highlight the
 	// selected line, not the empty one below it (matches renderLineNumbers).
@@ -1220,7 +1220,7 @@ void TextEditor::renderTextWrapped()
 			auto width = static_cast<int>(number.size()) * glyphSize.x;
 			auto fg = (wr.line == cursorLine) ? Color::currentLineNumber : Color::lineNumber;
 			drawList->AddText(ImVec2(winLeft + lineNumberRightOffset - width, y),
-				palette.get(fg), number.c_str());
+							  palette.get(fg), number.c_str());
 		}
 
 		// Selection shading: intersect each cursor's selection with this row's
@@ -1232,17 +1232,17 @@ void TextEditor::renderTextWrapped()
 			auto e = cursor.getSelectionEnd();
 			if (wr.line < s.line || wr.line > e.line) continue;
 			int selStart = (wr.line == s.line) ? s.column : 0;
-			int selEnd   = (wr.line == e.line) ? e.column : wr.endColumn;
+			int selEnd = (wr.line == e.line) ? e.column : wr.endColumn;
 			int a = std::max(selStart, wr.startColumn);
-			int b = std::min(selEnd,   wr.endColumn);
+			int b = std::min(selEnd, wr.endColumn);
 			// Whole-line (interior) selection extends a bit past the last glyph.
 			if (wr.line != e.line && b == wr.endColumn) b += 1;
 			if (b <= a && !(wr.line != s.line && wr.line != e.line)) continue;
-			float left  = textLeft + (a - wr.startColumn) * glyphSize.x;
+			float left = textLeft + (a - wr.startColumn) * glyphSize.x;
 			float right = textLeft + (b - wr.startColumn) * glyphSize.x;
 			if (right <= left) right = left + glyphSize.x * 0.4f;
 			drawList->AddRectFilled(ImVec2(left, y), ImVec2(right, y + glyphSize.y),
-				IM_COL32(80, 80, 110, 150));
+									IM_COL32(80, 80, 110, 150));
 		}
 	}
 
@@ -1276,7 +1276,7 @@ void TextEditor::renderTextWrapped()
 			{
 				if (showSpaces)
 					drawList->AddCircleFilled(ImVec2(glyphPos.x + glyphSize.x * 0.5f,
-						glyphPos.y + fontSize * 0.5f), 1.5f, palette.get(Color::whitespace), 4);
+													 glyphPos.y + fontSize * 0.5f), 1.5f, palette.get(Color::whitespace), 4);
 			}
 			else
 			{
@@ -1301,7 +1301,7 @@ void TextEditor::renderTextWrapped()
 			float x = textLeft + (pos.column - wrapRows[r].startColumn) * glyphSize.x - 1;
 			float y = origin.y + r * glyphSize.y;
 			drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + cursorWidth, y + glyphSize.y),
-				palette.get(Color::cursor));
+									palette.get(Color::cursor));
 		}
 	}
 }
@@ -1579,10 +1579,10 @@ void TextEditor::renderPanScrollIndicator()
 	textC.w = 0.9f;
 	ImU32 col = ImGui::ColorConvertFloat4ToU32(textC);
 
-	constexpr float radius      = 12.0f;
-	constexpr float armLen      = 6.0f;    // arrow tail extension past the ring
-	constexpr float tipLen      = 4.5f;    // arrow tip leg length
-	constexpr float tipSpread   = 3.0f;    // arrow tip half-width
+	constexpr float radius = 12.0f;
+	constexpr float armLen = 6.0f;    // arrow tail extension past the ring
+	constexpr float tipLen = 4.5f;    // arrow tip leg length
+	constexpr float tipSpread = 3.0f;    // arrow tip half-width
 
 	// Backing disc — low-alpha dark fill keeps the indicator legible without
 	// really "covering" content (it's tiny and translucent).
@@ -1601,34 +1601,37 @@ void TextEditor::renderPanScrollIndicator()
 	float dragMag = std::sqrt(dx * dx + dy * dy);
 	bool dragging = dragMag > 4.0f;
 
-	auto drawArrow = [&](float dirX, float dirY) {
-		// Brighten the arrow when the user is pulling that way.
-		ImU32 c = col;
-		if (dragging) {
-			float dot = dirX * (dx / dragMag) + dirY * (dy / dragMag);
-			if (dot > 0.35f) {
-				ImVec4 hi = style.Colors[ImGuiCol_Text];
-				hi.w = 0.95f;
-				c = ImGui::ColorConvertFloat4ToU32(hi);
+	auto drawArrow = [&](float dirX, float dirY)
+		{
+			// Brighten the arrow when the user is pulling that way.
+			ImU32 c = col;
+			if (dragging)
+			{
+				float dot = dirX * (dx / dragMag) + dirY * (dy / dragMag);
+				if (dot > 0.35f)
+				{
+					ImVec4 hi = style.Colors[ImGuiCol_Text];
+					hi.w = 0.95f;
+					c = ImGui::ColorConvertFloat4ToU32(hi);
+				}
 			}
-		}
-		float baseX = center.x + dirX * radius;
-		float baseY = center.y + dirY * radius;
-		float tipX  = baseX + dirX * armLen;
-		float tipY  = baseY + dirY * armLen;
-		// Two short legs forming a chevron at the tip.
-		float pX = -dirY * tipSpread;
-		float pY =  dirX * tipSpread;
-		drawList->AddLine(ImVec2(baseX, baseY), ImVec2(tipX, tipY), c, 1.5f);
-		drawList->AddLine(ImVec2(tipX, tipY),
-			ImVec2(tipX - dirX * tipLen + pX, tipY - dirY * tipLen + pY), c, 1.5f);
-		drawList->AddLine(ImVec2(tipX, tipY),
-			ImVec2(tipX - dirX * tipLen - pX, tipY - dirY * tipLen - pY), c, 1.5f);
-	};
-	drawArrow(-1.0f,  0.0f);   // ←
-	drawArrow( 1.0f,  0.0f);   // →
-	drawArrow( 0.0f, -1.0f);   // ↑
-	drawArrow( 0.0f,  1.0f);   // ↓
+			float baseX = center.x + dirX * radius;
+			float baseY = center.y + dirY * radius;
+			float tipX = baseX + dirX * armLen;
+			float tipY = baseY + dirY * armLen;
+			// Two short legs forming a chevron at the tip.
+			float pX = -dirY * tipSpread;
+			float pY = dirX * tipSpread;
+			drawList->AddLine(ImVec2(baseX, baseY), ImVec2(tipX, tipY), c, 1.5f);
+			drawList->AddLine(ImVec2(tipX, tipY),
+							  ImVec2(tipX - dirX * tipLen + pX, tipY - dirY * tipLen + pY), c, 1.5f);
+			drawList->AddLine(ImVec2(tipX, tipY),
+							  ImVec2(tipX - dirX * tipLen - pX, tipY - dirY * tipLen - pY), c, 1.5f);
+		};
+	drawArrow(-1.0f, 0.0f);   // ←
+	drawArrow(1.0f, 0.0f);   // →
+	drawArrow(0.0f, -1.0f);   // ↑
+	drawArrow(0.0f, 1.0f);   // ↓
 }
 
 
@@ -1676,11 +1679,11 @@ static bool teChordPressed(const std::string& chord)
 	{
 		size_t plus = chord.find('+', pos);
 		std::string tok = (plus == std::string::npos) ? chord.substr(pos) : chord.substr(pos, plus - pos);
-		if      (tok == "Ctrl")  needCtrl  = true;
+		if (tok == "Ctrl")  needCtrl = true;
 		else if (tok == "Shift") needShift = true;
-		else if (tok == "Alt")   needAlt   = true;
+		else if (tok == "Alt")   needAlt = true;
 		else if (tok == "Super") needSuper = true;
-		else if (!tok.empty())   keyName   = tok;
+		else if (!tok.empty())   keyName = tok;
 		if (plus == std::string::npos) break;
 		pos = plus + 1;
 		if (pos < chord.size() && chord[pos] == '+') { keyName = "+"; break; }
@@ -1689,7 +1692,7 @@ static bool teChordPressed(const std::string& chord)
 	keyName = teNormalizeKeyToken(keyName);
 	ImGuiIO& io = ImGui::GetIO();
 	if (io.KeyCtrl != needCtrl || io.KeyShift != needShift ||
-	    io.KeyAlt != needAlt || io.KeySuper != needSuper)
+		io.KeyAlt != needAlt || io.KeySuper != needSuper)
 		return false;
 	for (ImGuiKey k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END; k = (ImGuiKey)(k + 1))
 	{
@@ -1705,7 +1708,8 @@ bool TextEditor::tryKeyChordOverrides()
 	if (keyChordOverrides.empty()) { keyChordPending.clear(); return false; }
 
 	// Age out / cancel a half-entered two-stroke prefix (mirrors the host app).
-	if (!keyChordPending.empty()) {
+	if (!keyChordPending.empty())
+	{
 		keyChordPendingAge += ImGui::GetIO().DeltaTime;
 		if (keyChordPendingAge > 1.2f || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
 			keyChordPending.clear();
@@ -1714,43 +1718,44 @@ bool TextEditor::tryKeyChordOverrides()
 	// Match a chord that may be single ("Ctrl+U") or two-stroke ("Ctrl+K Ctrl+U").
 	// For two-stroke: the first combo arms keyChordPending (the awaited second
 	// combo) and returns false; the second combo completes it.
-	auto matches = [&](const std::string& chord) -> bool {
-		auto sp = chord.find(' ');
-		if (sp == std::string::npos) return teChordPressed(chord);
-		std::string first = chord.substr(0, sp), second = chord.substr(sp + 1);
-		if (!keyChordPending.empty() && keyChordPending == second)
-			return teChordPressed(second) ? (keyChordPending.clear(), true) : false;
-		if (teChordPressed(first)) { keyChordPending = second; keyChordPendingAge = 0.0f; }
-		return false;
-	};
+	auto matches = [&](const std::string& chord) -> bool
+		{
+			auto sp = chord.find(' ');
+			if (sp == std::string::npos) return teChordPressed(chord);
+			std::string first = chord.substr(0, sp), second = chord.substr(sp + 1);
+			if (!keyChordPending.empty() && keyChordPending == second)
+				return teChordPressed(second) ? (keyChordPending.clear(), true) : false;
+			if (teChordPressed(first)) { keyChordPending = second; keyChordPendingAge = 0.0f; }
+			return false;
+		};
 
 	// Map action id -> the action to run. Checked before the default keyboard
 	// chain; first matching override wins and suppresses default handling.
 	for (auto& [action, chord] : keyChordOverrides)
 	{
 		if (!matches(chord)) continue;
-		if      (action == "undo")           { if (!readOnly) undo(); }
-		else if (action == "redo")           { if (!readOnly) redo(); }
-		else if (action == "cut")            { if (!readOnly) cut(); }
-		else if (action == "copy")           { copy(); }
-		else if (action == "paste")          { if (!readOnly) paste(); }
-		else if (action == "selectAll")      { selectAll(); }
+		if (action == "undo") { if (!readOnly) undo(); }
+		else if (action == "redo") { if (!readOnly) redo(); }
+		else if (action == "cut") { if (!readOnly) cut(); }
+		else if (action == "copy") { copy(); }
+		else if (action == "paste") { if (!readOnly) paste(); }
+		else if (action == "selectAll") { selectAll(); }
 		else if (action == "addNextOccurrence") { if (cursors.currentCursorHasSelection()) addNextOccurrence(); }
 		else if (action == "toggleComments") { if (!readOnly && language) toggleComments(); }
-		else if (action == "indent")         { if (!readOnly) indentLines(); }
-		else if (action == "deindent")       { if (!readOnly) deindentLines(); }
+		else if (action == "indent") { if (!readOnly) indentLines(); }
+		else if (action == "deindent") { if (!readOnly) deindentLines(); }
 		else if (action == "selectAllOccurrences") { selectAllOccurrences(); }
-		else if (action == "moveLineUp")     { if (!readOnly) moveUpLines(); }
-		else if (action == "moveLineDown")   { if (!readOnly) moveDownLines(); }
-		else if (action == "find")           { openFindReplace(); }
-		else if (action == "findNext")       { findNext(); }
-		else if (action == "findAll")        { findAll(); }
-		else if (action == "upperCase")      { if (!readOnly) selectionToUpperCase(); }
-		else if (action == "lowerCase")      { if (!readOnly) selectionToLowerCase(); }
-		else if (action == "foldAll")        { if (foldRanges.foldingEnabled) FoldAll(); }
-		else if (action == "unfoldAll")      { if (foldRanges.foldingEnabled) UnfoldAll(); }
-		else if (action == "foldCurrent")    { if (foldRanges.foldingEnabled) FoldCurrent(); }
-		else if (action == "unfoldCurrent")  { if (foldRanges.foldingEnabled) UnfoldCurrent(); }
+		else if (action == "moveLineUp") { if (!readOnly) moveUpLines(); }
+		else if (action == "moveLineDown") { if (!readOnly) moveDownLines(); }
+		else if (action == "find") { openFindReplace(); }
+		else if (action == "findNext") { findNext(); }
+		else if (action == "findAll") { findAll(); }
+		else if (action == "upperCase") { if (!readOnly) selectionToUpperCase(); }
+		else if (action == "lowerCase") { if (!readOnly) selectionToLowerCase(); }
+		else if (action == "foldAll") { if (foldRanges.foldingEnabled) FoldAll(); }
+		else if (action == "unfoldAll") { if (foldRanges.foldingEnabled) UnfoldAll(); }
+		else if (action == "foldCurrent") { if (foldRanges.foldingEnabled) FoldCurrent(); }
+		else if (action == "unfoldCurrent") { if (foldRanges.foldingEnabled) UnfoldCurrent(); }
 		else continue;   // unknown id — ignore, keep scanning
 		return true;
 	}
@@ -2061,13 +2066,14 @@ void TextEditor::handleMouseInteractions()
 	// cursor sits from the middle-click anchor ("scroll cursor"). Near the anchor
 	// the multiplier is ~1 (precise); far out it climbs quadratically (fast),
 	// capped so it can't run away. Reference distance ~8 text lines.
-	auto panAccel = [&](float distPx) -> float {
-		if (panScrollAccelGain <= 0.0f) return 1.0f;
-		float ref = glyphSize.y * 8.0f;
-		float t = (ref > 0.0f) ? (distPx / ref) : 0.0f;
-		float a = 1.0f + t * t * panScrollAccelGain * 0.25f;   // 0.25: user 1.0 == old 0.25
-		return (a > 16.0f) ? 16.0f : a;
-	};
+	auto panAccel = [&](float distPx) -> float
+		{
+			if (panScrollAccelGain <= 0.0f) return 1.0f;
+			float ref = glyphSize.y * 8.0f;
+			float t = (ref > 0.0f) ? (distPx / ref) : 0.0f;
+			float a = 1.0f + t * t * panScrollAccelGain * 0.25f;   // 0.25: user 1.0 == old 0.25
+			return (a > 16.0f) ? 16.0f : a;
+		};
 
 	if (panning && ImGui::IsMouseDragging(ImGuiMouseButton_Middle))
 	{
@@ -2110,9 +2116,12 @@ void TextEditor::handleMouseInteractions()
 		panVelEMA.y = panVelEMA.y * 0.7f + mouseDelta.y * 0.3f;
 		float vAx = std::fabs(panVelEMA.x), vAy = std::fabs(panVelEMA.y);
 		bool canHoriz = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
-		if (panSnapAxis == 1) {                       // currently horizontal
+		if (panSnapAxis == 1)
+		{                       // currently horizontal
 			if (!canHoriz || vAx < vAy * 1.5f) panSnapAxis = 2;
-		} else {                                      // currently vertical (default)
+		}
+		else
+		{                                      // currently vertical (default)
 			if (canHoriz && vAx > vAy * 3.0f) panSnapAxis = 1;
 		}
 		if (panSnapAxis == 1)
@@ -2125,11 +2134,11 @@ void TextEditor::handleMouseInteractions()
 	{
 		// handle middle mouse button scrolling. Horizontal gets a larger
 		// deadzone + damping so vertical scrolling is the easy default.
-		float deadzone  = glyphSize.x;
+		float deadzone = glyphSize.x;
 		float deadzoneX = glyphSize.x * 3.0f;
 		auto offset = scrollStart - absoluteMousePos;
 		offset.x = (offset.x < 0.0f) ? std::min(offset.x + deadzoneX, 0.0f) : std::max(offset.x - deadzoneX, 0.0f);
-		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone,  0.0f) : std::max(offset.y - deadzone,  0.0f);
+		offset.y = (offset.y < 0.0f) ? std::min(offset.y + deadzone, 0.0f) : std::max(offset.y - deadzone, 0.0f);
 
 		float panSign = panInverted ? -1.0f : 1.0f;
 		// Axis SNAP, same hysteresis as pan. `offset` (post-deadzone) is already the
@@ -2138,9 +2147,12 @@ void TextEditor::handleMouseInteractions()
 		{
 			float oAx = std::fabs(offset.x), oAy = std::fabs(offset.y);
 			bool canHoriz = ImGui::GetScrollMaxX() > glyphSize.x * 4.0f;
-			if (panSnapAxis == 1) {
+			if (panSnapAxis == 1)
+			{
 				if (!canHoriz || oAx < oAy * 1.5f) panSnapAxis = 2;
-			} else {
+			}
+			else
+			{
 				if (canHoriz && oAx > oAy * 3.0f) panSnapAxis = 1;
 			}
 		}
@@ -2178,8 +2190,8 @@ void TextEditor::handleMouseInteractions()
 		// passes the X check and we'd swap to the I-beam cursor / start a
 		// drag-select. Ported from upstream Pascal Thomet's fix.
 		bool overText = mousePos.x - ImGui::GetScrollX() > textOffset
-		             && mousePos.y - ImGui::GetScrollY() >= 0
-		             && mousePos.y - ImGui::GetScrollY() < visibleHeight;
+			&& mousePos.y - ImGui::GetScrollY() >= 0
+			&& mousePos.y - ImGui::GetScrollY() < visibleHeight;
 
 		// Map mouse Y to visible line index. GetCursorScreenPos after BeginChild
 		// returns the *content* origin (above the viewport when scrolled), so
@@ -2204,7 +2216,7 @@ void TextEditor::handleMouseInteractions()
 			float colInRow = std::max(0.0f, (mousePos.x - textOffset) / glyphSize.x);
 			float column = static_cast<float>(wrapRows[row].startColumn) + colInRow;
 			document.normalizeCoordinate(1.0f * realLine, column,
-				glyphCoordinate, cursorCoordinate);
+										 glyphCoordinate, cursorCoordinate);
 		}
 		else
 		{
@@ -2256,7 +2268,7 @@ void TextEditor::handleMouseInteractions()
 			{
 				bool willCopy = ImGui::IsKeyDown(ImGuiMod_Ctrl);
 				std::string preview = draggedText;
-				if (preview.size() > 60) preview = preview.substr(0, 60) + "…";
+				if (preview.size() > 20) preview = preview.substr(0, 20) + "…";
 				// Strip newlines in the preview so the tooltip stays one-line.
 				for (auto& c : preview) if (c == '\n' || c == '\r') c = ' ';
 				ImGui::SetTooltip("%s %s", willCopy ? "Copy:" : "Move:", preview.c_str());
@@ -2577,7 +2589,7 @@ void TextEditor::handleMouseInteractions()
 						// pin the box's left edge to that line's EOL while the right
 						// edge floats in virtual space, selecting columns never dragged.
 						columnAnchor = Coordinate(cursorCoordinate.line,
-							xToColumn(cursorCoordinate.line, mousePos.x - textOffset));
+												  xToColumn(cursorCoordinate.line, mousePos.x - textOffset));
 						cursors.setCursor(cursorCoordinate);
 						autocomplete.cancel();
 					}
@@ -3055,11 +3067,11 @@ std::string TextEditor::GetWordAtScreenPos(const ImVec2& screenPos) const
 	if (wordWrap && !wrapRows.empty())
 	{
 		int row = std::clamp(static_cast<int>(local.y / glyphSize.y), 0,
-			static_cast<int>(wrapRows.size()) - 1);
+							 static_cast<int>(wrapRows.size()) - 1);
 		int column = wrapRows[row].startColumn +
 			std::max(0, static_cast<int>((local.x - textOffset) / glyphSize.x));
 		document.normalizeCoordinate(1.0f * wrapRows[row].line, 1.0f * column,
-			glyphCoordinate, cursorCoordinate);
+									 glyphCoordinate, cursorCoordinate);
 	}
 	else
 	{
@@ -3096,7 +3108,7 @@ bool TextEditor::GetBytePosAtScreenPos(const ImVec2& screenPos, int& line, int& 
 	for (size_t i = 0; i < cp && b < ln.size(); ++i)
 	{
 		++b;
-		while (b < ln.size() && (((unsigned char) ln[b]) & 0xC0) == 0x80) ++b;
+		while (b < ln.size() && (((unsigned char)ln[b]) & 0xC0) == 0x80) ++b;
 	}
 	byteOffset = static_cast<int>(b);
 	return true;
@@ -3168,24 +3180,25 @@ std::vector<std::pair<int, int>> TextEditor::MarkChangedLines(const std::string&
 	clearMarkers();
 	std::vector<std::pair<int, int>> ranges;
 
-	auto split = [](const std::string& s) {
-		std::vector<std::string> v;
-		std::string cur;
-		for (char c : s)
+	auto split = [](const std::string& s)
 		{
-			if (c == '\r')
-				continue;
-			if (c == '\n')
+			std::vector<std::string> v;
+			std::string cur;
+			for (char c : s)
 			{
-				v.push_back(cur);
-				cur.clear();
+				if (c == '\r')
+					continue;
+				if (c == '\n')
+				{
+					v.push_back(cur);
+					cur.clear();
+				}
+				else
+					cur += c;
 			}
-			else
-				cur += c;
-		}
-		v.push_back(cur);
-		return v;
-	};
+			v.push_back(cur);
+			return v;
+		};
 	std::vector<std::string> a = split(previousText), b = split(document.getText());
 	size_t N = a.size(), M = b.size();
 	if (M == 0)
@@ -3226,7 +3239,7 @@ std::vector<std::pair<int, int>> TextEditor::MarkChangedLines(const std::string&
 		for (size_t i = n; i-- > 0;)
 			for (size_t j = m; j-- > 0;)
 				dp[i][j] = (a[p + i] == b[p + j]) ? dp[i + 1][j + 1] + 1
-												  : (std::max)(dp[i + 1][j], dp[i][j + 1]);
+				: (std::max)(dp[i + 1][j], dp[i][j + 1]);
 
 		std::vector<char> common(m, 0);
 		for (size_t i = 0, j = 0; i < n && j < m;)
@@ -3314,7 +3327,7 @@ static std::vector<std::pair<int, int>> mergeLcs(const std::vector<std::string>&
 	{
 		if (O[i] == X[j])
 		{
-			pairs.push_back({i, j});
+			pairs.push_back({ i, j });
 			++i;
 			++j;
 		}
@@ -3383,53 +3396,55 @@ std::string TextEditor::Merge3(const std::string& baseS, const std::string& mine
 
 	std::vector<std::string> out;
 	auto pushRange = [&](const std::vector<std::string>& X, int lo, int hi) { for (int k = lo; k < hi; ++k) out.push_back(X[k]); };
-	auto sameAsBase = [&](const std::vector<std::string>& X, int xLo, int xHi, int oLo, int oHi) {
-		if (xHi - xLo != oHi - oLo)
-			return false;
-		for (int k = 0; k < xHi - xLo; ++k)
-			if (X[xLo + k] != O[oLo + k])
+	auto sameAsBase = [&](const std::vector<std::string>& X, int xLo, int xHi, int oLo, int oHi)
+		{
+			if (xHi - xLo != oHi - oLo)
 				return false;
-		return true;
-	};
-	auto emitChunk = [&](int oLo, int oHi, int aLo, int aHi, int bLo, int bHi) {
-		bool aSame = sameAsBase(A, aLo, aHi, oLo, oHi);
-		bool bSame = sameAsBase(B, bLo, bHi, oLo, oHi);
-		if (aSame && bSame)
+			for (int k = 0; k < xHi - xLo; ++k)
+				if (X[xLo + k] != O[oLo + k])
+					return false;
+			return true;
+		};
+	auto emitChunk = [&](int oLo, int oHi, int aLo, int aHi, int bLo, int bHi)
 		{
-			pushRange(O, oLo, oHi);
-			return;
-		}
-		if (aSame)
-		{
+			bool aSame = sameAsBase(A, aLo, aHi, oLo, oHi);
+			bool bSame = sameAsBase(B, bLo, bHi, oLo, oHi);
+			if (aSame && bSame)
+			{
+				pushRange(O, oLo, oHi);
+				return;
+			}
+			if (aSame)
+			{
+				pushRange(B, bLo, bHi);
+				return;
+			} // only theirs changed
+			if (bSame)
+			{
+				pushRange(A, aLo, aHi);
+				return;
+			} // only mine changed
+			// both changed — identical change? take one. else conflict.
+			bool abEqual = (aHi - aLo == bHi - bLo);
+			if (abEqual)
+				for (int k = 0; k < aHi - aLo; ++k)
+					if (A[aLo + k] != B[bLo + k])
+					{
+						abEqual = false;
+						break;
+					}
+			if (abEqual)
+			{
+				pushRange(A, aLo, aHi);
+				return;
+			}
+			conflict = true;
+			out.push_back("<<<<<<< mine (your unsaved edits)");
+			pushRange(A, aLo, aHi);
+			out.push_back("=======");
 			pushRange(B, bLo, bHi);
-			return;
-		} // only theirs changed
-		if (bSame)
-		{
-			pushRange(A, aLo, aHi);
-			return;
-		} // only mine changed
-		// both changed — identical change? take one. else conflict.
-		bool abEqual = (aHi - aLo == bHi - bLo);
-		if (abEqual)
-			for (int k = 0; k < aHi - aLo; ++k)
-				if (A[aLo + k] != B[bLo + k])
-				{
-					abEqual = false;
-					break;
-				}
-		if (abEqual)
-		{
-			pushRange(A, aLo, aHi);
-			return;
-		}
-		conflict = true;
-		out.push_back("<<<<<<< mine (your unsaved edits)");
-		pushRange(A, aLo, aHi);
-		out.push_back("=======");
-		pushRange(B, bLo, bHi);
-		out.push_back(">>>>>>> external (on disk)");
-	};
+			out.push_back(">>>>>>> external (on disk)");
+		};
 
 	int prevO = -1, prevA = -1, prevB = -1;
 	for (int s : sync)
@@ -3577,13 +3592,15 @@ void TextEditor::moveRight(bool select, bool wordMode, bool subWord)
 
 void TextEditor::moveToTop(bool select)
 {
-	auto& cursor = cursors.getCurrent();
 	int firstVisible = 0;
 	for (int i = 0; i < document.lineCount(); ++i)
 	{
 		if (document[i].visible) { firstVisible = i; break; }
 	}
-	moveTo(Coordinate(firstVisible, cursor.getInteractiveStart().column), select);
+	// Column 0 — the true top-left. Previously this kept the cursor's current column,
+	// so Ctrl+A / Ctrl+Home stopped short of the first line's leading text (and the
+	// selectAll anchor never reached the very top). Mirrors moveToBottom -> maxColumn.
+	moveTo(Coordinate(firstVisible, 0), select);
 }
 
 
@@ -4498,8 +4515,8 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				size_t nameStart = p + (closing ? 2 : 1);
 				size_t q = nameStart;
 				while (q < text.size() &&
-				       (std::isalnum((unsigned char) text[q]) || text[q] == '_' ||
-				        text[q] == '-' || text[q] == ':' || text[q] == '.'))
+					   (std::isalnum((unsigned char)text[q]) || text[q] == '_' ||
+						text[q] == '-' || text[q] == ':' || text[q] == '.'))
 					++q;
 				std::string tagName = text.substr(nameStart, q - nameStart);
 				if (tagName.empty()) { p = nameStart; continue; }
@@ -4518,14 +4535,14 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 							Coordinate start = tagStack[k].start;
 							tagStack.resize(k);
 							if (start.line < line)
-								push_back(FoldRange(start, Coordinate(line, (int) p), Region));
+								push_back(FoldRange(start, Coordinate(line, (int)p), Region));
 							break;
 						}
 					}
 				}
 				else if (!selfClose)
 				{
-					tagStack.push_back({ tagName, Coordinate(line, (int) p) });
+					tagStack.push_back({ tagName, Coordinate(line, (int)p) });
 				}
 				p = (gt != std::string::npos) ? gt + 1 : q;
 			}
@@ -4706,7 +4723,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				{
 					size_t s = i;
 					while (i < scan.size() &&
-						(std::isalnum(static_cast<unsigned char>(scan[i])) || scan[i] == '_'))
+						   (std::isalnum(static_cast<unsigned char>(scan[i])) || scan[i] == '_'))
 						++i;
 					std::string w = scan.substr(s, i - s);
 					if (w == "function" || w == "if" || w == "do" || w == "repeat")
@@ -4742,7 +4759,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 			{
 				if (iniHeaderLine >= 0 && iniHeaderLine < line - 1)
 					push_back(FoldRange(Coordinate(iniHeaderLine, 0),
-					                    Coordinate(line - 1, 0), Region));
+										Coordinate(line - 1, 0), Region));
 				iniHeaderLine = line;
 			}
 		}
@@ -4751,7 +4768,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	// Close a still-open INI section at EOF.
 	if (useIniFolding && iniHeaderLine >= 0 && iniHeaderLine < lineCount - 1)
 		push_back(FoldRange(Coordinate(iniHeaderLine, 0),
-		                    Coordinate(lineCount - 1, 0), Region));
+							Coordinate(lineCount - 1, 0), Region));
 
 	// Close any line-comment run still open at EOF
 	flushLineCommentBlock(lineCount - 1);
@@ -7163,14 +7180,16 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 
 	// A line whose last non-whitespace glyph is a backslash continues onto the
 	// next line (C/C++ line splicing) — used to carry a #define etc. across lines.
-	auto lineEndsInBackslash = [](Line& ln) -> bool {
-		for (auto it = ln.end(); it != ln.begin(); ) {
-			--it;
-			if (CodePoint::isWhiteSpace(it->codepoint)) continue;
-			return it->codepoint == static_cast<ImWchar>('\\');
-		}
-		return false;
-	};
+	auto lineEndsInBackslash = [](Line& ln) -> bool
+		{
+			for (auto it = ln.end(); it != ln.begin(); )
+			{
+				--it;
+				if (CodePoint::isWhiteSpace(it->codepoint)) continue;
+				return it->codepoint == static_cast<ImWchar>('\\');
+			}
+			return false;
+		};
 
 	// process all glyphs on this line
 	auto nonWhiteSpace = false;
@@ -7200,9 +7219,9 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 			// block never opens.
 			}
 			else if (language->commentStart.size()
-				&& language->singleLineComment.size()
-				&& language->commentStart.rfind(language->singleLineComment, 0) == 0
-				&& matches(glyph, line.end(), language->commentStart))
+					 && language->singleLineComment.size()
+					 && language->commentStart.rfind(language->singleLineComment, 0) == 0
+					 && matches(glyph, line.end(), language->commentStart))
 			{
 				state = State::inComment;
 				auto size = language->commentStart.size();
@@ -7892,8 +7911,10 @@ void TextEditor::recomputeFindMatches()
 	{
 		// findText wraps to the top when it runs off the end; stop once a hit
 		// comes at/before a prior one (same guard as selectAllOccurrencesOf).
-		auto less = [](Coordinate a, Coordinate b){
-			return a.line != b.line ? a.line < b.line : a.column < b.column; };
+		auto less = [](Coordinate a, Coordinate b)
+			{
+				return a.line != b.line ? a.line < b.line : a.column < b.column;
+			};
 		if (!first && !less(from, e)) break;   // no forward progress → wrapped
 		first = false;
 		++findMatchCount;
@@ -8324,7 +8345,7 @@ void TextEditor::selectAllOccurrencesOf(const std::string_view& text, bool caseS
 //	"find in selection" scope. A match whose START is at/after rangeEnd is out.
 
 void TextEditor::selectAllOccurrencesOfInRange(const std::string_view& text, bool caseSensitive,
-	bool wholeWord, Coordinate rangeStart, Coordinate rangeEnd)
+											   bool wholeWord, Coordinate rangeStart, Coordinate rangeEnd)
 {
 	Coordinate start, end;
 	bool any = false;
@@ -8551,8 +8572,10 @@ void TextEditor::findNext()
 void TextEditor::selectPreviousOccurrenceOf(const std::string_view& text, bool caseSensitive, bool wholeWord)
 {
 	if (text.empty()) return;
-	auto less = [](Coordinate a, Coordinate b) {
-		return a.line != b.line ? a.line < b.line : a.column < b.column; };
+	auto less = [](Coordinate a, Coordinate b)
+		{
+			return a.line != b.line ? a.line < b.line : a.column < b.column;
+		};
 	// document.findText only searches forward (wrapping). To go backward, scan all
 	// matches once and keep the last one strictly before the current selection;
 	// if none precede it, wrap to the final match.
@@ -14024,10 +14047,11 @@ static TextEditor::Iterator tokenizeIni(TextEditor::Iterator start, TextEditor::
 	}
 
 	// key followed (after optional spaces) by '=' → highlight the key name.
-	auto isKeyChar = [](ImWchar ch) {
-		return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-		       (ch >= '0' && ch <= '9') || ch == '_' || ch == '.' || ch == '-';
-	};
+	auto isKeyChar = [](ImWchar ch)
+		{
+			return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+				(ch >= '0' && ch <= '9') || ch == '_' || ch == '.' || ch == '-';
+		};
 	if (isKeyChar(c) && !(c >= '0' && c <= '9'))
 	{
 		TextEditor::Iterator j = i;
@@ -14063,9 +14087,10 @@ const TextEditor::Language* TextEditor::Language::Ini()
 		language.singleLineCommentAlt = "#";
 		language.hasDoubleQuotedStrings = true;
 		language.customTokenizer = tokenizeIni;
-		language.isPunctuation = [](ImWchar c) {
-			return c == '=' || c == ':' || c == '[' || c == ']';
-		};
+		language.isPunctuation = [](ImWchar c)
+			{
+				return c == '=' || c == ':' || c == '[' || c == ']';
+			};
 		language.extensions = { ".ini", ".cfg", ".conf" };
 		initialized = true;
 	}
