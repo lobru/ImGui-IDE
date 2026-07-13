@@ -2777,35 +2777,23 @@ void Editor::renderNavigationPanel()
             ImGui::Checkbox("Wrap project path", &navPathWrap);
             if (!ueSourceDir.empty())
                 ImGui::Checkbox(("Show " + ueSourceLabel).c_str(), &navShowUeSource);
-            ImGui::Separator();
-            // Sort order (folders always list before files). Changing it re-scans.
-            const char *sortItems[] = {"Name", "Modified (newest)", "Size (largest)", "Type"};
-            ImGui::TextDisabled("Sort by");
-            ImGui::SetNextItemWidth(180.0f);
-            if (ImGui::Combo("##navSort", &navSortMode, sortItems, IM_ARRAYSIZE(sortItems)))
+            // Manage existing source locations here (Sort + Add live inline in the
+            // header row now). Each row removes with its ✕.
+            if (!extraSourceLocations.empty())
             {
-                navMarkListDirty(); // rebuild the cached listings with the new order
-                saveSettings();
-            }
-            ImGui::Separator();
-            // Extra source locations — folders outside the project shown as roots and
-            // indexed into symbols. Listed with a remove control; add via the button.
-            ImGui::TextDisabled("Source locations");
-            for (const auto &loc : extraSourceLocations)
-            {
-                ImGui::PushID(loc.c_str());
-                if (ImGui::SmallButton("x"))
-                    navPendingRemoveSourceLoc = loc;
-                ImGui::SameLine();
-                ImGui::TextUnformatted(std::filesystem::path(loc).filename().string().c_str());
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", loc.c_str());
-                ImGui::PopID();
-            }
-            if (ImGui::SmallButton("Add source location..."))
-            {
-                ImGui::CloseCurrentPopup();
-                openAddSourceLocationPicker();
+                ImGui::Separator();
+                ImGui::TextDisabled("Source locations");
+                for (const auto &loc : extraSourceLocations)
+                {
+                    ImGui::PushID(loc.c_str());
+                    if (ImGui::SmallButton("x"))
+                        navPendingRemoveSourceLoc = loc;
+                    ImGui::SameLine();
+                    ImGui::TextUnformatted(std::filesystem::path(loc).filename().string().c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", loc.c_str());
+                    ImGui::PopID();
+                }
             }
             ImGui::EndPopup();
         }
@@ -2819,6 +2807,30 @@ void Editor::renderNavigationPanel()
             navSetAllOpen = 1;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Expand all folders");
+
+        // Inline sort + add-location — one click, in the panel, no wasted rows.
+        static const char *kSortItems[] = {"Name", "Modified (newest)", "Size (largest)", "Type"};
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Sort"))
+            ImGui::OpenPopup("##navSortPop");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Sort by: %s", kSortItems[navSortMode]);
+        if (ImGui::BeginPopup("##navSortPop"))
+        {
+            for (int i = 0; i < IM_ARRAYSIZE(kSortItems); ++i)
+                if (ImGui::MenuItem(kSortItems[i], nullptr, navSortMode == i))
+                {
+                    navSortMode = i;
+                    navMarkListDirty();
+                    saveSettings();
+                }
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("+Dir"))
+            openAddSourceLocationPicker();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Add a source location (shown as a nav root + indexed for symbols)");
         ImGui::Separator();
 
         // Name filter — below the separator. Only entries whose name contains this
