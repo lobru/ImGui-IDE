@@ -110,14 +110,19 @@ private:
         bool fetched = false;    // children already retrieved
         std::vector<GlobalNode> children;
     };
-    std::vector<GlobalNode> uevrGlobalsTree;
-    std::string uevrGlobalsSource;              // the raw dump the tree was built from
-    std::vector<std::string> uevrPendingPairs;  // paths awaiting a PAIRS response
-    void rebuildGlobalsTree();                  // (re)build the top level from uevrGlobals
+    std::vector<GlobalNode> uevrGlobalsTree, uevrModulesTree;
+    std::string uevrGlobalsSource, uevrModulesSource; // raw dump each tree was built from
+    std::vector<std::string> uevrPendingPairs;        // paths awaiting a PAIRS response
+    // (re)build a tree's top level from a dump; each root's path is `<rootPrefix>[name]`
+    // (e.g. "_G" for globals, "package.loaded" for modules).
+    void rebuildTree(std::vector<GlobalNode> &tree, std::string &sourceCache,
+                     const std::string &dump, const std::string &rootPrefix);
     static GlobalNode *findNodeByPath(std::vector<GlobalNode> &nodes, const std::string &path);
     void requestGlobalChildren(GlobalNode &node);
     void applyPairsResponse(const std::string &pathId, const std::string &rows);
-    void renderGlobalsTree(const char *filter);
+    // Interactive tree for a dump: table/object rows expand on demand (lazy pairs()).
+    void renderTree(const char *id, std::vector<GlobalNode> &tree, std::string &sourceCache,
+                    const std::string &dump, const std::string &rootPrefix, const char *filter);
 
     // Live-value → Blueprint node bridge: turns an arbitrary inspected/watched
     // expression into a Custom Lua node (see BlueprintEditor::AddCustomLuaNode) --

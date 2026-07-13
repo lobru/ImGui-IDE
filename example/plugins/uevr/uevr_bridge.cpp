@@ -482,19 +482,21 @@ UevrPlugin::GlobalNode *UevrPlugin::findNodeByPath(std::vector<GlobalNode> &node
     return nullptr;
 }
 
-void UevrPlugin::rebuildGlobalsTree()
+void UevrPlugin::rebuildTree(std::vector<GlobalNode> &tree, std::string &sourceCache,
+                            const std::string &dump, const std::string &rootPrefix)
 {
-    uevrGlobalsSource = uevrGlobals;
-    uevrGlobalsTree.clear();
-    for (auto &row : parseBridgeRows(uevrGlobals, 3))
+    sourceCache = dump;
+    tree.clear();
+    for (auto &row : parseBridgeRows(dump, 3))
     {
         GlobalNode node;
         node.key = row.name;
         node.type = row.type;
         node.value = row.value;
-        node.path = "_G[" + luaQuote(row.name) + "]"; // top-level globals live in _G
-        node.expandable = (row.type == "table");
-        uevrGlobalsTree.push_back(std::move(node));
+        node.path = rootPrefix + "[" + luaQuote(row.name) + "]";
+        // "table" or "table[#=N]" (some dumps append an element-count hint)
+        node.expandable = row.type.rfind("table", 0) == 0;
+        tree.push_back(std::move(node));
     }
 }
 
@@ -511,6 +513,8 @@ void UevrPlugin::applyPairsResponse(const std::string &pathId, const std::string
     uevrPendingPairs.erase(std::remove(uevrPendingPairs.begin(), uevrPendingPairs.end(), pathId),
                            uevrPendingPairs.end());
     GlobalNode *node = findNodeByPath(uevrGlobalsTree, pathId);
+    if (!node)
+        node = findNodeByPath(uevrModulesTree, pathId);
     if (!node)
         return;
 
@@ -532,7 +536,7 @@ void UevrPlugin::applyPairsResponse(const std::string &pathId, const std::string
         child.type = line.substr(t1 + 1, t2 - t1 - 1);
         child.value = line.substr(t2 + 1, t3 - t2 - 1);
         child.path = line.substr(t3 + 1);
-        child.expandable = (child.type == "table");
+        child.expandable = child.type.rfind("table", 0) == 0;
         node->children.push_back(std::move(child));
     }
     std::sort(node->children.begin(), node->children.end(),
@@ -540,12 +544,13 @@ void UevrPlugin::applyPairsResponse(const std::string &pathId, const std::string
     node->fetched = true;
 }
 
-void UevrPlugin::renderGlobalsTree(const char *filter)
+void UevrPlugin::renderTree(const char *id, std::vector<GlobalNode> &tree, std::string &sourceCache,
+                           const std::string &dump, const std::string &rootPrefix, const char *filter)
 {
-    if (uevrGlobals != uevrGlobalsSource)
-        rebuildGlobalsTree();
+    if (dump != sourceCache)
+        rebuildTree(tree, sourceCache, dump, rootPrefix);
 
-    if (uevrGlobalsTree.empty())
+    if (tree.empty())
     {
         ImGui::TextUnformatted("(refresh to query the game)");
         return;
@@ -555,7 +560,7 @@ void UevrPlugin::renderGlobalsTree(const char *filter)
     std::transform(needle.begin(), needle.end(), needle.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
-    if (!ImGui::BeginTable("##uevrGlobalsTree", 3,
+    if (!ImGui::BeginTable(id, 3,
             ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable))
         return;
 
@@ -603,7 +608,7 @@ void UevrPlugin::renderGlobalsTree(const char *filter)
         ImGui::PopID();
     };
 
-    for (auto &n : uevrGlobalsTree)
+    for (auto &n : tree)
     {
         if (!needle.empty())
         {
@@ -720,7 +725,7 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
             ImGui::SetNextItemWidth(200.0f);
             ImGui::InputTextWithHint("##gfilter", "filter", globalsFilter, sizeof(globalsFilter));
             ImGui::BeginChild("##uevrGlobals", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
-            renderGlobalsTree(globalsFilter); // expandable: drill into tables/objects
+            renderTree("##uevrGlobalsTree", uevrGlobalsTree, uevrGlobalsSource, uevrGlobals, "_G", globalsFilter);
             host.hostMiddleMousePanScroll(101);
             ImGui::EndChild();
             ImGui::EndTabItem();
@@ -734,7 +739,8 @@ void UevrPlugin::renderUevrLive(PluginHost &host)
             ImGui::SetNextItemWidth(200.0f);
             ImGui::InputTextWithHint("##mfilter", "filter", modulesFilter, sizeof(modulesFilter));
             ImGui::BeginChild("##uevrModules", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
-            renderBridgeTable("##uevrModulesTable", uevrModules, modulesFilter, 2, false);
+            // package.loaded entries are module tables — expandable just like globals.
+            renderTree("##uevrModulesTree", uevrModulesTree, uevrModulesSource, uevrModules, "package.loaded", modulesFilter);
             host.hostMiddleMousePanScroll(102);
             ImGui::EndChild();
             ImGui::EndTabItem();
