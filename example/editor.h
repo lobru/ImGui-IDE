@@ -944,6 +944,7 @@ private:
 		std::atomic<bool>   building{ false };
 		std::string         branch;
 		int                 dirty = 0, ahead = 0, behind = 0;
+		std::vector<std::string> branches; // local branch names (for Switch Branch)
 	};
 	std::shared_ptr<GitInfo> gitInfo = std::make_shared<GitInfo>();
 	std::string gitPollRoot;
@@ -955,6 +956,7 @@ private:
 	void        runGit(const std::string& args);
 	bool        gitCommitRequest  = false;
 	char        gitCommitMsg[1024] = {};
+	char        gitNewBranchBuf[128] = {}; // "New Branch" inline input
 	bool        gitDiscardRequest = false;
 	bool        gitCloneRequest   = false;
 	char        gitCloneUrl[512]  = {};

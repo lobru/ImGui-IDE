@@ -11680,6 +11680,43 @@ void Editor::renderMenuBar()
                 {
                     runGit("pull");
                 }
+                // Switch Branch — lists local branches (current is checked); switching
+                // shells out to `git checkout`. A dirty tree makes git refuse the
+                // switch (output shows why) rather than us clobbering changes.
+                {
+                    std::string cur;
+                    std::vector<std::string> branches;
+                    {
+                        std::lock_guard<std::mutex> lk(gitInfo->mutex);
+                        cur = gitInfo->branch;
+                        branches = gitInfo->branches;
+                    }
+                    if (ImGui::BeginMenu("Switch Branch", inRepo && !branches.empty()))
+                    {
+                        for (const auto &b : branches)
+                        {
+                            bool isCur = (b == cur);
+                            if (ImGui::MenuItem(b.c_str(), nullptr, isCur) && !isCur)
+                                runGit("checkout \"" + b + "\"");
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (ImGui::BeginMenu("New Branch", inRepo))
+                    {
+                        ImGui::TextDisabled("Create + switch to a new branch");
+                        ImGui::SetNextItemWidth(200.0f);
+                        bool go = ImGui::InputTextWithHint("##newbranch", "branch name", gitNewBranchBuf,
+                                                           sizeof(gitNewBranchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                        ImGui::SameLine();
+                        if ((ImGui::Button("Create") || go) && gitNewBranchBuf[0])
+                        {
+                            runGit(std::string("checkout -b \"") + gitNewBranchBuf + "\"");
+                            gitNewBranchBuf[0] = '\0';
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndMenu();
+                    }
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Commit All…", nullptr, false, inRepo))
                 {
@@ -12071,6 +12108,24 @@ void Editor::pollGitStatus()
     std::thread([gi, root]() {
         std::string branch;
         int dirty = 0, ahead = 0, behind = 0;
+        std::vector<std::string> branches;
+        // Local branch names for the Switch Branch menu (cheap; runs on the poll).
+        {
+            std::string bcmd = "git -C \"" + root + "\" branch --format=%(refname:short) 2>nul";
+            if (FILE *bp = _popen(bcmd.c_str(), "r"))
+            {
+                char b[1024];
+                while (fgets(b, sizeof(b), bp))
+                {
+                    std::string ln = b;
+                    while (!ln.empty() && (ln.back() == '\n' || ln.back() == '\r' || ln.back() == ' '))
+                        ln.pop_back();
+                    if (!ln.empty())
+                        branches.push_back(ln);
+                }
+                _pclose(bp);
+            }
+        }
         std::string cmd = "git -C \"" + root + "\" status --porcelain=v2 --branch 2>nul";
         if (FILE *p = _popen(cmd.c_str(), "r"))
         {
@@ -12099,6 +12154,7 @@ void Editor::pollGitStatus()
             gi->dirty = dirty;
             gi->ahead = ahead;
             gi->behind = behind;
+            gi->branches = std::move(branches);
         }
         gi->building = false; })
         .detach();
