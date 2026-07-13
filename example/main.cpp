@@ -299,6 +299,30 @@ int main(int argc, char** argv) {
 			// else: we are the primary for this project — hold `inst` for the process lifetime.
 		}
 	}
+
+	// Record where the app lives under HKCU\Software\ImGui-IDE so the installer,
+	// the in-app updater, and shell integrations can find the running build
+	// (ExePath) and its folder (InstallDir) without guessing. Best-effort.
+	{
+		char exe[MAX_PATH] = {0};
+		if (GetModuleFileNameA(nullptr, exe, sizeof(exe)))
+		{
+			std::string exePath = exe;
+			std::string dir = exePath.substr(0, exePath.find_last_of("\\/"));
+			HKEY key = nullptr;
+			if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\ImGui-IDE", 0, nullptr, 0,
+			                    KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS)
+			{
+				RegSetValueExA(key, "ExePath", 0, REG_SZ,
+				               reinterpret_cast<const BYTE *>(exePath.c_str()),
+				               static_cast<DWORD>(exePath.size() + 1));
+				RegSetValueExA(key, "InstallDir", 0, REG_SZ,
+				               reinterpret_cast<const BYTE *>(dir.c_str()),
+				               static_cast<DWORD>(dir.size() + 1));
+				RegCloseKey(key);
+			}
+		}
+	}
 #endif
 
 	// setup SDL

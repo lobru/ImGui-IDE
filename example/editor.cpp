@@ -1648,6 +1648,22 @@ void Editor::setProjectRoot(const std::filesystem::path &p)
     projectRoot = abs;
     navPanelVisible = true;
     rememberRecentProject(abs.string());
+#ifdef _WIN32
+    // Persist the last project path to HKCU so external tools (and a "reopen last
+    // project" flow) can find where we last were.
+    {
+        HKEY key = nullptr;
+        if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\ImGui-IDE", 0, nullptr, 0,
+                            KEY_SET_VALUE, nullptr, &key, nullptr) == ERROR_SUCCESS)
+        {
+            std::string s = abs.string();
+            RegSetValueExA(key, "LastProject", 0, REG_SZ,
+                           reinterpret_cast<const BYTE *>(s.c_str()),
+                           static_cast<DWORD>(s.size() + 1));
+            RegCloseKey(key);
+        }
+    }
+#endif
     restoreProjectSession(abs);
     // Load the cached symbol index so it's usable instantly, then kick off the
     // background rebuild (which reuses the cache to skip unchanged files).

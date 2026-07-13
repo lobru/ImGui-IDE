@@ -27,6 +27,69 @@ that is still genuinely outstanding.
 ### Polish (self-contained, no build needed to write)
 - (none open)
 
+## 🚀 User backlog (2026-07-13) — big requests, capture so nothing is lost
+
+Status: [ ] not started · [~] in progress/partial · [x] done. Items sized for one
+iteration where possible; big ones have substeps.
+
+### Performance — worker threads (MAJOR)
+- [ ] Move backgroundable work OFF the UI thread. Already threaded: symbol index
+      (`rebuildProjectIndex`), git poll, decompile, clone-watch. Named targets:
+  - [ ] **Fold detection** — compute fold ranges on a worker, publish to the doc
+        (careful: folds feed rendering; needs a snapshot/version handshake like
+        the symbol index).
+  - [ ] **Large-file splitting/loading** — chunked/threaded load so opening a huge
+        file doesn't stall the frame (there's a large-file mode already; make the
+        initial read + tokenize incremental/off-thread).
+  - [ ] Audit other per-frame walks for threadability (nav flat list is cached at
+        0.5s; consider worker rebuild).
+
+### Nav panel UX
+- [~] **Sort + Add-Source-Location live in the Filters popup** (shipped e292aa6 /
+      df8945c). USER WANTS them moved INTO the nav panel itself, cleanly, compact,
+      without eating vertical space. (Inline header row / small icon controls.)
+
+### Installer / updater / registry
+- [ ] **Registry path for the last app path** — write install/exe path (+ maybe
+      last project) to HKCU so installer/updater/shell can find the app.
+- [ ] **Update the installer** to match current build + write that registry key.
+- [ ] **Cut a release + push the in-app updater feed** so Help ▸ Check for Updates
+      sees the new build.
+
+### AI Claude plugin + reply feature (VERIFY END-TO-END)
+- [ ] The send-to-Claude / reply-to-Claude bridge exists (hostSendToClaude, the
+      reply loop) but we've NEVER actually run it live. Set it up, wire it to a
+      real Claude endpoint/inbox, and confirm the round trip works.
+
+### Persistent comments / sticky notes
+- [ ] Comments/annotations saved to a sidecar file, persisting as **sticky notes**
+      anchored to lines.
+- [ ] Plug into git: associate notes with commits → a **blame-style** annotation
+      view.
+
+### Live coding
+- [ ] Live-coding features for the app itself (hot-reload the app's own
+      code/plugins) and for Unreal.
+- [ ] **Hotkey conflict**: when a UE project is open AND live coding is enabled,
+      pressing the live-coding hotkeys must NOT also toggle Focus Mode. (Needs a
+      live-coding-enabled flag + hotkey gating.)
+
+### UE plugin expansion
+- [ ] **Asset editing + saving** — write `.uasset` (UAssetAPI/CUE4Parse territory),
+      beyond the current read-only JSON inspection.
+- [ ] **.pak extraction**.
+- [ ] **.ini editing** with automation/helpers (like the descriptor editor).
+- [ ] **UE live bridge** — an in-editor↔running-UE bridge like the UEVR plugin's.
+- [ ] **Graphical class browser plugin** — browse the reflection/class hierarchy.
+- [ ] More UE-side work as it comes up.
+
+### Demo / tour
+- [x] Feature-tour Artifact (schematics) — https://claude.ai/code/artifact/a1252d6d-df1d-460a-890e-d807fe092835
+- [ ] Real screenshots (blocked: needs the app staged front/maximized/project-open;
+      declined/unstaged during the 2026-07-13 attempt).
+- [ ] **Interactive tour IN the app** (or via linking) — guided highlights of
+      features from inside ImGui-IDE.
+
 ## Process notes
 
 - Project is `/W4 /WX` MSVC. Watch out for: `int → float` narrowing,
