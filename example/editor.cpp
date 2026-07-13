@@ -2456,9 +2456,17 @@ static void renderDirNode(Editor *self,
         std::error_code dec;
         bool isDir = e.is_directory(dec);
         // Code-only filter: still show folders (you need them to navigate),
-        // but hide non-source files.
+        // but hide non-source files — EXCEPT images and PDFs, which are viewable
+        // assets worth keeping in the tree (navIsCodeFile itself stays source-only,
+        // since the grep/symbol walkers reuse it).
         if (self->navIsCodeOnly() && !isDir && !self->navIsCodeFile(e.path()))
-            continue;
+        {
+            auto fext = e.path().extension().string();
+            std::transform(fext.begin(), fext.end(), fext.begin(),
+                           [](unsigned char c) { return (char)std::tolower(c); });
+            if (!Editor::isImageExt(fext) && fext != ".pdf")
+                continue;
+        }
         navRenderEntry(self, e, depth, showDot,
                        contextPath, renameTarget, renameBuf, pendingDelete);
     }
@@ -2747,7 +2755,7 @@ void Editor::renderNavigationPanel()
         if (ImGui::BeginPopup("##navFilters", ImGuiWindowFlags_NoMove))
         {
             ImGui::Checkbox("Show dotfiles (.git, .env, ...)", &navShowDotFiles);
-            ImGui::Checkbox("Code / project files only", &navCodeOnly);
+            ImGui::Checkbox("Code / project files only (+ images, PDF)", &navCodeOnly);
             ImGui::Checkbox("Show excluded items", &navShowExcluded);
             ImGui::Checkbox("Flat view (no folder nesting)", &navFlatFiles);
             ImGui::Checkbox("Wrap project path", &navPathWrap);
