@@ -43,6 +43,12 @@ bool applyUpdate(const std::string& assetPath, const std::string& targetExe, std
 // Delete a leftover "<targetExe>.old" from a previous in-place update. Best-effort.
 void cleanupStaleUpdate(const std::string& targetExe);
 
+// Blocking HTTPS GET of an arbitrary URL. Unauthenticated; sends a GitHub-friendly
+// User-Agent + Accept, so it doubles as the GitHub-API/raw fetch for the repo
+// browser. Worker-thread safe. Returns false (and sets err) on transport failure;
+// a reached server sets status + body regardless of the HTTP code.
+bool apiGet(const std::string& url, int& status, std::string& body, std::string& err);
+
 // Open a URL in the default browser.
 void openUrl(const std::string& url);
 

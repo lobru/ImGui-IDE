@@ -363,6 +363,12 @@ void cleanupStaleUpdate(const std::string& targetExe)
     DeleteFileA((targetExe + ".old").c_str());
 }
 
+bool apiGet(const std::string& url, int& status, std::string& body, std::string& err)
+{
+    std::wstring wurl(url.begin(), url.end()); // GitHub API / raw URLs are ASCII
+    return httpGet(wurl, status, body, err);
+}
+
 void openUrl(const std::string& url)
 {
     ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -384,6 +390,7 @@ Release fetchLatest(const std::string&, const std::string&, bool)
     return r;
 }
 bool download(const std::string&, const std::string&) { return false; }
+bool apiGet(const std::string&, int&, std::string&, std::string&) { return false; }
 std::string runningExePath() { return {}; }
 void relaunch(const std::string&) {}
 bool applyUpdate(const std::string&, const std::string&, std::string& err)

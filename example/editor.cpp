@@ -9835,9 +9835,11 @@ void Editor::render()
     pollUpdates();          // GitHub release check (auto 12 h / manual) + download drain
     autoSaveTick();         // periodic save of dirty, on-disk documents (if enabled)
     pollCloneCompletion();  // rebuild the index once an in-progress git clone lands
+    pollGithubBrowser();    // open a fetched remote file read-only (UI thread)
 
     renderDockedDocuments();
     renderNavigationPanel();
+    renderGithubBrowser();
     renderImageWindows();
     renderPdfWindows();
     renderScriptOutputWindow();
@@ -11742,6 +11744,12 @@ void Editor::renderMenuBar()
                     gitRevCompareRequest = true;
                 }
 
+                if (ImGui::MenuItem("Browse GitHub Repo…", nullptr, &ghBrowseVisible))
+                {
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Browse a public GitHub repo's files read-only over the API (no clone)");
+
                 if (ImGui::MenuItem("Clone Repository from URL…"))
                 {
                     gitCloneUrl[0] = '\0';
@@ -12179,6 +12187,250 @@ void Editor::runGit(const std::string &args)
     }
     runCommandInOutputPanel("git " + args, root);
     gitPollTime = -1000.0; // force the status indicator to refresh after the action
+}
+
+// ── GitHub repo browser helpers ─────────────────────────────────────────────
+namespace
+{
+// Minimal, tolerant extraction of the string value for `"key":"..."` starting at
+// or after `from`. Handles \" and \\ escapes. Returns "" and leaves `end` = npos
+// if not found.
+std::string jsonStringField(const std::string &json, const std::string &key, size_t from, size_t &end)
+{
+    end = std::string::npos;
+    std::string needle = "\"" + key + "\":";
+    size_t k = json.find(needle, from);
+    if (k == std::string::npos)
+        return {};
+    size_t q1 = json.find('"', k + needle.size());
+    if (q1 == std::string::npos)
+        return {};
+    std::string out;
+    for (size_t i = q1 + 1; i < json.size(); ++i)
+    {
+        char c = json[i];
+        if (c == '\\' && i + 1 < json.size())
+        {
+            char n = json[++i];
+            out += (n == 'n') ? '\n' : (n == 't') ? '\t' : n; // \/ \" \\ -> literal
+            continue;
+        }
+        if (c == '"')
+        {
+            end = i;
+            return out;
+        }
+        out += c;
+    }
+    return {};
+}
+
+// Pull the blob (file) paths out of a GitHub git/trees response.
+std::vector<std::string> parseTreeBlobs(const std::string &json)
+{
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (true)
+    {
+        size_t pe = std::string::npos;
+        std::string path = jsonStringField(json, "path", i, pe);
+        if (pe == std::string::npos)
+            break;
+        size_t te = std::string::npos;
+        std::string type = jsonStringField(json, "type", pe, te);
+        if (type == "blob")
+            out.push_back(path);
+        i = (te == std::string::npos) ? pe + 1 : te + 1;
+        if (out.size() > 20000)
+            break; // safety cap for huge repos
+    }
+    return out;
+}
+} // namespace
+
+void Editor::fetchGithubTree(const std::string &owner, const std::string &repo, const std::string &ref)
+{
+    auto gb = ghBrowse;
+    if (gb->loading.exchange(true))
+        return;
+    {
+        std::lock_guard<std::mutex> lk(gb->mutex);
+        gb->status = "Fetching " + owner + "/" + repo + " \xe2\x80\xa6";
+        gb->files.clear();
+    }
+    std::thread([gb, owner, repo, ref]() {
+        std::string useRef = ref;
+        std::string err, body;
+        int status = 0;
+        // Resolve the default branch when none was given.
+        if (useRef.empty())
+        {
+            if (updater::apiGet("https://api.github.com/repos/" + owner + "/" + repo, status, body, err) &&
+                status == 200)
+            {
+                size_t e = std::string::npos;
+                std::string def = jsonStringField(body, "default_branch", 0, e);
+                useRef = def.empty() ? "main" : def;
+            }
+            else
+                useRef = "main";
+        }
+
+        std::string treeUrl = "https://api.github.com/repos/" + owner + "/" + repo +
+                              "/git/trees/" + useRef + "?recursive=1";
+        std::vector<std::string> files;
+        std::string statusLine;
+        if (updater::apiGet(treeUrl, status, body, err) && status == 200)
+        {
+            files = parseTreeBlobs(body);
+            statusLine = std::to_string(files.size()) + " files in " + owner + "/" + repo + "@" + useRef;
+            if (body.find("\"truncated\":true") != std::string::npos)
+                statusLine += " (truncated by GitHub)";
+        }
+        else if (status == 403)
+            statusLine = "GitHub rate limit hit (unauthenticated). Try again later.";
+        else if (status == 404)
+            statusLine = "Not found: " + owner + "/" + repo + "@" + useRef;
+        else
+            statusLine = "Fetch failed: " + (err.empty() ? ("HTTP " + std::to_string(status)) : err);
+
+        std::sort(files.begin(), files.end());
+        {
+            std::lock_guard<std::mutex> lk(gb->mutex);
+            gb->owner = owner;
+            gb->repo = repo;
+            gb->ref = useRef;
+            gb->files = std::move(files);
+            gb->status = statusLine;
+        }
+        gb->loading = false; })
+        .detach();
+}
+
+void Editor::fetchGithubFile(const std::string &owner, const std::string &repo, const std::string &ref,
+                             const std::string &path)
+{
+    auto gb = ghBrowse;
+    std::filesystem::path cacheRoot = userConfigDir() / "github" / owner / repo;
+    std::thread([gb, owner, repo, ref, path, cacheRoot]() {
+        std::string err, body;
+        int status = 0;
+        std::string rawUrl = "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + ref + "/" + path;
+        if (!updater::apiGet(rawUrl, status, body, err) || status != 200)
+        {
+            std::lock_guard<std::mutex> lk(gb->mutex);
+            gb->status = "Open failed (" + path + "): HTTP " + std::to_string(status);
+            return;
+        }
+        // Stage to a local temp path mirroring the repo layout, then let the UI open
+        // it read-only (tab creation must happen on the UI thread).
+        std::error_code ec;
+        std::filesystem::path dest = cacheRoot / path;
+        std::filesystem::create_directories(dest.parent_path(), ec);
+        {
+            std::ofstream f(dest, std::ios::binary | std::ios::trunc);
+            f << body;
+        }
+        {
+            std::lock_guard<std::mutex> lk(gb->mutex);
+            gb->pendingOpenPath = dest.string();
+            gb->status = "Opened " + path;
+        }
+        gb->pendingOpen = true; })
+        .detach();
+}
+
+void Editor::pollGithubBrowser()
+{
+    if (!ghBrowse->pendingOpen.exchange(false))
+        return;
+    std::string p;
+    {
+        std::lock_guard<std::mutex> lk(ghBrowse->mutex);
+        p = ghBrowse->pendingOpenPath;
+    }
+    if (p.empty())
+        return;
+    openFile(p);
+    if (!tabs.empty())
+        doc().editor.SetReadOnlyEnabled(true); // remote content: view-only
+}
+
+void Editor::renderGithubBrowser()
+{
+    if (!ghBrowseVisible)
+        return;
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 520.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("GitHub Repo Browser", &ghBrowseVisible))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextDisabled("Browse a public GitHub repo read-only (no clone).");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    bool go = ImGui::InputTextWithHint("##ghrepo", "owner/repo", ghOwnerRepoBuf, sizeof(ghOwnerRepoBuf),
+                                       ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::InputTextWithHint("##ghref", "branch (blank=default)", ghRefBuf, sizeof(ghRefBuf));
+    ImGui::SameLine();
+    bool loading = ghBrowse->loading.load();
+    if ((ImGui::Button(loading ? "Fetching\xe2\x80\xa6" : "Fetch") || go) && !loading)
+    {
+        std::string ownerRepo = ghOwnerRepoBuf;
+        auto slash = ownerRepo.find('/');
+        if (slash != std::string::npos && slash > 0 && slash + 1 < ownerRepo.size())
+            fetchGithubTree(ownerRepo.substr(0, slash), ownerRepo.substr(slash + 1), ghRefBuf);
+        else
+        {
+            std::lock_guard<std::mutex> lk(ghBrowse->mutex);
+            ghBrowse->status = "Enter owner/repo (e.g. ocornut/imgui)";
+        }
+    }
+
+    std::string status, owner, repo, ref;
+    std::vector<std::string> files;
+    {
+        std::lock_guard<std::mutex> lk(ghBrowse->mutex);
+        status = ghBrowse->status;
+        files = ghBrowse->files;
+        owner = ghBrowse->owner;
+        repo = ghBrowse->repo;
+        ref = ghBrowse->ref;
+    }
+    if (!status.empty())
+        ImGui::TextWrapped("%s", status.c_str());
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##ghfilter", "filter files", ghFileFilter, sizeof(ghFileFilter));
+
+    std::string needle = ghFileFilter;
+    std::transform(needle.begin(), needle.end(), needle.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+
+    ImGui::BeginChild("##ghfiles", ImVec2(0, 0), ImGuiChildFlags_Borders);
+    int shown = 0;
+    for (const auto &f : files)
+    {
+        if (!needle.empty())
+        {
+            std::string low = f;
+            std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            if (low.find(needle) == std::string::npos)
+                continue;
+        }
+        if (shown++ >= 2000)
+        {
+            ImGui::TextDisabled("(more — refine the filter)");
+            break;
+        }
+        if (ImGui::Selectable(f.c_str()))
+            fetchGithubFile(owner, repo, ref, f);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Open %s read-only", f.c_str());
+    }
+    ImGui::EndChild();
+    ImGui::End();
 }
 
 void Editor::cloneRepository(const std::string &url, const std::string &parentDir)

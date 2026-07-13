@@ -957,6 +957,30 @@ private:
 	bool        gitCommitRequest  = false;
 	char        gitCommitMsg[1024] = {};
 	char        gitNewBranchBuf[128] = {}; // "New Branch" inline input
+
+	// ── GitHub repo browser (read-only) ─────────────────────────────────────
+	// Browse a public GitHub repo's file tree over the API and open any file
+	// read-only, without cloning. Network runs on a worker; results marshal back
+	// through the mutex-guarded struct (same pattern as GitInfo/decompile).
+	struct GithubBrowse {
+		std::mutex               mutex;
+		std::atomic<bool>        loading{ false };
+		std::string              status;   // human status / error line
+		std::vector<std::string> files;    // blob paths in the fetched tree
+		std::string              owner, repo, ref; // what the current `files` are from
+		std::string              pendingOpenPath;  // a fetched file staged to a temp path
+		std::atomic<bool>        pendingOpen{ false };
+	};
+	std::shared_ptr<GithubBrowse> ghBrowse = std::make_shared<GithubBrowse>();
+	bool  ghBrowseVisible = false;
+	char  ghOwnerRepoBuf[256] = {}; // "owner/repo"
+	char  ghRefBuf[64] = {};        // branch/tag/sha; blank = default branch
+	char  ghFileFilter[128] = {};
+	void  renderGithubBrowser();
+	void  fetchGithubTree(const std::string& owner, const std::string& repo, const std::string& ref);
+	void  fetchGithubFile(const std::string& owner, const std::string& repo, const std::string& ref,
+	                      const std::string& path);
+	void  pollGithubBrowser();
 	bool        gitDiscardRequest = false;
 	bool        gitCloneRequest   = false;
 	char        gitCloneUrl[512]  = {};
