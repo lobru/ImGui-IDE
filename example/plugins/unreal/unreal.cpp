@@ -404,4 +404,68 @@ std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
 	return {};
 }
 
+const std::vector<std::string>& moduleTypes() {
+	static const std::vector<std::string> v = {
+		"Runtime", "RuntimeNoCommandlet", "RuntimeAndProgram", "CookedOnly", "UncookedOnly",
+		"Developer", "DeveloperTool", "Editor", "EditorNoCommandlet", "EditorAndProgram",
+		"Program", "ServerOnly", "ClientOnly", "ClientOnlyNoCommandlet",
+	};
+	return v;
+}
+
+const std::vector<std::string>& loadingPhases() {
+	static const std::vector<std::string> v = {
+		"Default", "PostConfigInit", "PostSplashScreen", "PreEarlyLoadingScreen",
+		"PreLoadingScreen", "PreDefault", "PostDefault", "PostEngineInit", "None",
+	};
+	return v;
+}
+
+std::string descriptorAddPlugin(const std::string& json, const std::string& name, bool enabled,
+								std::string& err) {
+	auto j = nlohmann::json::parse(json, nullptr, /*allow_exceptions*/ false);
+	if (j.is_discarded() || !j.is_object()) {
+		err = "not a valid descriptor (JSON object expected)";
+		return {};
+	}
+
+	if (!j.contains("Plugins") || !j["Plugins"].is_array()) {
+		j["Plugins"] = nlohmann::json::array();
+	}
+
+	for (auto& p : j["Plugins"]) {
+		if (p.is_object() && p.value("Name", std::string()) == name) {
+			p["Enabled"] = enabled; // already present -> just update the flag
+			return j.dump(2) + "\n";
+		}
+	}
+
+	j["Plugins"].push_back({{"Name", name}, {"Enabled", enabled}});
+	return j.dump(2) + "\n";
+}
+
+std::string descriptorAddModule(const std::string& json, const std::string& name,
+								const std::string& type, const std::string& phase, std::string& err) {
+	auto j = nlohmann::json::parse(json, nullptr, /*allow_exceptions*/ false);
+	if (j.is_discarded() || !j.is_object()) {
+		err = "not a valid descriptor (JSON object expected)";
+		return {};
+	}
+
+	if (!j.contains("Modules") || !j["Modules"].is_array()) {
+		j["Modules"] = nlohmann::json::array();
+	}
+
+	for (auto& m : j["Modules"]) {
+		if (m.is_object() && m.value("Name", std::string()) == name) {
+			m["Type"] = type; // already present -> update type/phase
+			m["LoadingPhase"] = phase;
+			return j.dump(2) + "\n";
+		}
+	}
+
+	j["Modules"].push_back({{"Name", name}, {"Type", type}, {"LoadingPhase", phase}});
+	return j.dump(2) + "\n";
+}
+
 } // namespace unreal

@@ -93,8 +93,96 @@ void UnrealPlugin::onFrame(PluginHost &host)
         requestVerseWizard = false;
         ImGui::OpenPopup("New Verse Device###ueVerseWizard");
     }
+    if (requestDescriptorEditor)
+    {
+        requestDescriptorEditor = false;
+        ImGui::OpenPopup("Edit Descriptor###ueDescriptorEditor");
+    }
     renderClassWizard(host);
     renderVerseWizard(host);
+    renderDescriptorEditor(host);
+}
+
+void UnrealPlugin::renderDescriptorEditor(PluginHost &host)
+{
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Edit Descriptor###ueDescriptorEditor", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextDisabled("%s", descriptorTarget.filename().string().c_str());
+    ImGui::Separator();
+    ImGui::RadioButton("Plugin dependency", &descriptorMode, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Module", &descriptorMode, 1);
+
+    ImGui::SetNextItemWidth(240.0f);
+    ImGui::InputTextWithHint("Name", descriptorMode == 0 ? "PluginName" : "ModuleName",
+                             descriptorNameBuf, sizeof(descriptorNameBuf));
+
+    if (descriptorMode == 0)
+    {
+        ImGui::Checkbox("Enabled", &descriptorEnabled);
+    }
+    else
+    {
+        const auto &types = unreal::moduleTypes();
+        const auto &phases = unreal::loadingPhases();
+        auto combo = [](const char *label, const std::vector<std::string> &items, int &idx) {
+            ImGui::SetNextItemWidth(240.0f);
+            if (ImGui::BeginCombo(label, items[idx].c_str()))
+            {
+                for (int i = 0; i < (int)items.size(); ++i)
+                    if (ImGui::Selectable(items[i].c_str(), i == idx))
+                        idx = i;
+                ImGui::EndCombo();
+            }
+        };
+        if (descriptorTypeIdx >= (int)types.size())
+            descriptorTypeIdx = 0;
+        if (descriptorPhaseIdx >= (int)phases.size())
+            descriptorPhaseIdx = 0;
+        combo("Type", types, descriptorTypeIdx);
+        combo("LoadingPhase", phases, descriptorPhaseIdx);
+    }
+
+    ImGui::Separator();
+    bool canAdd = descriptorNameBuf[0] != '\0' && !descriptorTarget.empty();
+    if (!canAdd)
+        ImGui::BeginDisabled();
+    if (ImGui::Button("Add", ImVec2(120, 0)))
+    {
+        std::ifstream in(descriptorTarget, std::ios::binary);
+        std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        in.close();
+
+        std::string err, out;
+        if (descriptorMode == 0)
+            out = unreal::descriptorAddPlugin(json, descriptorNameBuf, descriptorEnabled, err);
+        else
+            out = unreal::descriptorAddModule(json, descriptorNameBuf,
+                                              unreal::moduleTypes()[descriptorTypeIdx],
+                                              unreal::loadingPhases()[descriptorPhaseIdx], err);
+
+        if (out.empty())
+        {
+            host.hostError("Descriptor edit failed: " + (err.empty() ? "unknown" : err));
+        }
+        else
+        {
+            std::ofstream of(descriptorTarget, std::ios::binary | std::ios::trunc);
+            of << out;
+            of.close();
+            host.hostOpenFile(descriptorTarget.string()); // show the result (reloads if open)
+            host.hostToast(std::string("Added ") + (descriptorMode == 0 ? "plugin " : "module ") + descriptorNameBuf);
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    if (!canAdd)
+        ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0)))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
 }
 
 void UnrealPlugin::renderClassWizard(PluginHost &host)
@@ -338,6 +426,19 @@ void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
     }
     if (ImGui::MenuItem("Open .uproject"))
         host.hostOpenFile(menuProj.string());
+    if (ImGui::MenuItem("Add Module / Plugin to descriptor..."))
+    {
+        // Edit the active .uproject/.uplugin if one is focused, else the project's.
+        std::filesystem::path active = host.hostActiveFilename();
+        std::string aext = active.extension().string();
+        std::transform(aext.begin(), aext.end(), aext.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        descriptorTarget = (aext == ".uproject" || aext == ".uplugin") ? active : menuProj;
+        descriptorNameBuf[0] = '\0';
+        requestDescriptorEditor = true;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Interactively add a plugin dependency or a module (Type + LoadingPhase from lists) to the .uproject/.uplugin");
     ImGui::Separator();
     if (ImGui::MenuItem("Install IDE plugin into project"))
     {

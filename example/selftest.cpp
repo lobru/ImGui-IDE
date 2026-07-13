@@ -1460,6 +1460,37 @@ int main(int argc, char** argv)
 		      "uasset open: non-asset files are left for the host");
 		std::filesystem::remove(tmp, wec);
 	}
+
+	// ── Interactive descriptor editing (.uproject module/plugin adder) ──────
+	{
+		std::string err;
+		std::string base = "{\n  \"FileVersion\": 3,\n  \"Modules\": [\n    {\n      \"Name\": \"Game\",\n"
+		                   "      \"Type\": \"Runtime\",\n      \"LoadingPhase\": \"Default\"\n    }\n  ]\n}\n";
+
+		std::string withPlugin = unreal::descriptorAddPlugin(base, "EnhancedInput", true, err);
+		CHECK(!withPlugin.empty() && withPlugin.find("\"EnhancedInput\"") != std::string::npos &&
+		          withPlugin.find("\"Plugins\"") != std::string::npos,
+		      "descriptor: adds a Plugins array + the dependency");
+
+		std::string withMod = unreal::descriptorAddModule(base, "GameEditor", "Editor", "PostEngineInit", err);
+		CHECK(withMod.find("\"GameEditor\"") != std::string::npos &&
+		          withMod.find("\"Type\": \"Editor\"") != std::string::npos &&
+		          withMod.find("\"LoadingPhase\": \"PostEngineInit\"") != std::string::npos,
+		      "descriptor: adds a module with Type + LoadingPhase from the lists");
+
+		// idempotent: adding the same plugin twice doesn't duplicate it
+		std::string twice = unreal::descriptorAddPlugin(withPlugin, "EnhancedInput", false, err);
+		size_t first = twice.find("EnhancedInput");
+		CHECK(first != std::string::npos && twice.find("EnhancedInput", first + 1) == std::string::npos,
+		      "descriptor: re-adding a plugin updates in place (no duplicate)");
+
+		CHECK(unreal::descriptorAddPlugin("not json", "X", true, err).empty() && !err.empty(),
+		      "descriptor: invalid JSON is rejected with a reason");
+
+		CHECK(!unreal::moduleTypes().empty() && !unreal::loadingPhases().empty() &&
+		          unreal::loadingPhases()[0] == "Default",
+		      "descriptor: Type + LoadingPhase picklists populated");
+	}
 #endif // IMGUIIDE_PLUGIN_UNREAL
 
 	// ── Plugin registry: runtime enable/disable + persistence ─────────────

@@ -61,4 +61,21 @@ std::filesystem::path resolveInclude(const std::filesystem::path& engineRoot,
 									 const std::filesystem::path& uproject,
 									 const std::string& include);
 
+// ── Interactive .uproject / descriptor editing ──────────────────────────────
+// The valid picklists UE offers for a module descriptor (used to drive dropdowns
+// so you never hand-type a wrong value).
+const std::vector<std::string>& moduleTypes();     // Runtime, Editor, Developer, ...
+const std::vector<std::string>& loadingPhases();   // Default, PostConfigInit, ...
+
+// Add a Plugin dependency to a .uproject/.uplugin JSON string, returning the new
+// text. Idempotent (a plugin already present is left alone). Empty return + err on
+// parse failure.
+std::string descriptorAddPlugin(const std::string& json, const std::string& name, bool enabled,
+								std::string& err);
+
+// Add a Module entry to a .uproject/.uplugin JSON string. `type` and `phase` come
+// from moduleTypes()/loadingPhases(). Idempotent on the module name.
+std::string descriptorAddModule(const std::string& json, const std::string& name,
+								const std::string& type, const std::string& phase, std::string& err);
+
 } // namespace unreal

@@ -62,6 +62,16 @@ private:
     void renderClassWizard(PluginHost &host);
     void renderVerseWizard(PluginHost &host);
 
+    // ── Interactive .uproject/.uplugin descriptor editor ──────────────────
+    bool requestDescriptorEditor = false;
+    std::filesystem::path descriptorTarget; // the .uproject/.uplugin being edited
+    int  descriptorMode = 0;                 // 0 = Plugin, 1 = Module
+    char descriptorNameBuf[128] = {0};
+    bool descriptorEnabled = true;           // Plugin: Enabled
+    int  descriptorTypeIdx = 0;              // Module: index into unreal::moduleTypes()
+    int  descriptorPhaseIdx = 0;             // Module: index into unreal::loadingPhases()
+    void renderDescriptorEditor(PluginHost &host);
+
     // Parse the active .uasset/.umap's header/name-table/imports and open a report.
     void inspectActiveUAsset(PluginHost &host);
     void inspectUAssetPath(PluginHost &host, const std::filesystem::path &asset);
