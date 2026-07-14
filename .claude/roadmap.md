@@ -33,11 +33,13 @@ Status: [ ] not started · [~] in progress/partial · [x] done. Items sized for 
 iteration where possible; big ones have substeps.
 
 ### Performance — worker threads (MAJOR)
-- [ ] Move backgroundable work OFF the UI thread. Already threaded: symbol index
+- [~] Move backgroundable work OFF the UI thread. Already threaded: symbol index
       (`rebuildProjectIndex`), git poll, decompile, clone-watch. Named targets:
-  - [ ] **Fold detection** — compute fold ranges on a worker, publish to the doc
-        (careful: folds feed rendering; needs a snapshot/version handshake like
-        the symbol index).
+  - [x] **Fold detection** (b1e6f82) — the scan turned out to be pure (line text +
+        comment markers only, no glyph colors), so it was extracted to
+        `Folder::computeFoldRanges` and runs on a worker above 5000 lines. Apply
+        (visibility) stays on the UI thread; stale/again/generation guards; the web
+        build stays synchronous. selftest 474.
   - [ ] **Large-file splitting/loading** — chunked/threaded load so opening a huge
         file doesn't stall the frame (there's a large-file mode already; make the
         initial read + tokenize incremental/off-thread).
