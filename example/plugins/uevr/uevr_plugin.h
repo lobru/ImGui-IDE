@@ -42,6 +42,7 @@ private:
     // ── Blueprint visual scripting editor ──────────────────────────────────
     std::unique_ptr<BlueprintEditor> blueprintEditor; // lazily created on first show
     bool        blueprintVisible = false;
+    bool        blueprintPaletteVisible = true; // UE-style right-hand node/SDK palette
     std::string blueprintSnapshot;                    // Graph > Save/Load Snapshot buffer
     void renderBlueprintWindow(PluginHost &host);
 

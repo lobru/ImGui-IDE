@@ -389,6 +389,16 @@ public:
 	// render the editor in the current window (call this every frame)
 	void Render(const char* title, const ImVec2& size = ImVec2(), bool border = false);
 
+	// UE-style palette: the full node list (grouped by category) plus a browsable
+	// SDK class list, for a dockable side panel. Clicking spawns the node at the
+	// next free canvas slot. Call inside your own child/window.
+	void RenderPalettePanel();
+
+	// Middle-mouse drag-scroll for the widget's own scrolling surfaces (the node
+	// list + palette). The host owns the invert-pan setting, so the plugin routes
+	// it back in through this hook — every scroll surface honors it.
+	inline void SetPanScrollHook(std::function<void(int)> hook) { panScrollHook = std::move(hook); }
+
 private:
 	// a parsed graph (used by load and paste)
 	struct ParsedGraph {
@@ -575,6 +585,8 @@ private:
 	ID contextNode = 0;
 	ID renameNode = 0;
 	char searchBuffer[128] = {0};
+	char paletteSearchBuffer[128] = {0};       // the side palette's own search
+	std::function<void(int)> panScrollHook;    // host-routed middle-mouse pan (see SetPanScrollHook)
 	char renameBuffer[128] = {0};
 	std::vector<PaletteAction> palette;
 	bool paletteFocusSearch = false;

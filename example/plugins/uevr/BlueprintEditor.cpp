@@ -3872,6 +3872,146 @@ bool BlueprintEditor::paletteActionMatchesPin(const PaletteAction& paletteAction
 
 
 //
+//	BlueprintEditor::RenderPalettePanel
+//
+//	The UE-style palette: every registered node grouped by category, plus a
+//	browsable SDK class list (from the imported side index) whose members can be
+//	dropped straight onto the canvas. Clicking spawns at the next free slot.
+//
+
+void BlueprintEditor::RenderPalettePanel() {
+	ImGui::SetNextItemWidth(-FLT_MIN);
+	ImGui::InputTextWithHint("##palSearch", "Search nodes + classes...", paletteSearchBuffer,
+	                         sizeof(paletteSearchBuffer));
+	ImGui::Separator();
+
+	std::string search = toLower(paletteSearchBuffer);
+
+	ImGui::BeginChild("##palList", ImVec2(0.0f, 0.0f));
+
+	auto spawnAt = [this](const PaletteAction& entry) {
+		ID id = entry.spawn(NextSpawnPos());
+
+		if (id) {
+			SelectNode(id);
+		}
+	};
+
+	// ── registered nodes, grouped by category ──────────────────────────────
+	std::map<std::string, std::vector<const PaletteAction*>> groups;
+
+	for (auto& entry : palette) {
+		if (!search.empty()) {
+			std::string hay = toLower(entry.name + " " + entry.category + " " + entry.keywords);
+
+			if (hay.find(search) == std::string::npos) {
+				continue;
+			}
+		}
+
+		groups[entry.category].push_back(&entry);
+	}
+
+	for (auto& group : groups) {
+		// A search implies you want to see the hits — open the groups then.
+		ImGuiTreeNodeFlags flags = search.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen;
+
+		if (ImGui::TreeNodeEx(group.first.c_str(), flags)) {
+			for (auto entry : group.second) {
+				ImGui::PushID(entry);
+
+				if (ImGui::Selectable(entry->name.c_str())) {
+					spawnAt(*entry);
+				}
+
+				ImGui::PopID();
+			}
+
+			ImGui::TreePop();
+		}
+	}
+
+	// ── SDK classes (imported dump) ────────────────────────────────────────
+	// Gated on a search: a full game dump is 10k classes and listing them all
+	// would be unusable (and is exactly the flood we removed from the palette).
+	if (auxRegistry) {
+		ImGui::Separator();
+
+		if (search.size() < 2) {
+			ImGui::TextDisabled("SDK classes: type 2+ chars to search");
+
+		} else if (ImGui::TreeNodeEx("SDK Classes", ImGuiTreeNodeFlags_DefaultOpen)) {
+			int shown = 0;
+
+			for (auto& cls : auxRegistry->GetClasses()) {
+				if (shown >= 40) {
+					ImGui::TextDisabled("(more — refine the search)");
+					break;
+				}
+
+				if (toLower(cls->name).find(search) == std::string::npos) {
+					continue;
+				}
+
+				++shown;
+				ImGui::PushID(cls.get());
+
+				if (ImGui::TreeNode(cls->name.c_str())) {
+					for (auto& fn : cls->functions) {
+						ImGui::PushID(&fn);
+
+						if (ImGui::Selectable(fn.name.c_str())) {
+							ensureClassAvailable(cls->name);
+							ID id = AddCallFunctionNode(cls->name, fn.name, NextSpawnPos());
+
+							if (id) {
+								SelectNode(id);
+							}
+						}
+
+						ImGui::PopID();
+					}
+
+					for (auto& prop : cls->properties) {
+						ImGui::PushID(&prop);
+						std::string label = "Get " + prop.name;
+
+						if (ImGui::Selectable(label.c_str())) {
+							ensureClassAvailable(cls->name);
+							ID id = AddPropertyGetNode(cls->name, prop.name, NextSpawnPos());
+
+							if (id) {
+								SelectNode(id);
+							}
+						}
+
+						ImGui::PopID();
+					}
+
+					ImGui::TreePop();
+				}
+
+				ImGui::PopID();
+			}
+
+			if (shown == 0) {
+				ImGui::TextDisabled("(no class matches)");
+			}
+
+			ImGui::TreePop();
+		}
+	}
+
+	// Middle-mouse drag-scroll, same as every other surface.
+	if (panScrollHook) {
+		panScrollHook(107);
+	}
+
+	ImGui::EndChild();
+}
+
+
+//
 //	BlueprintEditor::renderGraphContextMenu
 //
 
@@ -4170,6 +4310,11 @@ void BlueprintEditor::renderGraphContextMenu() {
 				ImGui::SameLine();
 				ImGui::TextDisabled("(%s)", paletteAction->category.c_str());
 			}
+		}
+
+		// Middle-mouse drag-scroll the node list, like every other scroll surface.
+		if (panScrollHook) {
+			panScrollHook(106);
 		}
 
 		ImGui::EndChild();

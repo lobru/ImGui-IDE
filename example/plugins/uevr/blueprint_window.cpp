@@ -523,6 +523,12 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
                 bool ctx = bp.IsContextSensitive();
                 if (ImGui::MenuItem("Context Sensitive Menu", nullptr, &ctx))
                     bp.SetContextSensitive(ctx);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Palette", nullptr, &blueprintPaletteVisible))
+                {
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Right-side node + SDK class list (like Unreal's palette)");
                 ImGui::EndMenu();
             }
 
@@ -581,9 +587,35 @@ void UevrPlugin::renderBlueprintWindow(PluginHost &host)
             ImGui::Separator();
         }
 
+        // Route the widget's own scroll surfaces (node list + palette) through the
+        // host so they honor the invert-pan setting like every other pan surface.
+        bp.SetPanScrollHook([&host](int key) { host.hostMiddleMousePanScroll(key); });
+
         renderBlueprintSidebar(host, bp);
         ImGui::SameLine();
+
+        // Canvas reserves room for the right-hand palette (UE-style), when shown.
+        const float paletteWidth = blueprintPaletteVisible ? 260.0f : 0.0f;
+        const float gap = blueprintPaletteVisible ? ImGui::GetStyle().ItemSpacing.x : 0.0f;
+        ImGui::BeginChild("##bpCanvasHost", ImVec2(-(paletteWidth + gap), 0.0f));
         bp.Render("BlueprintCanvas");
+        ImGui::EndChild();
+
+        if (blueprintPaletteVisible)
+        {
+            ImGui::SameLine();
+            ImGui::BeginChild("##bpPalette", ImVec2(paletteWidth, 0.0f), ImGuiChildFlags_Borders);
+            ImGui::TextDisabled("Palette");
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 14.0f);
+            if (ImGui::SmallButton("x"))
+                blueprintPaletteVisible = false;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Hide the palette (View > Palette to bring it back)");
+            ImGui::Separator();
+            bp.RenderPalettePanel();
+            ImGui::EndChild();
+        }
+
         autosaveBlueprint(); // periodic tmp-file autosave while dirty
     }
     ImGui::End();
