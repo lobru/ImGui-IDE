@@ -685,6 +685,22 @@ private:
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused
 
+	// ── Guided tour ─────────────────────────────────────────────────────────
+	// Help ▸ Take the Tour. Each step names a real panel, turns it on, and points
+	// at it — a tour that opens nothing would just be a slideshow of claims.
+	struct TourStep {
+		const char* title;
+		const char* body;
+		const char* window;    // ImGui window to highlight, or nullptr for a centered card
+		bool Editor::*toggle;  // panel flag to force on for this step, or nullptr
+	};
+	static const std::vector<TourStep>& tourSteps();
+
+	bool tourActive = false;
+	int  tourIndex = 0;
+	void startTour();
+	void renderTour();
+
 	// ── Sticky notes ────────────────────────────────────────────────────────
 	// Line-anchored annotations kept in a sidecar (.imguiide/notes.json) so they
 	// persist across restarts without touching the source. Each note records the

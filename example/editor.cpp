@@ -9966,6 +9966,7 @@ void Editor::render()
     renderNotesPanel();
 
     renderNavigationPanel();
+    renderTour();   // after the panels exist, so a step can anchor to a real window
     renderGithubBrowser();
     renderImageWindows();
     renderPdfWindows();
@@ -11948,6 +11949,9 @@ void Editor::renderMenuBar()
         if (ImGui::BeginMenu("Help"))
         {
             ImGui::MenuItem(("Version  " + std::string(kAppVersion)).c_str(), nullptr, false, false);
+            if (ImGui::MenuItem("Take the Tour"))
+                startTour();
+            ImGui::Separator();
             if (ImGui::MenuItem("Check for Updates", nullptr, false, !updateFuture.valid()))
                 checkForUpdates(true);
             if (updateAvailable && ImGui::MenuItem("Download Update…"))
@@ -14584,6 +14588,182 @@ void Editor::buildProjectTrie()
 //
 //  Editor::buildAutocompleteTrie
 //
+
+//
+//  ── Guided tour ────────────────────────────────────────────────────────────
+//
+//  Help ▸ Take the Tour. Every step turns its panel ON and anchors a card to the
+//  real window, so the tour drives the actual UI instead of describing it.
+//
+
+const std::vector<Editor::TourStep> &Editor::tourSteps()
+{
+    static const std::vector<TourStep> steps = {
+        {"Welcome to ImGui-IDE",
+         "A self-hosting IDE: it's written in the code it edits.\n\n"
+         "This tour opens each panel as it goes — everything you see is live, not a mockup.\n"
+         "Esc or Skip leaves at any point.",
+         nullptr, nullptr},
+
+        {"The project tree",
+         "Open a folder and the tree indexes it in the background.\n\n"
+         "Sort by name, modified, size or type; add EXTRA source locations to pull folders "
+         "outside the project into both the tree and the symbol cache. The 'code / project "
+         "files' filter keeps images and PDFs.",
+         "Navigation##projectNav", &Editor::navPanelVisible},
+
+        {"Symbols & go-to-definition",
+         "A tree-sitter indexer walks C/C++/C#/Lua/Python/Go/Rust into a kind-ranked symbol "
+         "cache, refined by clangd where it's available.\n\n"
+         "F12 jumps to a definition, Ctrl+T searches every symbol in the project.",
+         "Symbols###symbolsPanel", &Editor::symbolsPanelVisible},
+
+        {"Find in files",
+         "Project-wide search with the same exclusions the indexer uses — Unreal's "
+         "Intermediate/, Binaries/, Saved/ and friends stay out of your results.",
+         "Find in Files###findInFiles", &Editor::findInFilesVisible},
+
+        {"Sticky notes",
+         "Right-click any line ▸ Add Sticky Note. Notes live in a sidecar, never in your "
+         "source, and they FOLLOW their line when the code moves — each one remembers the "
+         "text it was attached to.\n\n"
+         "Every note is stamped with the git commit and author it was written at, so this "
+         "panel reads as a history of the commentary on a file.",
+         "Notes", &Editor::notesVisible},
+
+        {"Plugins do the heavy lifting",
+         "The Blueprint visual scripting graph, the live UEVR game bridge and the Unreal "
+         "tooling are real DLLs — a core build links ZERO of their code.\n\n"
+         "Settings ▸ Plugins toggles each at runtime. Open a .uasset and the Unreal plugin "
+         "claims the binary and shows it as colored, foldable JSON.",
+         nullptr, nullptr},
+
+        {"That's the tour",
+         "Everything else is in the menus: split panes, diff and 3-way merge, formatters, "
+         "themes, a PDF viewer, git branch switching and a GitHub repo browser that needs no "
+         "clone.\n\n"
+         "Help ▸ Take the Tour brings this back any time.",
+         nullptr, nullptr},
+    };
+
+    return steps;
+}
+
+void Editor::startTour()
+{
+    tourActive = true;
+    tourIndex = 0;
+}
+
+void Editor::renderTour()
+{
+    if (!tourActive)
+        return;
+
+    const auto &steps = tourSteps();
+
+    if (tourIndex < 0 || tourIndex >= (int)steps.size())
+    {
+        tourActive = false;
+        return;
+    }
+
+    const TourStep &step = steps[tourIndex];
+
+    // Open the panel this step is about — a tour that talks about a panel it
+    // never shows is just a slideshow.
+    if (step.toggle)
+        this->*(step.toggle) = true;
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+    {
+        tourActive = false;
+        return;
+    }
+
+    // Anchor the card to the window being described (and outline it), else center it.
+    bool anchored = false;
+
+    if (step.window)
+    {
+        if (ImGuiWindow *w = ImGui::FindWindowByName(step.window))
+        {
+            if (w->Active && w->Size.x > 1.0f)
+            {
+                ImGui::GetForegroundDrawList(w->Viewport)
+                    ->AddRect(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y),
+                              IM_COL32(240, 200, 90, 230), 4.0f, 0, 2.5f);
+
+                ImGui::SetNextWindowViewport(w->Viewport->ID);
+                ImGui::SetNextWindowPos(ImVec2(w->Pos.x + w->Size.x + 12.0f, w->Pos.y + 12.0f),
+                                        ImGuiCond_Always);
+                anchored = true;
+            }
+        }
+    }
+
+    if (!anchored)
+    {
+        ImGuiViewport *vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                       vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(420.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.97f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(240, 200, 90, 230));
+
+    if (ImGui::Begin("##tour", nullptr,
+                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
+                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextDisabled("%d / %d", tourIndex + 1, (int)steps.size());
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 34.0f);
+        if (ImGui::SmallButton("x"))
+            tourActive = false;
+
+        ImGui::TextColored(ImVec4(0.94f, 0.78f, 0.35f, 1.0f), "%s", step.title);
+
+        ImGui::Spacing();
+        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+        ImGui::TextUnformatted(step.body);
+        ImGui::PopTextWrapPos();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::BeginDisabled(tourIndex == 0);
+        if (ImGui::Button("Back", ImVec2(80, 0)))
+            tourIndex--;
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        const bool last = tourIndex == (int)steps.size() - 1;
+        if (ImGui::Button(last ? "Done" : "Next", ImVec2(80, 0)))
+        {
+            if (last)
+                tourActive = false;
+            else
+                tourIndex++;
+        }
+
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetWindowWidth() - 90.0f);
+        if (ImGui::Button("Skip", ImVec2(70, 0)))
+            tourActive = false;
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
 
 //
 //  ── Sticky notes ───────────────────────────────────────────────────────────
