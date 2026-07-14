@@ -19,6 +19,7 @@
 
 #include "TextEditor.h"
 #include "notes.h"
+#include "screenshot.h"
 #include "tsindex.h"
 #include "lsp_protocol.h"
 #include "nav_history.h"
@@ -535,6 +536,80 @@ int main(int argc, char** argv)
 		notes::shiftLines(shiftMe, "src/b.cpp", 10, +3);
 		CHECK(shiftMe[0].line == 5, "shiftLines leaves notes above the edit alone");
 		CHECK(shiftMe[1].line == 23, "shiftLines pushes notes below the edit down");
+	}
+
+	// ── Screenshot PNG encoder. Hand-rolled (STORED deflate + CRC32 + Adler32), so
+	//    it gets checked structurally rather than trusted. ──
+	{
+		const int W = 7, H = 5; // deliberately not a power of two / not stride-aligned
+		std::vector<uint8_t> px((size_t)W * H * 4);
+		for (int y = 0; y < H; y++)
+			for (int x = 0; x < W; x++)
+			{
+				uint8_t *p = &px[((size_t)y * W + x) * 4];
+				p[0] = (uint8_t)(x * 30);
+				p[1] = (uint8_t)(y * 50);
+				p[2] = 0x7F;
+				p[3] = 0x11; // must come out opaque regardless
+			}
+
+		std::string path = "selftest-shot.png";
+		CHECK(screenshot::writePng(path, px.data(), W, H, W * 4), "writePng writes a file");
+
+		std::ifstream in(path, std::ios::binary);
+		std::string blob((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		in.close();
+		CHECK(blob.size() > 60, "the PNG is non-trivial");
+
+		auto be32 = [&](size_t at) {
+			return ((uint32_t)(uint8_t)blob[at] << 24) | ((uint32_t)(uint8_t)blob[at + 1] << 16) |
+				   ((uint32_t)(uint8_t)blob[at + 2] << 8) | (uint32_t)(uint8_t)blob[at + 3];
+		};
+
+		CHECK(blob.compare(0, 8, std::string("\x89PNG\r\n\x1a\n", 8)) == 0, "PNG signature");
+		CHECK(blob.compare(12, 4, "IHDR") == 0, "first chunk is IHDR");
+		CHECK(be32(16) == (uint32_t)W && be32(20) == (uint32_t)H, "IHDR carries the right width/height");
+		CHECK((uint8_t)blob[24] == 8 && (uint8_t)blob[25] == 6, "IHDR says 8-bit RGBA");
+		CHECK(blob.find("IDAT") != std::string::npos, "an IDAT chunk is present");
+		CHECK(blob.compare(blob.size() - 8, 4, "IEND") == 0, "the file ends with IEND");
+
+		// Walk the chunks and verify EVERY CRC — a bad CRC is the classic way a
+		// hand-rolled PNG "works" in one viewer and is rejected by the next.
+		auto crcOf = [](const uint8_t *d, size_t n) {
+			uint32_t crc = 0xFFFFFFFFu;
+			for (size_t i = 0; i < n; i++)
+			{
+				crc ^= d[i];
+				for (int k = 0; k < 8; k++)
+					crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)(-(int32_t)(crc & 1)));
+			}
+			return crc ^ 0xFFFFFFFFu;
+		};
+
+		size_t at = 8;
+		int chunks = 0;
+		bool crcOk = true;
+		while (at + 12 <= blob.size())
+		{
+			uint32_t len = be32(at);
+			const uint8_t *typeAndData = (const uint8_t *)blob.data() + at + 4;
+			uint32_t stored = be32(at + 8 + len);
+			if (crcOf(typeAndData, len + 4) != stored)
+				crcOk = false;
+			chunks++;
+			at += 12 + len;
+		}
+		CHECK(chunks == 3, "the PNG has exactly IHDR + IDAT + IEND");
+		CHECK(crcOk, "every chunk CRC-32 validates");
+		CHECK(at == blob.size(), "the chunk walk consumes the file exactly (no trailing garbage)");
+
+		// BGRA -> RGBA swaps the right channels and leaves alpha alone
+		uint8_t bgra[4] = {0x11, 0x22, 0x33, 0x44};
+		screenshot::bgraToRgba(bgra, 4);
+		CHECK(bgra[0] == 0x33 && bgra[1] == 0x22 && bgra[2] == 0x11 && bgra[3] == 0x44,
+			  "bgraToRgba swaps R and B and leaves G/A untouched");
+
+		std::remove(path.c_str());
 	}
 
 	// ── Tree-sitter symbol extraction (go-to-def/decl foundation) ──

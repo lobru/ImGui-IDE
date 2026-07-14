@@ -31,6 +31,7 @@
 #include "lsp_client.h"
 #include "nav_history.h"
 #include "notes.h"
+#include "screenshot.h"
 #include "updater.h"
 #include "plugin_registry.h"
 
@@ -684,6 +685,21 @@ private:
 	float  prefPanScrollAccel  = 1.0f;    // middle-mouse pan/scroll accel gain (1.0 = default feel, 0 = linear)
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused
+
+	// ── Screenshot ──────────────────────────────────────────────────────────
+	// The app captures ITSELF: main.cpp re-renders the frame into an offscreen GPU
+	// texture and downloads it. OS screen capture can't see an SDL3/D3D12 swapchain
+	// (it reads back black), and would also capture whatever window is on top.
+public:
+	// called from the render loop: true once when a capture was asked for
+	bool consumeScreenshotRequest(std::string& outPath);
+	void onScreenshotWritten(bool ok, const std::string& path);
+	void requestScreenshot();               // Help ▸ Save Screenshot (or the keybind)
+
+private:
+	bool        screenshotPending = false;
+	std::string screenshotPath;
+	std::string lastScreenshotPath;         // shown in the toast; click-to-open target
 
 	// ── Guided tour ─────────────────────────────────────────────────────────
 	// Help ▸ Take the Tour. Each step names a real panel, turns it on, and points

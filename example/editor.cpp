@@ -11951,6 +11951,14 @@ void Editor::renderMenuBar()
             ImGui::MenuItem(("Version  " + std::string(kAppVersion)).c_str(), nullptr, false, false);
             if (ImGui::MenuItem("Take the Tour"))
                 startTour();
+            if (ImGui::MenuItem("Save Screenshot", "Ctrl-Alt-S"))
+                requestScreenshot();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Reads back the frame the app itself drew (PNG, to %s).\n"
+                                  "Not an OS screen grab: it can't see a GPU swapchain.",
+                                  (userConfigDir() / "screenshots").generic_string().c_str());
+            if (!lastScreenshotPath.empty() && ImGui::MenuItem("Open Screenshots Folder"))
+                navOpenExternally((userConfigDir() / "screenshots").string());
             ImGui::Separator();
             if (ImGui::MenuItem("Check for Updates", nullptr, false, !updateFuture.valid()))
                 checkForUpdates(true);
@@ -12119,7 +12127,11 @@ void Editor::renderMenuBar()
         // → Keybinds catalogue. Order: more-specific (Shift) chords first where a
         // plain chord could otherwise swallow them.
         tickKeyChordPending(); // age out / cancel a half-entered two-stroke chord
-        if (keybindPressed("file.reopen", "Ctrl+Shift+T"))
+        if (keybindPressed("view.screenshot", "Ctrl+Alt+S"))
+        {
+            requestScreenshot();
+        }
+        else if (keybindPressed("file.reopen", "Ctrl+Shift+T"))
         {
             reopenLastClosedTab();
         }
@@ -14588,6 +14600,46 @@ void Editor::buildProjectTrie()
 //
 //  Editor::buildAutocompleteTrie
 //
+
+//
+//  ── Screenshot ─────────────────────────────────────────────────────────────
+//
+//  The request is fulfilled by main.cpp (it owns the GPU device and this frame's
+//  draw data); the editor only decides WHERE it goes and reports the result.
+//
+
+void Editor::requestScreenshot()
+{
+    std::error_code ec;
+    std::filesystem::path dir = userConfigDir() / "screenshots";
+    std::filesystem::create_directories(dir, ec);
+
+    screenshotPath = screenshot::timestampedPath(dir.generic_string());
+    screenshotPending = true;
+}
+
+bool Editor::consumeScreenshotRequest(std::string &outPath)
+{
+    if (!screenshotPending)
+        return false;
+
+    screenshotPending = false;
+    outPath = screenshotPath;
+    return true;
+}
+
+void Editor::onScreenshotWritten(bool ok, const std::string &path)
+{
+    if (!ok)
+    {
+        pushToast("Screenshot failed", IM_COL32(230, 110, 100, 255), 3);
+        return;
+    }
+
+    lastScreenshotPath = path;
+    pushToast("Screenshot saved \xe2\x80\x94 " + std::filesystem::path(path).filename().string(),
+              IM_COL32(120, 200, 130, 255), 4);
+}
 
 //
 //  ── Guided tour ────────────────────────────────────────────────────────────

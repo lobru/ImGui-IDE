@@ -38,6 +38,7 @@
 #endif
 
 #include "editor.h"
+#include "screenshot.h"
 #include "dejavu.h"
 
 
@@ -522,8 +523,92 @@ int main(int argc, char** argv) {
 			SDL_EndGPURenderPass(render_pass);
 		}
 
-		// submit the command buffer
-		SDL_SubmitGPUCommandBuffer(command_buffer);
+		// ── Screenshot: read back what we DREW, not what the screen shows ──
+		//
+		// OS screen capture reads a GPU (D3D12) swapchain as a black rectangle, and
+		// it would also capture whatever window happens to sit on top of ours. So we
+		// re-render this frame's draw data into an offscreen texture and download
+		// THAT: authoritative, independent of z-order, and it works even if the
+		// window is behind something.
+		//
+		// (Why an offscreen copy instead of downloading the swapchain texture: a
+		// swapchain image is not a valid copy source on every backend.)
+		std::string shotPath;
+		if (editor.consumeScreenshotRequest(shotPath) && swapchain_texture != nullptr && !is_minimized) {
+			const Uint32 w = (Uint32)(draw_data->DisplaySize.x * draw_data->FramebufferScale.x);
+			const Uint32 h = (Uint32)(draw_data->DisplaySize.y * draw_data->FramebufferScale.y);
+			const SDL_GPUTextureFormat fmt = SDL_GetGPUSwapchainTextureFormat(gpu_device, window);
+
+			SDL_GPUTextureCreateInfo tci = {};
+			tci.type = SDL_GPU_TEXTURETYPE_2D;
+			tci.format = fmt;
+			tci.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+			tci.width = w;
+			tci.height = h;
+			tci.layer_count_or_depth = 1;
+			tci.num_levels = 1;
+			SDL_GPUTexture* shot = SDL_CreateGPUTexture(gpu_device, &tci);
+
+			SDL_GPUTransferBufferCreateInfo tbi = {};
+			tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+			tbi.size = w * h * 4;
+			SDL_GPUTransferBuffer* xfer = SDL_CreateGPUTransferBuffer(gpu_device, &tbi);
+
+			if (shot && xfer) {
+				SDL_GPUColorTargetInfo shot_target = {};
+				shot_target.texture = shot;
+				shot_target.load_op = SDL_GPU_LOADOP_CLEAR;
+				shot_target.store_op = SDL_GPU_STOREOP_STORE;
+				SDL_GPURenderPass* shot_pass = SDL_BeginGPURenderPass(command_buffer, &shot_target, 1, nullptr);
+				ImGui_ImplSDLGPU3_RenderDrawData(draw_data, command_buffer, shot_pass);
+				SDL_EndGPURenderPass(shot_pass);
+
+				SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(command_buffer);
+				SDL_GPUTextureRegion src = {};
+				src.texture = shot;
+				src.w = w;
+				src.h = h;
+				src.d = 1;
+				SDL_GPUTextureTransferInfo dst = {};
+				dst.transfer_buffer = xfer;
+				dst.pixels_per_row = w;
+				dst.rows_per_layer = h;
+				SDL_DownloadFromGPUTexture(copy, &src, &dst);
+				SDL_EndGPUCopyPass(copy);
+
+				// the GPU has to actually finish before the pixels mean anything
+				SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(command_buffer);
+				command_buffer = nullptr;
+
+				if (fence) {
+					SDL_WaitForGPUFences(gpu_device, true, &fence, 1);
+					SDL_ReleaseGPUFence(gpu_device, fence);
+
+					if (void* mapped = SDL_MapGPUTransferBuffer(gpu_device, xfer, false)) {
+						std::vector<uint8_t> pixels((size_t)w * h * 4);
+						std::memcpy(pixels.data(), mapped, pixels.size());
+						SDL_UnmapGPUTransferBuffer(gpu_device, xfer);
+
+						// D3D12's swapchain is usually BGRA; PNG wants RGBA
+						if (fmt == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM ||
+						    fmt == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB)
+							screenshot::bgraToRgba(pixels.data(), pixels.size());
+
+						const bool ok = screenshot::writePng(shotPath, pixels.data(), (int)w, (int)h, (int)(w * 4));
+						editor.onScreenshotWritten(ok, shotPath);
+					}
+				}
+			} else {
+				editor.onScreenshotWritten(false, shotPath);
+			}
+
+			if (shot) SDL_ReleaseGPUTexture(gpu_device, shot);
+			if (xfer) SDL_ReleaseGPUTransferBuffer(gpu_device, xfer);
+		}
+
+		// submit the command buffer (unless the screenshot path already did, to fence)
+		if (command_buffer != nullptr)
+			SDL_SubmitGPUCommandBuffer(command_buffer);
 
 		// render and present additional platform windows (multi-viewport)
 		if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
