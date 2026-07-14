@@ -75,33 +75,43 @@ iteration where possible; big ones have substeps.
       real Claude endpoint/inbox, and confirm the round trip works.
 
 ### Persistent comments / sticky notes
-- [ ] Comments/annotations saved to a sidecar file, persisting as **sticky notes**
-      anchored to lines.
-- [ ] Plug into git: associate notes with commits → a **blame-style** annotation
-      view.
+- [x] **Sticky notes** (8e13519) — sidecar `<project>/.imguiide/notes.json`, notes
+      anchored by LINE TEXT so they follow the code when it moves (nearest-match
+      re-anchor; trimmed compare survives a re-indent; honest `orphaned` flag when
+      the line is gone). Gutter markers + View ▸ Notes.
+- [x] **Git stamp / blame-style view** (8e13519) — each note records the commit +
+      author it was written at; the Notes panel is filterable, jump-to-line,
+      resolvable. 13 headless checks.
 
 ### Live coding
+- [x] **Hotkey conflict** (f64e9b5) — a CHORDED F11 (Unreal Live Coding is
+      Ctrl+Alt+F11) never toggles Focus Mode; with a UE project open + the new
+      "Live coding owns F11" setting, bare F11 is left to Unreal too (one-time
+      toast → View ▸ Focus Mode).
 - [ ] Live-coding features for the app itself (hot-reload the app's own
-      code/plugins) and for Unreal.
-- [ ] **Hotkey conflict**: when a UE project is open AND live coding is enabled,
-      pressing the live-coding hotkeys must NOT also toggle Focus Mode. (Needs a
-      live-coding-enabled flag + hotkey gating.)
+      code/plugins) — the plugin DLLs are already shadow-copied, so a reload path
+      is plausible; not started.
 
 ### UE plugin expansion
+- [x] **Graphical class browser** (5fe9665) — Tools ▸ Class Browser (UEVR): the SDK
+      reflection hierarchy as a real tree (prefix-folded parents, cycle-capped,
+      flat hit-list when filtered); clicking a member spawns its node on the canvas.
 - [ ] **Asset editing + saving** — write `.uasset` (UAssetAPI/CUE4Parse territory),
       beyond the current read-only JSON inspection.
 - [ ] **.pak extraction**.
 - [ ] **.ini editing** with automation/helpers (like the descriptor editor).
 - [ ] **UE live bridge** — an in-editor↔running-UE bridge like the UEVR plugin's.
-- [ ] **Graphical class browser plugin** — browse the reflection/class hierarchy.
-- [ ] More UE-side work as it comes up.
 
 ### Demo / tour
 - [x] Feature-tour Artifact (schematics) — https://claude.ai/code/artifact/a1252d6d-df1d-460a-890e-d807fe092835
-- [ ] Real screenshots (blocked: needs the app staged front/maximized/project-open;
-      declined/unstaged during the 2026-07-13 attempt).
-- [ ] **Interactive tour IN the app** (or via linking) — guided highlights of
-      features from inside ImGui-IDE.
+- [x] Standalone HTML export (c69d532) — `docs/feature-tour.html`, self-contained.
+- [x] **Interactive tour IN the app** (64ee373) — Help ▸ Take the Tour: 7 steps that
+      force-open each panel, outline it, and anchor a card to it.
+- [ ] Real screenshots — **blocked, not by permission**: the app renders through
+      SDL3's D3D12 swapchain and the computer-use capture path grabs it as a flat
+      black rectangle (GPU-composed content isn't in that capture). Would need a
+      DXGI-duplication / in-app screenshot key instead. Consider adding a "save
+      screenshot" command to the app itself.
 
 ## Process notes
 
