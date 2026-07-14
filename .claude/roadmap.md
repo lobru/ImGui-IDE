@@ -40,11 +40,22 @@ iteration where possible; big ones have substeps.
         `Folder::computeFoldRanges` and runs on a worker above 5000 lines. Apply
         (visibility) stays on the UI thread; stale/again/generation guards; the web
         build stays synchronous. selftest 474.
-  - [ ] **Large-file splitting/loading** — chunked/threaded load so opening a huge
-        file doesn't stall the frame (there's a large-file mode already; make the
-        initial read + tokenize incremental/off-thread).
+  - [x] **Large-file loading** (77c9a0b) — `TextEditor::SetTextAsync`: a worker builds
+        and colorizes a private `Document` (it's a plain `vector<Line>`; `Colorizer`
+        is stateless), `render()` swaps it in via `pollLoad()`. Files ≥1 MB open
+        instantly as an empty read-only tab; trie build deferred to
+        `finishPendingLoads()`. Web build stays sync. selftest 500.
+  - [ ] The file READ is still synchronous — only the tokenize is off-thread. Move
+        the `ifstream` read onto the worker too (needs the tab to exist before the
+        bytes do).
   - [ ] Audit other per-frame walks for threadability (nav flat list is cached at
         0.5s; consider worker rebuild).
+
+### C++ coloring
+- [x] **Multi-line `#define`** (f01c3ac) — the colorizer blobbed the ENTIRE directive
+      line one flat color while continuation lines tokenized as code, so a multi-line
+      macro looked broken. Now only `#` + the directive word are preprocessor-colored
+      and the rest of the line tokenizes normally; `#include <x>` headers are strings.
 
 ### Nav panel UX
 - [x] **Sort + Add-Source-Location inline in the nav header** (7e85e73) — compact
