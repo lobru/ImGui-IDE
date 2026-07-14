@@ -371,6 +371,53 @@ int main(int argc, char** argv)
 			"multiline macro: code after the macro colors like normal code (no state bleed)");
 	}
 
+	// ── The DIRECTIVE line itself is tokenized too: only "#define" is preprocessor,
+	//    the macro name / body on that same line color like code. (Blobbing the whole
+	//    first line was why multi-line #defines looked broken: line 1 flat, rest code.)
+	{
+		const int kPre = static_cast<int>(TextEditor::Color::preprocessor);
+		const int kKeyword = static_cast<int>(TextEditor::Color::keyword);
+		const int kIdent = static_cast<int>(TextEditor::Color::identifier);
+		const int kNumber = static_cast<int>(TextEditor::Color::number);
+		const int kString = static_cast<int>(TextEditor::Color::string);
+		const int kCmt = static_cast<int>(TextEditor::Color::comment);
+		const int kDecl = static_cast<int>(TextEditor::Color::declaration);
+
+		//              0123456789...
+		std::string d = "#define FOO(x) do { int n = 1; } while (0)\n";
+		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 0) == kPre, "'#' is preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 3) == kPre, "'define' word is preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 8) == kIdent, "macro name on the directive line is an identifier, not preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 15) == kKeyword, "macro body on the directive line is code ('do' = keyword)");
+		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 20) == kDecl, "macro body on the directive line is code ('int' = declaration)");
+		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 28) == kNumber, "numbers in a macro body are numbers");
+
+		// #include header names are strings, not punctuation + identifier
+		std::string inc = "#include <vector>\n#include \"local.h\"\n";
+		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 0, 0) == kPre, "#include is preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 0, 9) == kString, "<vector> angle header is a string");
+		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 0, 16) == kString, "closing '>' of an angle header is a string");
+		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 1, 9) == kString, "\"local.h\" quoted header is a string");
+
+		// strings / comments inside a directive line tokenize normally
+		std::string mix = "#define MSG \"hi\" // why\n";
+		CHECK(colorAt(TextEditor::Language::Cpp(), mix, 0, 12) == kString, "string literal in a #define is a string");
+		CHECK(colorAt(TextEditor::Language::Cpp(), mix, 0, 17) == kCmt, "trailing // comment on a #define is a comment");
+
+		// a UE-style multi-line macro: every line, including the first, is code after the directive
+		std::string ue =
+			"#define UE_LOG(Cat, Verb, Fmt, ...) \\\n"   // 0
+			"    if (true) \\\n"                         // 1: col 4 = 'if'
+			"    { \\\n"                                 // 2
+			"        int local = 0; \\\n"                // 3: col 8 = 'int'
+			"    }\n"                                    // 4
+			"int after = 2;\n";                          // 5: col 0 = 'int'
+		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 0, 8) == kIdent, "UE macro: name on the directive line is an identifier");
+		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 1, 4) == kKeyword, "UE macro: 'if' on a continuation line is a keyword");
+		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 3, 8) == kDecl, "UE macro: 'int' on a continuation line is a declaration");
+		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 5, 0) == kDecl, "UE macro: code after the macro is normal code");
+	}
+
 	// ── Tree-sitter symbol extraction (go-to-def/decl foundation) ──
 	{
 		std::string cpp =

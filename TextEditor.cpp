@@ -7321,19 +7321,6 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 {
 	auto state = line.state;
 
-	// A line whose last non-whitespace glyph is a backslash continues onto the
-	// next line (C/C++ line splicing) — used to carry a #define etc. across lines.
-	auto lineEndsInBackslash = [](Line& ln) -> bool
-		{
-			for (auto it = ln.end(); it != ln.begin(); )
-			{
-				--it;
-				if (CodePoint::isWhiteSpace(it->codepoint)) continue;
-				return it->codepoint == static_cast<ImWchar>('\\');
-			}
-			return false;
-		};
-
 	// process all glyphs on this line
 	auto nonWhiteSpace = false;
 	auto glyph = line.begin();
@@ -7428,13 +7415,64 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 			}
 			else if (language->preprocess && !nonWhiteSpace && glyph->codepoint == language->preprocess)
 			{
-				setColor(line.begin(), line.end(), Color::preprocessor);
-				glyph = line.end();
-				// A trailing '\' splices the next line onto this directive, but we
-				// deliberately do NOT carry the flat preprocessor color across it:
-				// multi-line macro BODIES (e.g. a big #define) should be syntax-
-				// highlighted as code, not blobbed one color. So the continuation
-				// lines fall through to normal tokenizing (state stays inText).
+				// Only the '#' and the directive word itself are preprocessor-colored.
+				// Everything after it (macro name, body, condition) tokenizes as normal
+				// code, so a backslash-continued #define looks identical on its first
+				// line and on every continuation line instead of blobbing line 1.
+				auto scan = glyph;
+				(scan++)->color = Color::preprocessor;
+
+				while (scan < line.end() && CodePoint::isWhiteSpace(scan->codepoint))
+				{
+					(scan++)->color = Color::preprocessor;
+				}
+
+				auto wordStart = scan;
+
+				while (scan < line.end() &&
+					   (CodePoint::isLetter(scan->codepoint) || scan->codepoint == static_cast<ImWchar>('_')))
+				{
+					scan++;
+				}
+
+				std::string directive;
+
+				for (auto i = wordStart; i < scan; i++)
+				{
+					char utf8[4];
+					directive.append(utf8, CodePoint::write(utf8, i->codepoint));
+				}
+
+				setColor(wordStart, scan, Color::preprocessor);
+				glyph = scan;
+				nonWhiteSpace = true;
+
+				// an #include's angle-bracket header name is a string, not punctuation
+				if (directive == "include" || directive == "include_next" || directive == "import")
+				{
+					while (glyph < line.end() && CodePoint::isWhiteSpace(glyph->codepoint))
+					{
+						(glyph++)->color = Color::whitespace;
+					}
+
+					if (glyph < line.end() && glyph->codepoint == static_cast<ImWchar>('<'))
+					{
+						auto close = glyph;
+
+						while (close < line.end() && close->codepoint != static_cast<ImWchar>('>'))
+						{
+							close++;
+						}
+
+						if (close < line.end())
+						{
+							close++;
+						}
+
+						setColor(glyph, close, Color::string);
+						glyph = close;
+					}
+				}
 
 				// handle custom tokenizer (if we have one)
 			}
@@ -7545,15 +7583,6 @@ TextEditor::State TextEditor::Colorizer::update(Line& line, const Language* lang
 				(glyph++)->color = Color::comment;
 			}
 
-		}
-		else if (state == State::inPreprocessor)
-		{
-			// Continuation line of a backslash-continued directive: the whole line
-			// belongs to the directive. Stay here while lines keep ending in '\',
-			// then fall back to normal text.
-			setColor(line.begin(), line.end(), Color::preprocessor);
-			glyph = line.end();
-			if (!lineEndsInBackslash(line)) state = State::inText;
 		}
 		else if (state == State::inOtherString)
 		{
