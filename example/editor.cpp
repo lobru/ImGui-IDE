@@ -1653,6 +1653,7 @@ void Editor::setProjectRoot(const std::filesystem::path &p)
     projectRoot = abs;
     navPanelVisible = true;
     rememberRecentProject(abs.string());
+    loadNotes();   // sticky notes are per-project (sidecar at the new root)
 #ifdef _WIN32
     // Persist the last project path to HKCU so external tools (and a "reopen last
     // project" flow) can find where we last were.
@@ -8927,7 +8928,11 @@ void Editor::openFile(const std::string &path)
         // would produce a trie with only the language's own keywords in it. Defer
         // it (and everything else that reads the document) to finishPendingLoads().
         if (!target->pendingLoad)
+        {
             buildAutocompleteTrie(*target);
+            reanchorNotesFor(*target);   // follow notes whose lines moved on disk
+            applyNoteMarkers(*target);
+        }
     }
     catch (std::exception &e)
     {
@@ -8952,7 +8957,12 @@ void Editor::finishPendingLoads()
         tab->pendingLoad = false;
         tab->version = tab->editor.GetUndoIndex(); // loaded content is the clean baseline
         buildAutocompleteTrie(*tab);
+        reanchorNotesFor(*tab);
+        applyNoteMarkers(*tab);
     }
+
+    if (notesDirty)
+        saveNotes();
 }
 
 //
@@ -9944,6 +9954,17 @@ void Editor::render()
 
     renderDockedDocuments();
     finishPendingLoads();    // after Render: that's where an async doc load lands
+
+    // A modal can't be opened from inside the text context menu (popup-in-popup),
+    // so the menu item just records the line and we open it here.
+    if (wantNotePopupLine >= 0 && !tabs.empty())
+    {
+        openNotePopup(doc(), wantNotePopupLine);
+        wantNotePopupLine = -1;
+    }
+    renderNotePopup();
+    renderNotesPanel();
+
     renderNavigationPanel();
     renderGithubBrowser();
     renderImageWindows();
@@ -10572,6 +10593,11 @@ void Editor::renderDocumentWindow(TabDocument &t)
         if (ImGui::MenuItem("Cut", "Ctrl-X"))
         {
             t.editor.Cut();
+        }
+        if (!projectRoot.empty())
+        {
+            if (ImGui::MenuItem("Add Sticky Note…"))
+                wantNotePopupLine = line; // opened after the menu closes (popup-in-popup)
         }
         if (ImGui::MenuItem("Paste", "Ctrl-V"))
         {
@@ -11610,6 +11636,9 @@ void Editor::renderMenuBar()
             {
                 decreaseFontSIze();
             }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Notes", nullptr, notesVisible))
+                notesVisible = !notesVisible;
             ImGui::Separator();
             // With Unreal Live Coding owning F11, don't advertise a shortcut that
             // deliberately does nothing — the menu item still works.
@@ -14555,6 +14584,438 @@ void Editor::buildProjectTrie()
 //
 //  Editor::buildAutocompleteTrie
 //
+
+//
+//  ── Sticky notes ───────────────────────────────────────────────────────────
+//
+//  Notes live in <projectRoot>/.imguiide/notes.json — inside the repo on purpose,
+//  so a team can commit them and so they travel with a branch, but in a dot-dir
+//  the nav panel already hides.
+//
+
+std::filesystem::path Editor::notesSidecarPath() const
+{
+    if (projectRoot.empty())
+        return {};
+
+    return projectRoot / ".imguiide" / "notes.json";
+}
+
+std::string Editor::notesRelPath(const std::string &filename) const
+{
+    std::error_code ec;
+    std::filesystem::path p(filename);
+
+    if (!projectRoot.empty())
+    {
+        auto rel = std::filesystem::relative(p, projectRoot, ec);
+        if (!ec && !rel.empty() && rel.native().rfind(L"..", 0) != 0)
+            p = rel;
+    }
+
+    // posix separators: a note written on Windows must still match on a checkout
+    // elsewhere, and it keeps the sidecar diffable.
+    std::string s = p.generic_string();
+    return s;
+}
+
+void Editor::gitNoteStamp(std::string &commit, std::string &author) const
+{
+    std::string root = const_cast<Editor *>(this)->gitRoot();
+    if (root.empty())
+        return;
+
+    auto capture = [&root](const std::string &args) -> std::string {
+        std::string cmd = "git -C \"" + root + "\" " + args + " 2>nul";
+        std::string out;
+
+        if (FILE *p = _popen(cmd.c_str(), "r"))
+        {
+            char buf[512];
+            while (fgets(buf, sizeof(buf), p))
+                out += buf;
+            _pclose(p);
+        }
+
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
+            out.pop_back();
+        return out;
+    };
+
+    commit = capture("rev-parse --short HEAD");
+    author = capture("config user.name");
+}
+
+void Editor::loadNotes()
+{
+    stickyNotes.clear();
+    notesDirty = false;
+
+    auto path = notesSidecarPath();
+    if (path.empty())
+        return;
+
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open())
+        return;
+
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    stickyNotes = notes::fromJson(text);
+
+    // Anchors are resolved lazily, per file, as tabs open (reanchorNotesFor) —
+    // reading every annotated file here would stall startup on a big project.
+}
+
+void Editor::saveNotes()
+{
+    auto path = notesSidecarPath();
+    if (path.empty())
+        return;
+
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+
+    std::ofstream f(path, std::ios::trunc | std::ios::binary);
+    if (!f.is_open())
+    {
+        pushToast("Notes: could not write .imguiide/notes.json", IM_COL32(230, 110, 100, 255), 3);
+        return;
+    }
+
+    f << notes::toJson(stickyNotes);
+    notesDirty = false;
+}
+
+int Editor::noteCountFor(const std::string &filename) const
+{
+    const std::string rel = notesRelPath(filename);
+    int n = 0;
+
+    for (const auto &note : stickyNotes)
+    {
+        if (note.file == rel && (!note.resolved || notesShowResolved))
+            n++;
+    }
+
+    return n;
+}
+
+void Editor::reanchorNotesFor(TabDocument &t)
+{
+    const std::string rel = notesRelPath(t.filename);
+
+    bool any = false;
+    for (const auto &note : stickyNotes)
+    {
+        if (note.file == rel)
+        {
+            any = true;
+            break;
+        }
+    }
+
+    if (!any)
+        return;
+
+    std::vector<std::string> lines;
+    const int count = t.editor.GetLineCount();
+    lines.reserve(static_cast<size_t>(count));
+
+    for (int i = 0; i < count; i++)
+        lines.push_back(t.editor.GetLineText(i));
+
+    auto before = stickyNotes;
+    notes::reanchorFile(stickyNotes, rel, lines);
+
+    // persist a note that FOLLOWED its line, so the move isn't recomputed forever
+    for (size_t i = 0; i < stickyNotes.size(); i++)
+    {
+        if (stickyNotes[i].file == rel && stickyNotes[i].line != before[i].line)
+        {
+            notesDirty = true;
+            break;
+        }
+    }
+}
+
+void Editor::applyNoteMarkers(TabDocument &t)
+{
+    const std::string rel = notesRelPath(t.filename);
+
+    for (const auto &note : stickyNotes)
+    {
+        if (note.file != rel || (note.resolved && !notesShowResolved))
+            continue;
+
+        std::string tip = note.text;
+
+        if (!note.author.empty() || !note.commit.empty())
+        {
+            tip += "\n\n\xe2\x80\x94 " + (note.author.empty() ? std::string("(unknown)") : note.author);
+            if (!note.commit.empty())
+                tip += " @ " + note.commit;
+        }
+
+        if (note.orphaned)
+            tip += "\n(orphaned: the line this was written on is gone)";
+
+        const ImU32 col = note.orphaned  ? IM_COL32(230, 110, 100, 255)
+                          : note.resolved ? IM_COL32(120, 130, 145, 255)
+                                          : IM_COL32(240, 200, 90, 255);
+
+        t.editor.AddMarker(note.line, col, 0, "\xe2\x97\x86 note", tip);
+    }
+}
+
+void Editor::openNotePopup(TabDocument &t, int line)
+{
+    notePendingFile = notesRelPath(t.filename);
+    notePendingLine = line;
+    noteEditIndex = -1;
+    noteInputBuffer[0] = 0;
+    ImGui::OpenPopup("Sticky Note");
+}
+
+void Editor::renderNotePopup()
+{
+    // Multi-viewport is on: a modal must be pinned to the focused viewport or it
+    // opens on whichever monitor ImGui last felt like.
+    if (ImGuiViewport *vp = ImGui::GetWindowViewport())
+    {
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                       vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    }
+
+    if (!ImGui::BeginPopupModal("Sticky Note", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    const bool editing = noteEditIndex >= 0 && noteEditIndex < (int)stickyNotes.size();
+
+    ImGui::TextDisabled("%s:%d", (editing ? stickyNotes[noteEditIndex].file : notePendingFile).c_str(),
+                        (editing ? stickyNotes[noteEditIndex].line : notePendingLine) + 1);
+    ImGui::Spacing();
+
+    ImGui::SetNextItemWidth(460.0f);
+    if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere();
+    ImGui::InputTextMultiline("##noteText", noteInputBuffer, sizeof(noteInputBuffer),
+                              ImVec2(460.0f, 90.0f));
+
+    ImGui::Spacing();
+
+    const bool empty = notes::trim(noteInputBuffer).empty();
+
+    ImGui::BeginDisabled(empty);
+    if (ImGui::Button(editing ? "Save" : "Add note", ImVec2(110, 0)))
+    {
+        if (editing)
+        {
+            stickyNotes[noteEditIndex].text = noteInputBuffer;
+        }
+        else
+        {
+            notes::Note note;
+            note.file = notePendingFile;
+            note.line = notePendingLine;
+            note.text = noteInputBuffer;
+            note.epoch = (long long)std::time(nullptr);
+
+            // The anchor is what makes the note sticky: remember the LINE TEXT, so
+            // when the line moves we can find it again instead of pointing at
+            // whatever code happens to occupy that number later.
+            if (!tabs.empty())
+            {
+                for (auto &tab : tabs)
+                {
+                    if (notesRelPath(tab->filename) == note.file)
+                    {
+                        note.anchor = tab->editor.GetLineText(note.line);
+                        break;
+                    }
+                }
+            }
+
+            gitNoteStamp(note.commit, note.author);
+            stickyNotes.push_back(std::move(note));
+        }
+
+        notesDirty = true;
+        saveNotes();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(110, 0)))
+        ImGui::CloseCurrentPopup();
+
+    if (editing)
+    {
+        ImGui::SameLine();
+        if (ImGui::Button("Delete", ImVec2(110, 0)))
+        {
+            stickyNotes.erase(stickyNotes.begin() + noteEditIndex);
+            notesDirty = true;
+            saveNotes();
+            noteEditIndex = -1;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+
+    ImGui::EndPopup();
+}
+
+void Editor::renderNotesPanel()
+{
+    if (!notesVisible)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(560, 380), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Notes", &notesVisible))
+    {
+        ImGui::End();
+        return;
+    }
+
+    if (projectRoot.empty())
+    {
+        ImGui::TextDisabled("Open a project to keep sticky notes.");
+        ImGui::End();
+        return;
+    }
+
+    ImGui::SetNextItemWidth(200.0f);
+    ImGui::InputTextWithHint("##notesFilter", "filter…", notesFilter, sizeof(notesFilter));
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Show resolved", &notesShowResolved))
+    {
+        for (auto &tab : tabs)
+        {
+            tab->editor.ClearMarkers();
+            applyNoteMarkers(*tab);
+        }
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d note%s", (int)stickyNotes.size(), stickyNotes.size() == 1 ? "" : "s");
+
+    ImGui::Separator();
+
+    if (stickyNotes.empty())
+    {
+        ImGui::TextDisabled("No notes yet — right-click a line ▸ Add Sticky Note.");
+        ImGui::End();
+        return;
+    }
+
+    // Blame-style: notes grouped by the commit they were written against, newest
+    // first. That's the whole point of stamping the commit — you can see what the
+    // commentary on this code looked like at each point in its history.
+    std::string lowerFilter = notesFilter;
+    std::transform(lowerFilter.begin(), lowerFilter.end(), lowerFilter.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+
+    if (ImGui::BeginTable("##notes", 4,
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY))
+    {
+        ImGui::TableSetupColumn("Note", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Location", ImGuiTableColumnFlags_WidthFixed, 170.0f);
+        ImGui::TableSetupColumn("Commit", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+
+        int eraseIndex = -1;
+
+        for (int i = 0; i < (int)stickyNotes.size(); i++)
+        {
+            auto &note = stickyNotes[i];
+
+            if (note.resolved && !notesShowResolved)
+                continue;
+
+            if (!lowerFilter.empty())
+            {
+                std::string hay = note.text + " " + note.file;
+                std::transform(hay.begin(), hay.end(), hay.begin(),
+                               [](unsigned char c) { return (char)std::tolower(c); });
+                if (hay.find(lowerFilter) == std::string::npos)
+                    continue;
+            }
+
+            ImGui::TableNextRow();
+            ImGui::PushID(i);
+
+            ImGui::TableSetColumnIndex(0);
+            if (note.orphaned)
+            {
+                ImGui::TextColored(ImVec4(0.90f, 0.43f, 0.39f, 1.0f), "⚠");
+                ImGui::SameLine();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("The line this note was written on no longer exists.");
+            }
+
+            if (note.resolved)
+                ImGui::TextDisabled("%s", note.text.c_str());
+            else
+                ImGui::TextWrapped("%s", note.text.c_str());
+
+            ImGui::TableSetColumnIndex(1);
+            if (ImGui::Selectable((note.file + ":" + std::to_string(note.line + 1)).c_str()))
+            {
+                std::filesystem::path abs = projectRoot / note.file;
+                openFile(abs.string());
+                if (!tabs.empty())
+                    doc().editor.SetCursor(note.line, 0);
+            }
+
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextDisabled("%s", note.commit.empty() ? "—" : note.commit.c_str());
+            if (ImGui::IsItemHovered() && !note.author.empty())
+                ImGui::SetTooltip("%s", note.author.c_str());
+
+            ImGui::TableSetColumnIndex(3);
+            bool resolved = note.resolved;
+            if (ImGui::Checkbox("##res", &resolved))
+            {
+                note.resolved = resolved;
+                notesDirty = true;
+                saveNotes();
+                for (auto &tab : tabs)
+                {
+                    tab->editor.ClearMarkers();
+                    applyNoteMarkers(*tab);
+                }
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Resolved");
+
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x"))
+                eraseIndex = i;
+
+            ImGui::PopID();
+        }
+
+        ImGui::EndTable();
+
+        if (eraseIndex >= 0)
+        {
+            stickyNotes.erase(stickyNotes.begin() + eraseIndex);
+            notesDirty = true;
+            saveNotes();
+            for (auto &tab : tabs)
+            {
+                tab->editor.ClearMarkers();
+                applyNoteMarkers(*tab);
+            }
+        }
+    }
+
+    ImGui::End();
+}
 
 //
 //  Editor::projectIsUnreal / liveCodingOwnsF11

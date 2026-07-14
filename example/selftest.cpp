@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "TextEditor.h"
+#include "notes.h"
 #include "tsindex.h"
 #include "lsp_protocol.h"
 #include "nav_history.h"
@@ -436,6 +437,104 @@ int main(int argc, char** argv)
 		CHECK(async.GetGlyphColorAt(0, 0) == sync.GetGlyphColorAt(0, 0), "async load colorizes ('int' declaration)");
 		CHECK(async.GetGlyphColorAt(10, 16) == sync.GetGlyphColorAt(10, 16), "async load colorizes mid-document glyphs identically");
 		CHECK(async.GetFoldCount() == sync.GetFoldCount(), "async load rebuilds the same folds");
+	}
+
+	// ── Sticky notes: a note must FOLLOW its line when the file changes, and be
+	//    honestly marked orphaned when the line it was written on is gone. ──
+	{
+		std::vector<std::string> lines = {
+			"#include <vector>",   // 0
+			"",                    // 1
+			"int compute(int a)",  // 2
+			"{",                   // 3
+			"    return a * 2;",   // 4
+			"}",                   // 5
+		};
+
+		// a note that hasn't moved stays put
+		notes::Note n;
+		n.file = "src/a.cpp";
+		n.line = 4;
+		n.anchor = "    return a * 2;";
+		n.text = "off by one?";
+		notes::reanchor(n, lines);
+		CHECK(n.line == 4 && !n.orphaned, "note on an unchanged line keeps its line");
+
+		// insert 3 lines above it: the note must follow the CODE, not the number
+		std::vector<std::string> shifted = {
+			"#include <vector>", "#include <string>", "#include <map>", "",
+			"int compute(int a)", "{", "    return a * 2;", "}",
+		};
+		notes::reanchor(n, shifted);
+		CHECK(n.line == 6 && !n.orphaned, "note follows its line down when lines are inserted above");
+
+		// delete lines above it: it must follow back up
+		std::vector<std::string> pulled = { "int compute(int a)", "{", "    return a * 2;", "}" };
+		notes::reanchor(n, pulled);
+		CHECK(n.line == 2 && !n.orphaned, "note follows its line up when lines are removed above");
+
+		// a pure re-indent must NOT orphan the note (anchors compare trimmed)
+		std::vector<std::string> reindented = { "int compute(int a)", "{", "\t\treturn a * 2;", "}" };
+		notes::reanchor(n, reindented);
+		CHECK(n.line == 2 && !n.orphaned, "re-indenting a line does not orphan its note");
+
+		// the line is gone entirely -> orphaned, not silently re-pointed at code
+		std::vector<std::string> rewritten = { "int compute(int a)", "{", "    return a << 1;", "}" };
+		notes::reanchor(n, rewritten);
+		CHECK(n.orphaned, "a note whose line is deleted is marked orphaned");
+		CHECK(n.line >= 0 && n.line < (int)rewritten.size(), "an orphaned note's line stays in range");
+
+		// nearest match wins: a duplicate line elsewhere must not steal the note
+		std::vector<std::string> dupes = {
+			"    return a * 2;",   // 0 - a decoy far from the note
+			"", "", "", "", "", "", "",
+			"    return a * 2;",   // 8 - the one right next to where it was
+			"",
+		};
+		notes::Note d;
+		d.file = "src/a.cpp";
+		d.line = 9;
+		d.anchor = "    return a * 2;";
+		d.text = "here";
+		notes::reanchor(d, dupes);
+		CHECK(d.line == 8, "re-anchoring picks the NEAREST matching line, not the first in the file");
+
+		// reanchorFile only touches the named file
+		std::vector<notes::Note> all = { n, d };
+		all[0].file = "other.cpp";
+		all[0].line = 99;
+		notes::reanchorFile(all, "src/a.cpp", dupes);
+		CHECK(all[0].line == 99, "reanchorFile leaves notes for other files alone");
+
+		// JSON round trip preserves every field
+		notes::Note full;
+		full.file = "src/b.cpp";
+		full.line = 12;
+		full.text = "why is this \"quoted\" and \\escaped?";
+		full.anchor = "auto x = 1;";
+		full.commit = "abc1234";
+		full.author = "Logan";
+		full.epoch = 1780000000LL;
+		full.resolved = true;
+
+		auto round = notes::fromJson(notes::toJson({full}));
+		CHECK(round.size() == 1, "notes JSON round trip keeps the note");
+		CHECK(round[0].file == full.file && round[0].line == full.line, "round trip keeps file + line");
+		CHECK(round[0].text == full.text, "round trip keeps text with quotes and backslashes");
+		CHECK(round[0].commit == "abc1234" && round[0].author == "Logan", "round trip keeps the git stamp");
+		CHECK(round[0].resolved, "round trip keeps resolved");
+
+		// a corrupt / hand-mangled sidecar means "no notes", never a crash
+		CHECK(notes::fromJson("{ not json at all").empty(), "a corrupt notes sidecar parses to zero notes");
+		CHECK(notes::fromJson("[{\"line\":3}]").empty(), "a note with no file/text is dropped");
+
+		// line shifts within a session
+		std::vector<notes::Note> shiftMe = { full, full };
+		shiftMe[0].line = 5;
+		shiftMe[1].line = 20;
+		notes::shiftLines(shiftMe, "src/b.cpp", 10, +3);
+		CHECK(shiftMe[0].line == 5, "shiftLines leaves notes above the edit alone");
+		CHECK(shiftMe[1].line == 23, "shiftLines pushes notes below the edit down");
 	}
 
 	// ── Tree-sitter symbol extraction (go-to-def/decl foundation) ──

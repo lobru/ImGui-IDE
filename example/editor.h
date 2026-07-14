@@ -30,6 +30,7 @@
 #include "tsindex.h"
 #include "lsp_client.h"
 #include "nav_history.h"
+#include "notes.h"
 #include "updater.h"
 #include "plugin_registry.h"
 
@@ -683,6 +684,34 @@ private:
 	float  prefPanScrollAccel  = 1.0f;    // middle-mouse pan/scroll accel gain (1.0 = default feel, 0 = linear)
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused
+
+	// ── Sticky notes ────────────────────────────────────────────────────────
+	// Line-anchored annotations kept in a sidecar (.imguiide/notes.json) so they
+	// persist across restarts without touching the source. Each note records the
+	// git commit + author it was written at, which is what makes the Notes panel
+	// readable as a blame-style history of the commentary on a file.
+	std::vector<notes::Note> stickyNotes;
+	bool        notesVisible = false;
+	bool        notesDirty = false;         // needs a flush to the sidecar
+	bool        notesShowResolved = false;
+	char        noteInputBuffer[1024] = {0};
+	int         noteEditIndex = -1;         // index into stickyNotes being edited, or -1 = new
+	int         notePendingLine = -1;       // line the new note is being attached to
+	std::string notePendingFile;
+	char        notesFilter[128] = {0};
+	int         wantNotePopupLine = -1;     // deferred: can't open a modal from inside the context menu
+
+	std::filesystem::path notesSidecarPath() const;
+	std::string notesRelPath(const std::string& filename) const;  // project-relative, posix
+	void        loadNotes();
+	void        saveNotes();
+	void        openNotePopup(TabDocument& t, int line);   // start writing a note on a line
+	void        renderNotePopup();
+	void        renderNotesPanel();
+	void        applyNoteMarkers(TabDocument& t);          // gutter markers for this file's notes
+	void        reanchorNotesFor(TabDocument& t);          // follow lines that moved
+	int         noteCountFor(const std::string& filename) const;
+	void        gitNoteStamp(std::string& commit, std::string& author) const; // HEAD + user.name
 
 	// Live coding: when a UE project is open and this is on, F11 (and any F11 chord)
 	// belongs to Unreal Live Coding — the editor must NOT also toggle Focus Mode.
