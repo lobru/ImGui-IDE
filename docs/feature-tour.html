@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ImGui-IDE — Feature Tour</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #eef0f4; --ink: #1a1d24;
+    --ink-soft: #4a505e; --ink-faint: #7b8291; --line: #dfe3ea;
+    --accent: #6a44d8; --accent-soft: #efe9fd; --good: #1f9d57; --warn: #c07800;
+    --wire: #7d8ff5; --wire-2: #e06aa8;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1016; --panel: #161923; --panel-2: #1d2130; --ink: #e8eaf0;
+      --ink-soft: #a6adbe; --ink-faint: #6b7286; --line: #262b39;
+      --accent: #a88cfa; --accent-soft: #211d34; --good: #57d98b; --warn: #e0a94a;
+      --wire: #7d8ff5; --wire-2: #e06aa8;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #eef0f4; --ink: #1a1d24;
+    --ink-soft: #4a505e; --ink-faint: #7b8291; --line: #dfe3ea;
+    --accent: #6a44d8; --accent-soft: #efe9fd; --good: #1f9d57; --warn: #c07800;
+    --wire: #7d8ff5; --wire-2: #e06aa8;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e1016; --panel: #161923; --panel-2: #1d2130; --ink: #e8eaf0;
+    --ink-soft: #a6adbe; --ink-faint: #6b7286; --line: #262b39;
+    --accent: #a88cfa; --accent-soft: #211d34; --good: #57d98b; --warn: #e0a94a;
+    --wire: #7d8ff5; --wire-2: #e06aa8;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans);
+    line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  img { max-width: 100%; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── window chrome header ── */
+  header { border-bottom: 1px solid var(--line); background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, var(--panel)) 0%, var(--bg) 100%); }
+  .titlebar { display: flex; align-items: center; gap: 10px; padding: 12px 24px;
+    border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px;
+    color: var(--ink-faint); max-width: 1080px; margin: 0 auto; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .traf { display: flex; gap: 7px; }
+  .hero { padding: 64px 0 52px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 18px; }
+  h1 { font-size: clamp(34px, 5.4vw, 58px); line-height: 1.04; margin: 0 0 20px;
+    letter-spacing: -0.02em; text-wrap: balance; font-weight: 700; }
+  h1 .mono { font-family: var(--mono); font-weight: 600; color: var(--accent); }
+  .lede { font-size: clamp(17px, 2.1vw, 21px); color: var(--ink-soft); max-width: 62ch; margin: 0 0 30px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip { font-family: var(--mono); font-size: 12.5px; padding: 7px 12px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft);
+    display: inline-flex; gap: 8px; align-items: center; }
+  .chip b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .chip .g { color: var(--good); }
+
+  /* ── section scaffolding ── */
+  section { padding: 46px 0; border-top: 1px solid var(--line); }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin: 0 0 26px; flex-wrap: wrap; }
+  .sec-num { font-family: var(--mono); font-size: 12px; color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 6px;
+    padding: 3px 8px; }
+  h2 { font-size: clamp(22px, 3vw, 30px); margin: 0; letter-spacing: -0.01em; font-weight: 680; }
+  .sec-sub { color: var(--ink-faint); font-size: 15px; margin: 6px 0 0; width: 100%; }
+
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 720px) { .grid, .grid-3 { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 20px 22px; }
+  .card h3 { margin: 0 0 8px; font-size: 16.5px; letter-spacing: -0.01em; display: flex; gap: 9px; align-items: center; }
+  .card h3 .tag { font-family: var(--mono); font-size: 10.5px; color: var(--accent);
+    background: var(--accent-soft); padding: 2px 7px; border-radius: 5px; font-weight: 600; letter-spacing: .02em; }
+  .card p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+  .card p + p { margin-top: 9px; }
+  .card code, .inl { font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    background: var(--panel-2); padding: 1.5px 5px; border-radius: 4px; }
+
+  .fig { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px; overflow-x: auto; }
+  .fig svg { display: block; width: 100%; height: auto; }
+  .cap { font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); margin: 10px 2px 0; }
+
+  .split { display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+
+  ul.feat { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
+  ul.feat li { padding-left: 22px; position: relative; color: var(--ink-soft); font-size: 14.5px; }
+  ul.feat li::before { content: "▹"; position: absolute; left: 0; top: 0; color: var(--accent); }
+  ul.feat b { color: var(--ink); font-weight: 620; }
+
+  .note { display: flex; gap: 12px; align-items: flex-start; background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-radius: 10px;
+    padding: 15px 17px; font-size: 14px; color: var(--ink-soft); }
+  .note b { color: var(--ink); }
+
+  footer { border-top: 1px solid var(--line); padding: 40px 0 60px; color: var(--ink-faint);
+    font-size: 13px; }
+  footer .mono { font-family: var(--mono); }
+  a { color: var(--accent); text-decoration: none; }
+  a:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .svg-panel { fill: var(--panel); }
+  .svg-panel2 { fill: var(--panel-2); }
+  .svg-line { stroke: var(--line); }
+  .svg-ink { fill: var(--ink); }
+  .svg-soft { fill: var(--ink-soft); }
+  .svg-faint { fill: var(--ink-faint); }
+  .svg-accent { fill: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="titlebar">
+    <span class="traf"><span class="dot" style="background:#e0655b"></span><span class="dot" style="background:#e0a94a"></span><span class="dot" style="background:#57d98b"></span></span>
+    <span>ImGui-IDE — feature tour · master @ lobotomy/main</span>
+  </div>
+  <div class="wrap hero">
+    <p class="eyebrow">A self-hosting IDE, built in its own image</p>
+    <h1>The <span class="mono">immediate-mode</span> IDE that develops itself — and mods your games.</h1>
+    <p class="lede">A native Windows editor on Dear ImGui 1.92 + SDL3 GPU, tree-sitter and clangd — with a real DLL plugin system that carries a visual Blueprint scripting graph, a live UEVR game bridge, and Unreal Engine tooling. Everything below ships today.</p>
+    <div class="chips">
+      <span class="chip"><span class="g">●</span> selftest <b>496</b> passing</span>
+      <span class="chip">/W4 /WX <b>clean</b></span>
+      <span class="chip">core links <b>zero</b> plugin code</span>
+      <span class="chip">C++ · Lua · C# · Verse · HLSL</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- HERO MOCKUP -->
+  <section style="border-top:none">
+    <div class="fig">
+      <svg viewBox="0 0 1000 470" role="img" aria-label="ImGui-IDE window layout: navigation tree, code editor with tabs, and a docked panel.">
+        <rect x="0" y="0" width="1000" height="470" rx="10" class="svg-panel"/>
+        <rect x="0" y="0" width="1000" height="26" rx="10" class="svg-panel2"/>
+        <rect x="0" y="16" width="1000" height="10" class="svg-panel2"/>
+        <g class="svg-soft" font-family="ui-monospace,Consolas,monospace" font-size="11">
+          <text x="16" y="17">File</text><text x="52" y="17">Edit</text><text x="90" y="17">View</text>
+          <text x="132" y="17">Tools</text><text x="180" y="17">Project</text><text x="240" y="17">Help</text>
+        </g>
+        <line x1="0" y1="26" x2="1000" y2="26" class="svg-line"/>
+        <rect x="0" y="26" width="210" height="444" class="svg-panel2"/>
+        <line x1="210" y1="26" x2="210" y2="470" class="svg-line"/>
+        <g font-family="ui-monospace,Consolas,monospace" font-size="10.5">
+          <text x="14" y="48" class="svg-faint">PROJECT  ▾  ⧉ sort</text>
+          <text x="20" y="70" class="svg-soft">▾ example/</text>
+          <text x="32" y="88" class="svg-soft">▾ plugins/</text>
+          <text x="44" y="106" class="svg-accent">▸ uevr/</text>
+          <text x="44" y="124" class="svg-soft">▸ unreal/</text>
+          <text x="32" y="142" class="svg-soft">editor.cpp</text>
+          <text x="32" y="160" class="svg-soft">main.cpp</text>
+          <text x="20" y="184" class="svg-soft">▾ TextEditor.cpp</text>
+          <text x="14" y="214" class="svg-faint">SOURCE  (source)</text>
+          <text x="20" y="232" class="svg-soft">▸ UnrealEngine/</text>
+          <text x="14" y="262" class="svg-faint">GitHub · lobru/ImGui-IDE</text>
+          <text x="20" y="280" class="svg-soft">▾ src/</text>
+          <text x="32" y="298" class="svg-soft">app.ts</text>
+        </g>
+        <rect x="210" y="26" width="790" height="24" class="svg-panel"/>
+        <rect x="214" y="28" width="118" height="22" rx="5" class="svg-panel2"/>
+        <rect x="214" y="48" width="118" height="2" class="svg-accent"/>
+        <g font-family="ui-monospace,Consolas,monospace" font-size="10.5" class="svg-soft">
+          <text x="226" y="43" class="svg-ink">BlueprintLua.cpp</text>
+          <text x="346" y="43">editor.cpp</text>
+          <text x="430" y="43">UEVRScript.lua</text>
+        </g>
+        <line x1="210" y1="50" x2="1000" y2="50" class="svg-line"/>
+        <g font-family="ui-monospace,Consolas,monospace" font-size="11">
+          <g class="svg-faint" text-anchor="end">
+            <text x="238" y="74">184</text><text x="238" y="92">185</text><text x="238" y="110">186</text>
+            <text x="238" y="128">187</text><text x="238" y="146">188</text><text x="238" y="164">189</text>
+            <text x="238" y="182">190</text><text x="238" y="200">191</text>
+          </g>
+          <text x="252" y="74"><tspan fill="#c678dd">std::string</tspan><tspan class="svg-ink"> Generator::callExpression(</tspan><tspan fill="#e5c07b">const Node</tspan><tspan class="svg-ink">&amp; node) {</tspan></text>
+          <text x="266" y="92" class="svg-soft"><tspan fill="#7f848e">// {target}:method({0}) — metadata template</tspan></text>
+          <text x="266" y="110"><tspan fill="#c678dd">if</tspan><tspan class="svg-ink"> (function-&gt;isPure) </tspan><tspan class="svg-ink">{</tspan></text>
+          <text x="280" y="128"><tspan class="svg-ink">return </tspan><tspan fill="#98c379">"uevr.api_fast."</tspan><tspan class="svg-ink"> + call;</tspan></text>
+          <text x="266" y="146" class="svg-ink">}</text>
+          <text x="266" y="164"><tspan fill="#c678dd">for</tspan><tspan class="svg-ink"> (</tspan><tspan fill="#e5c07b">auto</tspan><tspan class="svg-ink">&amp; input : dataInputs(node))</tspan></text>
+          <text x="280" y="182"><tspan class="svg-ink">args += inputExpression(*input);</tspan></text>
+          <rect x="252" y="118" width="150" height="14" fill="var(--accent)" opacity="0.16"/>
+        </g>
+        <rect x="966" y="52" width="30" height="270" rx="3" class="svg-panel2" opacity="0.7"/>
+        <rect x="210" y="324" width="790" height="146" class="svg-panel2"/>
+        <line x1="210" y1="324" x2="1000" y2="324" class="svg-line"/>
+        <g font-family="ui-monospace,Consolas,monospace" font-size="10.5">
+          <text x="224" y="342" class="svg-accent">UEVR Live</text>
+          <text x="300" y="342" class="svg-faint">Globals</text><text x="360" y="342" class="svg-faint">Modules</text>
+          <text x="430" y="342" class="svg-faint">Inspect</text><text x="492" y="342" class="svg-faint">Watch</text>
+          <line x1="224" y1="350" x2="980" y2="350" class="svg-line"/>
+          <g class="svg-soft">
+            <text x="228" y="368">▾ uevr</text><text x="470" y="368" class="svg-faint">table[#12]</text>
+            <text x="248" y="386">▾ api</text><text x="470" y="386" class="svg-faint">userdata</text>
+            <text x="268" y="404">get_local_pawn</text><text x="470" y="404" class="svg-faint">function</text>
+            <text x="248" y="422">params</text><text x="470" y="422" class="svg-faint">table[#5]</text>
+            <text x="228" y="440">▸ engine</text><text x="470" y="440" class="svg-faint">table[#88]</text>
+          </g>
+        </g>
+        <rect x="0" y="0" width="1000" height="470" rx="10" fill="none" class="svg-line"/>
+      </svg>
+    </div>
+    <p class="cap">The dockable shell — navigation, tabbed editor with a minimap, and the UEVR Live bridge docked below. Every panel is a tool you can pop out, split, or hide.</p>
+  </section>
+
+  <!-- 1. EDITOR -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>A real editor core</h2>
+      <p class="sec-sub">Tree-sitter symbols, clangd, and a hand-tuned text widget — not a textarea with syntax colors.</p>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Go-to-definition <span class="tag">tree-sitter</span></h3><p>A background indexer walks the project (and any <b>extra source locations</b>) into a kind-ranked symbol cache for C/C++/C#/Lua and more. Jump to definitions and declarations across files; per-type member completion is refined by clangd where present.</p></div>
+      <div class="card"><h3>Generate from declaration <span class="tag">cppgen</span></h3><p>Stub a definition from a header declaration, split header/source, and get UE-aware member autocomplete. Folding with previews, multi-cursor, subword motion, box-select, and two-stroke chord keybinds throughout.</p></div>
+      <div class="card"><h3>Language-accurate coloring</h3><p>A backslash-continued C/C++ macro is <b>one directive</b>: the whole <span class="inl">#define</span> — every continuation line — stays preprocessor-colored, and a comment or string opened in the body never bleeds past the macro. <span class="inl">Ctrl+A</span> selects to the true top-left; <span class="inl">Ctrl+Home</span> lands at line 0, column 0.</p></div>
+      <div class="card"><h3>Formatters &amp; diagnostics</h3><p>One-key clang-format / stylua / black / rustfmt on the buffer, with the tool's <b>actual</b> error surfaced (line:column) instead of a generic guess. Markdown preview, PDF viewer, and an in-app image viewer for assets.</p></div>
+    </div>
+  </section>
+
+  <!-- 2. NAVIGATION -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>Navigation &amp; project</h2>
+      <p class="sec-sub">The tree keeps pace with real repos — Unreal-sized trees included.</p>
+    </div>
+    <div class="split">
+      <ul class="feat">
+        <li><b>Sort by</b> Name · Modified (newest) · Size · Type, folders first, persisted.</li>
+        <li><b>Extra source locations</b> — index folders outside the project root into both the nav tree and the symbol cache.</li>
+        <li><b>Smarter symbol excludes</b> — Unreal <span class="inl">Intermediate/</span> <span class="inl">Binaries/</span> <span class="inl">Saved/</span> <span class="inl">DerivedDataCache/</span>, <span class="inl">cmake-build-*</span>, caches; honors your hidden-from-view folders too.</li>
+        <li><b>Code / project files only</b> — one filter, now keeping images and PDFs in the tree.</li>
+        <li><b>Multiple instances</b> again — a projectless launch opens its own window; File ▸ New Window (or per-project).</li>
+      </ul>
+      <div>
+        <div class="fig">
+          <svg viewBox="0 0 300 220" role="img" aria-label="Navigation filters popup with a Sort-by selector and source locations.">
+            <rect x="0" y="0" width="300" height="220" rx="9" class="svg-panel"/>
+            <rect x="0" y="0" width="300" height="220" rx="9" fill="none" class="svg-line"/>
+            <g font-family="ui-monospace,Consolas,monospace" font-size="11">
+              <text x="16" y="26" class="svg-ink">☰ Filters</text>
+              <line x1="14" y1="36" x2="286" y2="36" class="svg-line"/>
+              <rect x="14" y="46" width="12" height="12" rx="2" class="svg-accent"/>
+              <text x="34" y="56" class="svg-soft">Code / project files (+ images, PDF)</text>
+              <text x="16" y="84" class="svg-faint">Sort by</text>
+              <rect x="14" y="92" width="180" height="20" rx="4" class="svg-panel2"/>
+              <text x="24" y="106" class="svg-ink">Modified (newest)  ▾</text>
+              <line x1="14" y1="126" x2="286" y2="126" class="svg-line"/>
+              <text x="16" y="146" class="svg-faint">Source locations</text>
+              <text x="20" y="166" class="svg-soft">✕  UnrealEngine</text>
+              <text x="20" y="184" class="svg-soft">✕  shared-modules</text>
+              <rect x="14" y="194" width="150" height="18" rx="4" class="svg-panel2"/>
+              <text x="24" y="207" class="svg-accent">＋ Add source location…</text>
+            </g>
+          </svg>
+        </div>
+        <p class="cap">Nav ▸ Filters — sort order and extra roots, both persisted.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. GIT + CLOUD -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>Git &amp; the cloud</h2>
+      <p class="sec-sub">Branch locally, browse remotely — without leaving the editor.</p>
+    </div>
+    <div class="split">
+      <div>
+        <div class="fig">
+          <svg viewBox="0 0 320 210" role="img" aria-label="GitHub repo browser: owner/repo, branch, token, and a collapsible file tree.">
+            <rect x="0" y="0" width="320" height="210" rx="9" class="svg-panel"/>
+            <rect x="0" y="0" width="320" height="210" rx="9" fill="none" class="svg-line"/>
+            <g font-family="ui-monospace,Consolas,monospace" font-size="11">
+              <text x="14" y="24" class="svg-accent">GitHub Repo Browser</text>
+              <rect x="14" y="32" width="220" height="18" rx="4" class="svg-panel2"/>
+              <text x="22" y="45" class="svg-soft">ocornut/imgui</text>
+              <rect x="242" y="32" width="64" height="18" rx="4" class="svg-accent" opacity="0.85"/>
+              <text x="252" y="45" fill="#fff">Fetch</text>
+              <rect x="14" y="56" width="120" height="16" rx="4" class="svg-panel2"/>
+              <text x="22" y="68" class="svg-faint">branch: master</text>
+              <rect x="140" y="56" width="166" height="16" rx="4" class="svg-panel2"/>
+              <text x="148" y="68" class="svg-faint">PAT ••••••  (not saved)</text>
+              <text x="14" y="90" class="svg-faint">1284 files · master</text>
+              <line x1="14" y1="98" x2="306" y2="98" class="svg-line"/>
+              <text x="20" y="118" class="svg-soft">▾ backends/</text>
+              <text x="34" y="136" class="svg-ink">imgui_impl_sdl3.cpp</text>
+              <text x="34" y="154" class="svg-soft">imgui_impl_dx11.cpp</text>
+              <text x="20" y="172" class="svg-soft">▾ examples/</text>
+              <text x="20" y="190" class="svg-soft">imgui.cpp · imgui.h</text>
+            </g>
+          </svg>
+        </div>
+        <p class="cap">Project ▸ Browse GitHub Repo — read-only, opens files in a tab.</p>
+      </div>
+      <ul class="feat">
+        <li><b>Switch Branch</b> from a live list of locals; <b>New Branch</b> inline — a dirty tree makes git refuse, not clobber.</li>
+        <li><b>Clone from URL</b> straight into the nav, indexing as files land.</li>
+        <li><b>Networked repo explorer</b> — browse any public (or private, with a PAT) GitHub repo's tree over the API and open files read-only, <b>no clone</b>.</li>
+        <li>The token is <b>session-only</b> — never written to disk.</li>
+        <li>Built on the same WinHTTP path as the in-app updater; all requests run off the UI thread.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 4. BLUEPRINT -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">04</span>
+      <h2>Blueprint visual scripting</h2>
+      <p class="sec-sub">An Unreal-style node graph that compiles to UEVR Lua — a whole DLL plugin, linking none of its code into the core.</p>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 1000 300" role="img" aria-label="Blueprint node graph: Spawn Actor feeds a Cast To node, whose typed output drives a member call.">
+        <defs>
+          <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+            <circle cx="1.5" cy="1.5" r="1.1" class="svg-faint" opacity="0.35"/>
+          </pattern>
+        </defs>
+        <rect x="0" y="0" width="1000" height="300" rx="10" class="svg-panel2"/>
+        <rect x="0" y="0" width="1000" height="300" rx="10" fill="url(#dots)"/>
+        <g font-family="ui-monospace,Consolas,monospace" font-size="11">
+          <rect x="28" y="40" width="150" height="58" rx="7" class="svg-panel"/>
+          <rect x="28" y="40" width="150" height="18" rx="7" fill="#c0554e"/>
+          <rect x="28" y="49" width="150" height="9" fill="#c0554e"/>
+          <text x="38" y="53" fill="#fff" font-size="10.5">⚡ Pre Engine Tick</text>
+          <text x="150" y="80" fill="#fff" font-size="12" text-anchor="end">▷</text>
+          <circle cx="172" cy="76" r="3.5" fill="#e8eaf0"/>
+
+          <rect x="250" y="30" width="196" height="96" rx="7" class="svg-panel"/>
+          <rect x="250" y="30" width="196" height="18" rx="7" fill="#4a7bd0"/>
+          <rect x="250" y="39" width="196" height="9" fill="#4a7bd0"/>
+          <text x="260" y="43" fill="#fff" font-size="10.5">Spawn Actor (Fast)</text>
+          <circle cx="250" cy="68" r="3.5" fill="#57d98b"/><text x="262" y="72" class="svg-soft">Class "Actor"</text>
+          <circle cx="250" cy="90" r="3.5" fill="#e0a94a"/><text x="262" y="94" class="svg-soft">Location</text>
+          <text x="436" y="72" class="svg-soft" text-anchor="end">Return Value</text>
+          <circle cx="446" cy="68" r="4" fill="#7d8ff5"/>
+          <text x="330" y="116" class="svg-faint" font-size="9.5" text-anchor="middle">→ AActor</text>
+
+          <rect x="540" y="40" width="150" height="72" rx="7" class="svg-panel"/>
+          <rect x="540" y="40" width="150" height="18" rx="7" fill="#8a6fd0"/>
+          <rect x="540" y="49" width="150" height="9" fill="#8a6fd0"/>
+          <text x="550" y="53" fill="#fff" font-size="10.5">Cast To Actor</text>
+          <circle cx="540" cy="78" r="4" fill="#7d8ff5"/><text x="552" y="82" class="svg-soft">Object</text>
+          <text x="680" y="82" class="svg-soft" text-anchor="end">As Actor</text>
+          <circle cx="690" cy="78" r="4" fill="#7d8ff5"/>
+          <text x="615" y="104" class="svg-faint" font-size="9.5" text-anchor="middle">is_a("Actor")</text>
+
+          <rect x="770" y="150" width="200" height="96" rx="7" class="svg-panel"/>
+          <rect x="770" y="150" width="200" height="18" rx="7" fill="#4a7bd0"/>
+          <rect x="770" y="159" width="200" height="9" fill="#4a7bd0"/>
+          <text x="780" y="163" fill="#fff" font-size="10.5">Set Actor Tick Enabled</text>
+          <circle cx="770" cy="182" r="3.5" fill="#e8eaf0"/><text x="782" y="186" class="svg-soft">▷</text>
+          <circle cx="770" cy="204" r="4" fill="#7d8ff5"/><text x="782" y="208" class="svg-soft">Target</text>
+          <circle cx="770" cy="226" r="3.5" fill="#c0554e"/><text x="782" y="230" class="svg-soft">bEnabled</text>
+
+          <path d="M172,76 C210,76 214,80 250,80" fill="none" stroke="#e8eaf0" stroke-width="2" opacity="0.6"/>
+          <path d="M446,68 C490,68 500,78 540,78" fill="none" stroke="var(--wire)" stroke-width="2.5"/>
+          <path d="M690,78 C730,78 730,204 770,204" fill="none" stroke="var(--wire)" stroke-width="2.5"/>
+        </g>
+      </svg>
+    </div>
+    <p class="cap">Drag from a typed <span class="inl">AActor</span> pin → the menu offers <b>that class's</b> SDK members (contextual, never dumped into the global palette). The wire lands on <b>Target</b>, not the nearest bool.</p>
+    <div class="grid grid-3" style="margin-top:16px">
+      <div class="card"><h3>SDK, done right</h3><p>Imported reflection dumps feed <b>autocomplete</b> and on-demand, per-class member menus — 10k classes never flood the node list. Prefix folding unifies <span class="inl">AActor</span> with a dumped <span class="inl">Actor</span>.</p></div>
+      <div class="card"><h3>Safe codegen</h3><p>Every callback is generation-guarded and <span class="inl">pcall</span>-wrapped. Table variables, For&nbsp;Each / Pairs, Set-If-Unset (<span class="inl">x = x or …</span>), and Custom Lua nodes compiled as reusable local functions.</p></div>
+      <div class="card"><h3>UE-style palette</h3><p>A toggleable right-hand panel lists every node by category and lets you browse the imported <b>SDK class list</b> — click a member to drop it on the canvas. Middle-mouse drag-scrolls the lists, honoring your invert-pan setting.</p></div>
+    </div>
+  </section>
+
+  <!-- 5. UEVR LIVE -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">05</span>
+      <h2>UEVR Live — a bridge into the running game</h2>
+      <p class="sec-sub">Run scripts, inspect state, and import an SDK straight from a live VR session.</p>
+    </div>
+    <div class="split">
+      <ul class="feat">
+        <li><b>Run in UEVR</b> — generate and inject the Blueprint's Lua into a running game; <b>Reset BP Script</b> silences it via the generation guard.</li>
+        <li><b>Interactive Globals &amp; Modules</b> — expand any Lua table/object on demand (<span class="inl">pairs()</span> + <span class="inl">debug.getinfo</span>) and drill arbitrarily deep.</li>
+        <li><b>Import SDK from Game</b> — dump live objects' classes over the bridge for autocomplete + on-demand exposure. No file, no game rebuild.</li>
+        <li>Every row has an <b>ins</b> button to drop a Custom Lua node reading exactly that value.</li>
+      </ul>
+      <div>
+        <div class="fig">
+          <svg viewBox="0 0 320 200" role="img" aria-label="UEVR Live Globals viewer: an interactive tree table of keys, types, and values.">
+            <rect x="0" y="0" width="320" height="200" rx="9" class="svg-panel"/>
+            <rect x="0" y="0" width="320" height="200" rx="9" fill="none" class="svg-line"/>
+            <g font-family="ui-monospace,Consolas,monospace" font-size="10.5">
+              <rect x="0" y="0" width="320" height="22" rx="9" class="svg-panel2"/><rect x="0" y="12" width="320" height="10" class="svg-panel2"/>
+              <text x="12" y="15" class="svg-accent">Globals</text><text x="70" y="15" class="svg-faint">Modules</text>
+              <text x="130" y="15" class="svg-faint">Inspect</text>
+              <rect x="200" y="4" width="110" height="14" rx="3" class="svg-panel"/><text x="206" y="15" class="svg-faint">filter…</text>
+              <g class="svg-faint"><text x="12" y="38">Key</text><text x="170" y="38">Type</text><text x="250" y="38">Value</text></g>
+              <line x1="8" y1="44" x2="312" y2="44" class="svg-line"/>
+              <text x="14" y="62" class="svg-soft">▾ uevr</text><text x="170" y="62" class="svg-faint">table</text><text x="250" y="62" class="svg-faint">[#12]</text>
+              <text x="28" y="80" class="svg-soft">▾ api</text><text x="170" y="80" class="svg-faint">userdata</text>
+              <text x="44" y="98" class="svg-ink">get_local_pawn</text><text x="170" y="98" class="svg-faint">function</text><text x="250" y="98" class="svg-faint">fn@…:41</text>
+              <text x="28" y="116" class="svg-soft">▾ params</text><text x="170" y="116" class="svg-faint">table</text><text x="250" y="116" class="svg-faint">[#5]</text>
+              <text x="44" y="134" class="svg-soft">vr</text><text x="170" y="134" class="svg-faint">table</text>
+              <rect x="284" y="124" width="26" height="13" rx="3" class="svg-accent" opacity="0.85"/><text x="289" y="134" fill="#fff" font-size="9">ins</text>
+              <text x="14" y="152" class="svg-soft">▸ engine</text><text x="170" y="152" class="svg-faint">table</text><text x="250" y="152" class="svg-faint">[#88]</text>
+              <text x="14" y="176" class="svg-faint">▸ ExecuteUbergraph…</text><text x="170" y="176" class="svg-faint">function</text>
+            </g>
+          </svg>
+        </div>
+        <p class="cap">Live Lua object inspection — the debug package, in a table.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. UNREAL -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">06</span>
+      <h2>Unreal Engine tooling</h2>
+      <p class="sec-sub">Project awareness, code scaffolding, and asset inspection — for a Blueprint or C++ project.</p>
+    </div>
+    <div class="split">
+      <div>
+        <div class="fig">
+          <svg viewBox="0 0 320 210" role="img" aria-label="A .uasset opened as colored, foldable JSON with a blueprint summary.">
+            <rect x="0" y="0" width="320" height="210" rx="9" class="svg-panel"/>
+            <rect x="0" y="0" width="320" height="210" rx="9" fill="none" class="svg-line"/>
+            <g font-family="ui-monospace,Consolas,monospace" font-size="10.5">
+              <rect x="0" y="0" width="320" height="20" rx="9" class="svg-panel2"/><rect x="0" y="10" width="320" height="10" class="svg-panel2"/>
+              <text x="12" y="14" class="svg-ink">BP_Door.uasset.json</text>
+              <g>
+                <text x="14" y="40" class="svg-ink">{</text>
+                <text x="26" y="56"><tspan fill="#7d8ff5">"valid"</tspan><tspan class="svg-ink">: </tspan><tspan fill="#e0a94a">true</tspan><tspan class="svg-ink">,</tspan></text>
+                <text x="26" y="72"><tspan fill="#7d8ff5">"blueprint"</tspan><tspan class="svg-ink">: {</tspan></text>
+                <text x="40" y="88"><tspan fill="#7d8ff5">"generatedClass"</tspan><tspan class="svg-ink">: </tspan><tspan fill="#98c379">"BP_Door_C"</tspan><tspan class="svg-ink">,</tspan></text>
+                <text x="40" y="104"><tspan fill="#7d8ff5">"parentClass"</tspan><tspan class="svg-ink">: </tspan><tspan fill="#98c379">"Actor"</tspan></text>
+                <text x="26" y="120" class="svg-ink">},</text>
+                <text x="26" y="136"><tspan fill="#7d8ff5">"imports"</tspan><tspan class="svg-ink">: [ … ], </tspan><tspan fill="#7f848e">▸ 24</tspan></text>
+                <text x="26" y="152"><tspan fill="#7d8ff5">"names"</tspan><tspan class="svg-ink">: [ … ], </tspan><tspan fill="#7f848e">▸ 310</tspan></text>
+                <text x="14" y="168" class="svg-ink">}</text>
+              </g>
+              <line x1="8" y1="182" x2="312" y2="182" class="svg-line"/>
+              <text x="12" y="200" class="svg-faint">binary → in-app · colored · foldable · export</text>
+            </g>
+          </svg>
+        </div>
+        <p class="cap">Open a <span class="inl">.uasset</span> and it inspects in-app as JSON — no external app.</p>
+      </div>
+      <ul class="feat">
+        <li><b>Open .uasset in-app</b> — a plugin claims the binary and shows the header, imports, and a Blueprint summary as <b>colored, foldable JSON</b> (a Save-As export).</li>
+        <li><b>Interactive descriptor editor</b> — add a plugin dependency or a module to <span class="inl">.uproject</span>/<span class="inl">.uplugin</span>, picking <b>Type</b> and <b>LoadingPhase</b> from real UE lists.</li>
+        <li><b>Class &amp; Verse wizards</b> — UCLASS header/source pairs and creative_device scaffolding.</li>
+        <li>Build the editor target (F6), generate a clangd compile DB, launch the editor, resolve engine-header <b>Go to File</b>.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 7. ARCHITECTURE -->
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">07</span>
+      <h2>The architecture underneath</h2>
+      <p class="sec-sub">A lean core that gains whole feature suites by loading a DLL.</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card"><h3>In-process plugin ABI</h3><p>UEVR/Blueprint and Unreal are real loadable DLLs sharing one ImGui context + heap across the boundary. A core build links <b>zero</b> of their code; a runtime toggle enables each.</p></div>
+      <div class="card"><h3>Builds never block</h3><p>Plugins load from a per-process <b>shadow copy</b>, and a PRE-LINK step renames a running image aside — so a rebuild never hits <span class="inl">LNK1168</span> while the app is running.</p></div>
+      <div class="card"><h3>Work off the UI thread</h3><p>The symbol index, git poll, fold detection (past 5k lines) and <b>large-file loading</b> all run on workers — a 100k-line file opens without stalling a frame. <b>496</b> headless assertions keep it green at <span class="inl">/W4 /WX</span>.</p></div>
+    </div>
+  </section>
+
+  <div class="note" style="margin: 8px 0 4px">
+    <span aria-hidden="true">◆</span>
+    <div><b>About these visuals.</b> The panels above are faithful schematics drawn from the shipping UI, not screen captures — live capture of the running app needs on-screen (computer-use) permission, which was declined for this pass. Re-run with capture approved to swap in real screenshots and record the Blueprint-to-Lua and Globals-drill-down flows as frame sequences.</div>
+  </div>
+
+</main>
+
+<footer>
+  <div class="wrap" style="display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap">
+    <span class="mono">ImGui-IDE · Dear ImGui 1.92 · SDL3 GPU · tree-sitter · clangd</span>
+    <span class="mono">selftest 496 · /W4 /WX clean · github.com/lobru/ImGui-IDE</span>
+  </div>
+</footer>
+
+</body>
+</html>
