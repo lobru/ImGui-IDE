@@ -684,6 +684,15 @@ private:
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused
 
+	// Live coding: when a UE project is open and this is on, F11 (and any F11 chord)
+	// belongs to Unreal Live Coding — the editor must NOT also toggle Focus Mode.
+	bool   prefLiveCoding      = true;
+	bool   liveCodingOwnsF11() const;     // UE project open AND live coding enabled
+	bool   projectIsUnreal();             // a .uproject in the project root (cached)
+	std::string unrealProjectCache;       // project root the cache below was computed for
+	bool   unrealProjectCached = false;
+	bool   liveCodingToastShown = false;
+
 	// Manual viewport control (multi-viewport is always on; windows only
 	// leave the main window when dragged out or popped via these).
 	void popOutActiveDoc(int dir);        // dir: -1 = left, +1 = right

@@ -7445,6 +7445,8 @@ void Editor::loadSettings()
                 prefFpsLimit = std::atoi(v.c_str());
             else if (k == "idle_throttle")
                 prefIdleThrottle = (v == "1" || v == "true");
+            else if (k == "live_coding")
+                prefLiveCoding = (v == "1" || v == "true");
             else if (k == "font_size")
                 prefFontSize = std::strtof(v.c_str(), nullptr);
             else if (k == "font_path")
@@ -7590,6 +7592,7 @@ void Editor::saveSettings()
     f << "wrap_width=" << prefWrapWidthPx << "\n";
     f << "fps_limit=" << prefFpsLimit << "\n";
     f << "idle_throttle=" << (prefIdleThrottle ? "1" : "0") << "\n";
+    f << "live_coding=" << (prefLiveCoding ? "1" : "0") << "\n";
     f << "nav_show_dot=" << (navShowDotFiles ? "1" : "0") << "\n";
     f << "nav_show_excl=" << (navShowExcluded ? "1" : "0") << "\n";
     f << "nav_code_only=" << (navCodeOnly ? "1" : "0") << "\n";
@@ -7856,6 +7859,20 @@ void Editor::renderSettings()
                 // 0 = unlimited. Clamp display so the slider can reach "off".
                 ImGui::SliderInt("Max FPS (0 = unlimited)", &prefFpsLimit, 0, 240);
                 ImGui::Checkbox("Throttle to ~10 FPS when window unfocused (idle)", &prefIdleThrottle);
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("Unreal");
+                if (ImGui::Checkbox("Live coding owns F11 (don't toggle Focus Mode)", &prefLiveCoding))
+                {
+                    liveCodingToastShown = false;
+                    saveSettings();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("With an Unreal project open, Unreal Live Coding compiles on Ctrl+Alt+F11.\n"
+                                      "While this is on, the editor leaves F11 alone \xe2\x80\x94 use View \xe2\x96\xb8 Focus Mode instead.\n"
+                                      "A chorded F11 (Ctrl/Alt/Shift) never toggles Focus Mode either way.");
+                ImGui::SameLine();
+                ImGui::TextDisabled(projectIsUnreal() ? "(Unreal project open)" : "(no Unreal project)");
 
                 if (!tabs.empty())
                 {
@@ -11594,7 +11611,9 @@ void Editor::renderMenuBar()
                 decreaseFontSIze();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Focus Mode", "F11", focusMode))
+            // With Unreal Live Coding owning F11, don't advertise a shortcut that
+            // deliberately does nothing — the menu item still works.
+            if (ImGui::MenuItem("Focus Mode", liveCodingOwnsF11() ? "" : "F11", focusMode))
             {
             	toggleFocusMode();
             }
@@ -12027,10 +12046,34 @@ void Editor::renderMenuBar()
     // While the Settings keybind capture is listening, swallow ALL app shortcuts so
     // the keys the user presses to set a chord don't also trigger app actions.
     const bool capturingKeybind = keybindCapturing && settingsVisible;
-    // F11 toggles focus mode unconditionally — it's not a text key, so it should
-    // fire even while a document or input box has keyboard focus.
+    // F11 toggles focus mode even while a document or input box has keyboard focus
+    // (it's not a text key). But ONLY bare F11: Unreal's Live Coding compile is
+    // Ctrl+Alt+F11, and this used to ignore modifiers entirely — so triggering a
+    // live-coding compile also flipped the editor into Focus Mode. And when a UE
+    // project is open with live coding enabled, F11 belongs to Unreal outright.
     if (!capturingKeybind && ImGui::IsKeyPressed(ImGuiKey_F11, false))
-        toggleFocusMode();
+    {
+        const bool anyMod = io.KeyCtrl || io.KeyAlt || io.KeyShift || io.KeySuper;
+
+        if (anyMod)
+        {
+            // a chorded F11 is somebody else's hotkey — never ours
+        }
+        else if (liveCodingOwnsF11())
+        {
+            if (!liveCodingToastShown)
+            {
+                liveCodingToastShown = true;
+                pushToast("F11 is reserved for Unreal Live Coding \xe2\x80\x94 "
+                          "use View \xe2\x96\xb8 Focus Mode (or turn off Settings \xe2\x96\xb8 Live coding)",
+                          IM_COL32(240, 200, 90, 255), 4);
+            }
+        }
+        else
+        {
+            toggleFocusMode();
+        }
+    }
     if (!capturingKeybind && !appShortcutsSuppressed &&
         (!io.WantCaptureKeyboard || ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow)))
     {
@@ -14512,6 +14555,45 @@ void Editor::buildProjectTrie()
 //
 //  Editor::buildAutocompleteTrie
 //
+
+//
+//  Editor::projectIsUnreal / liveCodingOwnsF11
+//
+//  Is the open project an Unreal project (a .uproject at its root)? Cached per
+//  project root — this is consulted from the per-frame hotkey path, and a
+//  directory scan there would be absurd.
+//
+
+bool Editor::projectIsUnreal()
+{
+    if (projectRoot.empty())
+        return false;
+
+    if (unrealProjectCache != projectRoot.string())
+    {
+        unrealProjectCache = projectRoot.string();
+        unrealProjectCached = false;
+
+        std::error_code ec;
+        std::filesystem::directory_iterator it(projectRoot, ec), end;
+
+        for (; !ec && it != end; it.increment(ec))
+        {
+            if (it->is_regular_file(ec) && it->path().extension() == ".uproject")
+            {
+                unrealProjectCached = true;
+                break;
+            }
+        }
+    }
+
+    return unrealProjectCached;
+}
+
+bool Editor::liveCodingOwnsF11() const
+{
+    return prefLiveCoding && const_cast<Editor *>(this)->projectIsUnreal();
+}
 
 void Editor::updateLargeFileMode(TabDocument &t, size_t bytes)
 {
