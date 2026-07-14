@@ -137,6 +137,7 @@ class Editor : public PluginHost {
 		bool        externallyTouched = false;   // edited on disk since you last viewed this tab (badge)
 		bool        externalMarkers   = false;   // gutter markers on externally-changed lines are live
 		bool        largeFile         = false;   // >8 MB: whole-doc intelligence (trie/LSP/folds/brackets) disabled
+		bool        pendingLoad       = false;   // SetTextAsync in flight: doc is empty until the worker lands
 		std::vector<std::pair<int,int>> changedRanges; // inclusive 0-based line ranges Claude/an external tool changed
 		std::string syncedText;                  // last persisted content (load/save/reload) = 3-way merge base
 	};
@@ -305,6 +306,7 @@ private:
 
 	void setAutocompleteMode(bool flag);
 	void buildAutocompleteTrie(TabDocument& t);
+	void finishPendingLoads();   // deferred whole-doc work for tabs opened with SetTextAsync
 	// (Re)evaluate large-file mode for `bytes` of content and apply/lift the
 	// intelligence gates on transition. Called on open, reload, and merge — the
 	// file's size can change under us (review finding: the flag was set once).

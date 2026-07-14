@@ -9,9 +9,11 @@
 //
 //	Exit code 0 = all pass, 1 = a failure (printed to stderr).
 
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -416,6 +418,41 @@ int main(int argc, char** argv)
 		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 1, 4) == kKeyword, "UE macro: 'if' on a continuation line is a keyword");
 		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 3, 8) == kDecl, "UE macro: 'int' on a continuation line is a declaration");
 		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 5, 0) == kDecl, "UE macro: code after the macro is normal code");
+	}
+
+	// ── Off-thread document load (SetTextAsync): the worker-built document must be
+	//    byte-identical to a synchronous SetText, colors and all. ──
+	{
+		std::string big;
+		for (int i = 0; i < 4000; i++)
+		{
+			big += "int fn_" + std::to_string(i) + "(int a) { /* c */ return a + " + std::to_string(i) + "; } // tail\n";
+		}
+
+		TextEditor sync;
+		sync.SetLanguage(TextEditor::Language::Cpp());
+		sync.SetText(big);
+
+		TextEditor async;
+		async.SetLanguage(TextEditor::Language::Cpp());
+		async.SetTextAsync(big);
+		CHECK(async.IsLoading(), "SetTextAsync leaves the editor in a loading state");
+		CHECK(async.IsReadOnlyEnabled(), "a loading document is read-only (no typing into a doc about to be replaced)");
+		CHECK(async.GetLineCount() <= 1, "a loading document is empty until the worker lands");
+
+		// no ImGui frame here, so poll the load ourselves (render() does this in the app)
+		for (int spin = 0; spin < 20000 && !async.PollLoad(); spin++)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+
+		CHECK(!async.IsLoading(), "the async load completes");
+		CHECK(!async.IsReadOnlyEnabled(), "read-only is released once the load lands");
+		CHECK(async.GetLineCount() == sync.GetLineCount(), "async load produces the same line count as SetText");
+		CHECK(async.GetText() == sync.GetText(), "async load produces the same text as SetText");
+		CHECK(async.GetGlyphColorAt(0, 0) == sync.GetGlyphColorAt(0, 0), "async load colorizes ('int' declaration)");
+		CHECK(async.GetGlyphColorAt(10, 16) == sync.GetGlyphColorAt(10, 16), "async load colorizes mid-document glyphs identically");
+		CHECK(async.GetFoldCount() == sync.GetFoldCount(), "async load rebuilds the same folds");
 	}
 
 	// ── Tree-sitter symbol extraction (go-to-def/decl foundation) ──

@@ -147,11 +147,105 @@ void TextEditor::setText(const std::string_view& text)
 
 
 //
+//	TextEditor::SetTextAsync
+//
+
+void TextEditor::SetTextAsync(const std::string& text)
+{
+#ifdef __EMSCRIPTEN__
+	// no worker threads in the web build
+	setText(text);
+#else
+	// show an empty, read-only document until the worker lands
+	setText("");
+
+	auto work = std::make_shared<LoadWork>();
+	work->text = text;
+	work->language = language;
+	work->doc.setTabSize(document.getTabSize());
+	work->doc.setInsertSpacesOnTabs(document.isInsertSpacesOnTabs());
+
+	if (loadWork == nullptr)
+	{
+		// don't stack restores if a second load starts while one is in flight
+		readOnlyBeforeLoad = readOnly;
+	}
+
+	readOnly = true;
+	loadWork = work;
+
+	std::thread([work]()
+		{
+			// the worker owns `work` (and therefore the text and the document it
+			// builds), so it stays valid even if the editor is destroyed mid-load
+			work->doc.setText(work->text);
+			Colorizer colorizer;
+			colorizer.updateEntireDocument(work->doc, work->language);
+			work->ready.store(true, std::memory_order_release);
+		}).detach();
+#endif
+}
+
+
+//
+//	TextEditor::pollLoad
+//
+
+bool TextEditor::pollLoad()
+{
+	if (loadWork == nullptr || !loadWork->ready.load(std::memory_order_acquire))
+	{
+		return false;
+	}
+
+	auto work = loadWork;
+	loadWork = nullptr;
+
+	document = std::move(work->doc);
+	transactions.reset();
+	indentGuideCacheLines = -1;
+	bracketeer.reset();
+
+	if (language)
+	{
+		document.setLanguage(language);
+
+		// the language changed while the worker was colorizing with the old one
+		if (language != work->language)
+		{
+			colorizer.updateEntireDocument(document, language);
+		}
+	}
+
+	cursors.clearAll();
+	clearMarkers();
+	makeCursorVisible();
+
+	if (document.lineCount() >= Folder::kAsyncFoldLines)
+	{
+		foldRanges.rebuildFoldRangesAsync(document);
+	}
+	else
+	{
+		foldRanges.rebuildFoldRanges(document);
+	}
+
+	showMatchingBracketsChanged = false;
+	languageChanged = false;
+	readOnly = readOnlyBeforeLoad;
+	return true;
+}
+
+
+//
 //	TextEditor::render
 //
 
 void TextEditor::render(const char* title, const ImVec2& size, bool border)
 {
+	// swap in an off-thread document load (SetTextAsync) as soon as it's ready
+	pollLoad();
+
 	// get current transaction version
 	auto transActionVersion = transactions.getVersion();
 

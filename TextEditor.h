@@ -134,6 +134,16 @@ public:
 	// access text (using UTF-8 encoded strings)
 	// (see note below on cursor and scroll manipulation after setting new text)
 	inline void SetText(const std::string_view& text) { setText(text); }
+
+	// Load text WITHOUT stalling the frame: the glyph build + colorize is O(bytes)
+	// and costs seconds on a multi-MB file, so it runs on a worker against a copy
+	// of the text and the finished document is swapped in on the UI thread. The
+	// editor shows an empty, read-only document while IsLoading() is true; render()
+	// applies the result, so headless callers must poll PollLoad() themselves.
+	// Set the language BEFORE calling this so the worker colorizes with it.
+	void SetTextAsync(const std::string& text);
+	inline bool IsLoading() const { return loadWork != nullptr; }
+	inline bool PollLoad() { return pollLoad(); }
 	inline std::string GetText() const { return document.getText(); }
 	inline std::string GetCursorText(size_t cursor) const { return getCursorText(cursor); }
 
@@ -1577,6 +1587,21 @@ protected:
 
 	// access the editor's text
 	void setText(const std::string_view& text);
+
+	// Off-thread document load (see SetTextAsync). The worker owns its own copy of
+	// the text and builds a complete Document (glyphs + colors) into `doc`; the UI
+	// thread swaps it in. Held by shared_ptr so a detached worker outlives an
+	// editor destroyed mid-load.
+	struct LoadWork {
+		std::atomic<bool> ready{false};
+		std::string text;
+		const Language* language = nullptr;
+		Document doc;
+	};
+
+	std::shared_ptr<LoadWork> loadWork;
+	bool readOnlyBeforeLoad = false;
+	bool pollLoad();
 
 	// render (parts of) the text editor
 	void render(const char* title, const ImVec2& size, bool border);

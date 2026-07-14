@@ -126,6 +126,11 @@ static std::filesystem::path resolveOutermostRoot(std::filesystem::path start);
 #define SHORTCUT "Ctrl-"
 #endif
 
+// Files at or above this size load on a worker thread (TextEditor::SetTextAsync)
+// instead of stalling the frame in SetText. Well under the 8 MB large-file cutoff:
+// a 1 MB source file already costs tens of ms to glyph-build + colorize.
+static constexpr size_t kAsyncLoadBytes = 1u * 1024 * 1024;
+
 static const char *demo =
     "// Demo C++ Code\n"
     "\n"
@@ -8868,8 +8873,22 @@ void Editor::openFile(const std::string &path)
 
         target->originalText = text;
         target->syncedText = text; // 3-way merge base = last reconciled content
-        target->editor.SetText(text);
+        // Language FIRST: an async load colorizes on the worker, so it needs to know
+        // the language before it starts.
         target->editor.SetLanguage(languageForPath(path));
+
+        // Building glyphs + colorizing is O(bytes) and stalls the frame for seconds
+        // on a multi-MB file. Past the threshold, do it on a worker: the tab opens
+        // immediately (empty + read-only) and the finished document swaps in.
+        if (text.size() >= kAsyncLoadBytes)
+        {
+            target->editor.SetTextAsync(text);
+            target->pendingLoad = true; // trie/LSP wait for the worker (doc is empty until then)
+        }
+        else
+        {
+            target->editor.SetText(text);
+        }
         target->version = target->editor.GetUndoIndex();
         target->filename = path;
         target->wantFocus = true;
@@ -8887,11 +8906,35 @@ void Editor::openFile(const std::string &path)
             }
         }
 
-        buildAutocompleteTrie(*target);
+        // On an async load the document is still empty here — the identifier walk
+        // would produce a trie with only the language's own keywords in it. Defer
+        // it (and everything else that reads the document) to finishPendingLoads().
+        if (!target->pendingLoad)
+            buildAutocompleteTrie(*target);
     }
     catch (std::exception &e)
     {
         showError(e.what());
+    }
+}
+
+//
+//  Editor::finishPendingLoads
+//
+//  A tab opened with SetTextAsync has an empty document until its worker lands.
+//  Once the editor swaps the finished document in (it polls in Render), do the
+//  whole-document work that was deferred at open time.
+//
+
+void Editor::finishPendingLoads()
+{
+    for (auto &tab : tabs)
+    {
+        if (!tab->pendingLoad || tab->editor.IsLoading())
+            continue;
+        tab->pendingLoad = false;
+        tab->version = tab->editor.GetUndoIndex(); // loaded content is the clean baseline
+        buildAutocompleteTrie(*tab);
     }
 }
 
@@ -9883,6 +9926,7 @@ void Editor::render()
     pollGithubBrowser();    // open a fetched remote file read-only (UI thread)
 
     renderDockedDocuments();
+    finishPendingLoads();    // after Render: that's where an async doc load lands
     renderNavigationPanel();
     renderGithubBrowser();
     renderImageWindows();
