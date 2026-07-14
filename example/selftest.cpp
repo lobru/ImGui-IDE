@@ -337,87 +337,70 @@ int main(int argc, char** argv)
 			"C#: #region/#endregion produces a fold");
 	}
 
-	// ── Backslash-continued #define: directive line is preprocessor, but the
-	//    continued macro BODY is highlighted as code (not blobbed preprocessor) ──
+	// ── A backslash-continued #define is ONE directive: the whole macro, every
+	//    continuation line included, stays in the preprocessor color. ──
 	{
 		const int kPre = static_cast<int>(TextEditor::Color::preprocessor);
-		const int kKeyword = static_cast<int>(TextEditor::Color::keyword);
 		std::string cpp =
-			"#define FOO(x) \\\n"        // line 0: directive, ends with backslash
-			"    do { x; } while (0)\n"  // line 1: continuation — col 4 = 'do' keyword
-			"int after = 1;\n";          // line 2: back to normal code
+			"#define FOO(x) \\\n"        // 0: directive, ends with a backslash
+			"    do { x; } while (0)\n"  // 1: continuation - still the same directive
+			"int after = 1;\n";          // 2: back to normal code
 		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 0, 0) == kPre,
 			"#define directive line is preprocessor");
-		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 1, 4) == kKeyword,
-			"backslash-continued macro body is highlighted as code (do = keyword)");
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 1, 4) == kPre,
+			"the backslash-continued line stays preprocessor (the WHOLE macro is one color)");
+		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 1, 20) == kPre,
+			"the end of a continuation line is preprocessor too");
 		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 2, 0) != kPre,
-			"line after the continuation is back to normal code");
+			"the line after the last continuation is back to normal code");
 	}
 
-	// ── Multi-line (2+ backslash-continued) macro: every continuation body line
-	//    is highlighted as code, and normal code resumes cleanly afterwards ──
+	// ── Multi-line (2+ backslash-continued) macro: EVERY line of it is preprocessor,
+	//    and normal code resumes on the first line that isn't continued. ──
 	{
-		const int kKeyword = static_cast<int>(TextEditor::Color::keyword);
+		const int kPre = static_cast<int>(TextEditor::Color::preprocessor);
 		std::string cpp =
-			"#define FOO(x) \\\n"      // 0 directive
-			"    do { \\\n"            // 1 continuation -> col4 'do'
-			"        x; \\\n"          // 2 continuation
-			"    } while (0)\n"        // 3 continuation -> col6 'while'
-			"int after = 1;\n";        // 4 normal
-		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 1, 4) == kKeyword,
-			"multiline macro: 1st continuation body is code (do = keyword)");
-		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 3, 6) == kKeyword,
-			"multiline macro: last continuation body is code (while = keyword)");
+			"#define FOO(x) \\\n"    // 0 directive
+			"    do { \\\n"          // 1 continuation
+			"        x; \\\n"        // 2 continuation
+			"    } while (0)\n"      // 3 last continuation (no trailing backslash)
+			"int after = 1;\n";      // 4 normal code again
+		for (int line = 0; line <= 3; line++)
+		{
+			CHECK(colorAt(TextEditor::Language::Cpp(), cpp, line, 4) == kPre,
+				"multiline macro: every line of the macro is preprocessor");
+		}
 		CHECK(colorAt(TextEditor::Language::Cpp(), cpp, 4, 0) ==
 			  colorAt(TextEditor::Language::Cpp(), "int x;\n", 0, 0),
 			"multiline macro: code after the macro colors like normal code (no state bleed)");
 	}
 
-	// ── The DIRECTIVE line itself is tokenized too: only "#define" is preprocessor,
-	//    the macro name / body on that same line color like code. (Blobbing the whole
-	//    first line was why multi-line #defines looked broken: line 1 flat, rest code.)
+	// ── A continuation line's own tokens must NOT win over the directive color:
+	//    keywords, strings and comments inside a macro body stay preprocessor, and
+	//    a '//' or '"' inside the body must not bleed past the end of the macro. ──
 	{
 		const int kPre = static_cast<int>(TextEditor::Color::preprocessor);
-		const int kKeyword = static_cast<int>(TextEditor::Color::keyword);
-		const int kIdent = static_cast<int>(TextEditor::Color::identifier);
-		const int kNumber = static_cast<int>(TextEditor::Color::number);
-		const int kString = static_cast<int>(TextEditor::Color::string);
 		const int kCmt = static_cast<int>(TextEditor::Color::comment);
-		const int kDecl = static_cast<int>(TextEditor::Color::declaration);
+		std::string body =
+			"#define LOG(x) \\\n"                          // 0
+			"    if (x) { printf(\"hi\"); } /* c */ \\\n"  // 1: col 4 'if', col 20 string, col 30 comment
+			"    else { return 0; }\n"                     // 2 last continuation
+			"int q = 1;\n";                                // 3 normal code
+		CHECK(colorAt(TextEditor::Language::Cpp(), body, 1, 4) == kPre, "macro body: a keyword stays preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), body, 1, 20) == kPre, "macro body: a string literal stays preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), body, 1, 30) == kPre, "macro body: a comment stays preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), body, 2, 4) == kPre, "macro body: the last continuation line is preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), body, 3, 0) != kPre, "code after the macro is not preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), body, 3, 0) != kCmt, "a comment inside a macro body does not bleed past the macro");
+	}
 
-		//              0123456789...
-		std::string d = "#define FOO(x) do { int n = 1; } while (0)\n";
-		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 0) == kPre, "'#' is preprocessor");
-		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 3) == kPre, "'define' word is preprocessor");
-		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 8) == kIdent, "macro name on the directive line is an identifier, not preprocessor");
-		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 15) == kKeyword, "macro body on the directive line is code ('do' = keyword)");
-		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 20) == kDecl, "macro body on the directive line is code ('int' = declaration)");
-		CHECK(colorAt(TextEditor::Language::Cpp(), d, 0, 28) == kNumber, "numbers in a macro body are numbers");
-
-		// #include header names are strings, not punctuation + identifier
-		std::string inc = "#include <vector>\n#include \"local.h\"\n";
+	// ── A directive with no trailing backslash ends at its own line ──
+	{
+		const int kPre = static_cast<int>(TextEditor::Color::preprocessor);
+		std::string inc = "#include <vector>\nint x = 1;\n";
 		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 0, 0) == kPre, "#include is preprocessor");
-		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 0, 9) == kString, "<vector> angle header is a string");
-		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 0, 16) == kString, "closing '>' of an angle header is a string");
-		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 1, 9) == kString, "\"local.h\" quoted header is a string");
-
-		// strings / comments inside a directive line tokenize normally
-		std::string mix = "#define MSG \"hi\" // why\n";
-		CHECK(colorAt(TextEditor::Language::Cpp(), mix, 0, 12) == kString, "string literal in a #define is a string");
-		CHECK(colorAt(TextEditor::Language::Cpp(), mix, 0, 17) == kCmt, "trailing // comment on a #define is a comment");
-
-		// a UE-style multi-line macro: every line, including the first, is code after the directive
-		std::string ue =
-			"#define UE_LOG(Cat, Verb, Fmt, ...) \\\n"   // 0
-			"    if (true) \\\n"                         // 1: col 4 = 'if'
-			"    { \\\n"                                 // 2
-			"        int local = 0; \\\n"                // 3: col 8 = 'int'
-			"    }\n"                                    // 4
-			"int after = 2;\n";                          // 5: col 0 = 'int'
-		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 0, 8) == kIdent, "UE macro: name on the directive line is an identifier");
-		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 1, 4) == kKeyword, "UE macro: 'if' on a continuation line is a keyword");
-		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 3, 8) == kDecl, "UE macro: 'int' on a continuation line is a declaration");
-		CHECK(colorAt(TextEditor::Language::Cpp(), ue, 5, 0) == kDecl, "UE macro: code after the macro is normal code");
+		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 0, 12) == kPre, "the whole #include line is preprocessor");
+		CHECK(colorAt(TextEditor::Language::Cpp(), inc, 1, 0) != kPre, "the line after a non-continued directive is normal code");
 	}
 
 	// ── Off-thread document load (SetTextAsync): the worker-built document must be
