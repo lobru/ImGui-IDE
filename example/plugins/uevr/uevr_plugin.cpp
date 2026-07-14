@@ -36,6 +36,7 @@ void UevrPlugin::onFrame(PluginHost &host)
 {
     renderBlueprintWindow(host);
     renderUevrLive(host);
+    renderClassBrowser(host);
 }
 
 void UevrPlugin::onMenu(PluginHost &host, PluginMenu which)
@@ -49,6 +50,11 @@ void UevrPlugin::onMenu(PluginHost &host, PluginMenu which)
         }
         if (ImGui::MenuItem("UEVR Live (bridge)", nullptr, &uevrLiveVisible))
         {
+        }
+        if (ImGui::MenuItem("Class Browser (UEVR)", nullptr, &classBrowserVisible))
+        {
+            if (classBrowserVisible)
+                rebuildClassTree(); // the SDK may have been (re)imported since last time
         }
         return;
     }

@@ -153,6 +153,7 @@ if(IMGUIIDE_PLUGIN_UEVR)
 	imguiide_add_plugin(imguiide_uevr createUevrPlugin
 		plugins/uevr/uevr_plugin.cpp
 		plugins/uevr/blueprint_window.cpp
+		plugins/uevr/class_browser.cpp
 		plugins/uevr/blueprint_templates.cpp
 		plugins/uevr/blueprint_snippets.cpp
 		plugins/uevr/uevr_bridge.cpp

@@ -13,6 +13,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -79,6 +80,23 @@ private:
     char sdkExposeFilter[128] = {0};
     void loadSdkDefinitions();             // fill sdkIndex from sdkDir (recursive)
     void rebuildSdkWords();
+
+    // ── Class browser ───────────────────────────────────────────────────────
+    // A graphical view of the imported reflection hierarchy: the class TREE (by
+    // parent), with each class's properties and functions, searchable. Clicking a
+    // member drops the matching node on the Blueprint canvas, so the browser is a
+    // way INTO the graph rather than a read-only listing.
+    bool classBrowserVisible = false;
+    char classBrowserFilter[128] = {0};
+    std::string classBrowserSelected;
+    void renderClassBrowser(PluginHost &host);
+    void renderClassBrowserNode(PluginHost &host, const std::string &className,
+                                const std::map<std::string, std::vector<std::string>> &children,
+                                int depth);
+    // parent (folded) name -> child class names; rebuilt when the SDK index changes
+    std::map<std::string, std::vector<std::string>> classChildren;
+    std::vector<std::string> classRoots;
+    void rebuildClassTree();
 
     // ── UEVR Live bridge (file-inbox IPC) ──────────────────────────────────
     bool uevrLiveVisible = false;
