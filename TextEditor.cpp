@@ -31,6 +31,7 @@
 
 #include "TextEditor.h"
 #include <algorithm>
+#include <thread>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -398,7 +399,25 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 
 	if (foldRanges.foldingEnabled && (structureForce || structureSettled))
 	{
-		foldRanges.rebuildFoldRanges(document);
+		// The scan is O(total characters) — on a large file that stalls the frame.
+		// Above the threshold it runs on a worker and the previous folds stay put
+		// until the new ones land (pollFoldRebuild, below). Small files stay
+		// synchronous: the scan is cheap and instant folds feel better than a
+		// one-frame delay.
+		if (document.lineCount() >= Folder::kAsyncFoldLines)
+		{
+			foldRanges.rebuildFoldRangesAsync(document);
+		}
+		else
+		{
+			foldRanges.rebuildFoldRanges(document);
+		}
+	}
+
+	// Apply a background scan that finished since the last frame.
+	if (foldRanges.foldingEnabled)
+	{
+		foldRanges.pollFoldRebuild(document);
 	}
 
 	if (language && showMatchingBrackets && (structureForce || structureSettled))
@@ -4361,22 +4380,17 @@ void TextEditor::selectionToUpperCase()
 
 
 
-void TextEditor::Folder::rebuildFoldRanges(Document& document)
+// Pure fold scan: reads only line TEXT + the language's comment markers, so it is
+// safe to run on a worker thread. Applying the result (visibility) touches the
+// Document and stays on the UI thread — see Folder::rebuildFoldRangesAsync.
+std::vector<TextEditor::FoldRange> TextEditor::Folder::computeFoldRanges(
+	const std::vector<std::string>& lines, const FoldLangSpec& lang)
 {
-	// Save which folds were folded before we clear
-	std::unordered_set<int> previouslyFolded;
-	for (const auto& fr : *this)
-	{
-		if (fr.folded)
-		{
-			previouslyFolded.insert(fr.start.line);
-		}
-	}
-	clear();
+	std::vector<FoldRange> out;
 
-	const int lineCount = document.lineCount();
+	const int lineCount = static_cast<int>(lines.size());
 	if (lineCount <= 0)
-		return;
+		return out;
 
 	// Indent-based folding only applies to languages whose blocks are
 	// expressed by indentation (Python). Brace-based languages (C, C++, C#,
@@ -4386,9 +4400,8 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	bool useLuaFolding = false;
 	bool useIniFolding = false;
 	bool useTagFolding = false;   // XML/XAML/HTML element nesting
-	if (auto lang = document.getLanguage())
 	{
-		const std::string& name = lang->name;
+		const std::string& name = lang.name;
 		useIndentFolding = (name == "Python");
 		useLuaFolding = (name == "Lua");
 		useIniFolding = (name == "INI");
@@ -4429,11 +4442,8 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	Coordinate commentStartPoint{};
 	bool inComment = false;
 	std::string commentStart, commentEnd;
-	if (auto lang = document.getLanguage())
-	{
-		commentStart = lang->commentStart;
-		commentEnd = lang->commentEnd;
-	}
+	commentStart = lang.commentStart;
+	commentEnd = lang.commentEnd;
 
 	// --- Indentation blocks ---
 	struct IndentBlock { int indent; Coordinate start; };
@@ -4444,11 +4454,8 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	// single-line comment marker (`//`, `#`, `--`, …). Any run of 3+ becomes a
 	// Comment fold so docstring-style blocks can be collapsed.
 	std::string lineComment, lineCommentAlt;
-	if (auto lang = document.getLanguage())
-	{
-		lineComment = lang->singleLineComment;
-		lineCommentAlt = lang->singleLineCommentAlt;
-	}
+	lineComment = lang.singleLineComment;
+	lineCommentAlt = lang.singleLineCommentAlt;
 	int  lineCommentBlockStart = -1;        // first line of current run, or -1
 	int  lineCommentBlockCol = 0;          // column where the // sits on start line
 	bool lineCommentBlockTriple = false;    // run's start line is a `///` doc comment
@@ -4463,7 +4470,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 					Coordinate(endLine, 0),
 					Comment);
 				fr.docComment = lineCommentBlockTriple;
-				push_back(fr);
+				out.push_back(fr);
 			}
 			lineCommentBlockStart = -1;
 			lineCommentBlockTriple = false;
@@ -4471,7 +4478,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 
 	for (int line = 0; line < lineCount; ++line)
 	{
-		const std::string text = document.getLineText(line);
+		const std::string& text = lines[line];
 
 		// Braces { }
 		for (int it = 0; it < static_cast<int>(text.size()); ++it)
@@ -4489,7 +4496,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 					braceStack.pop_back();
 					if (start.line < line)
 					{
-						push_back(FoldRange(start, Coordinate(line, it), Braces));
+						out.push_back(FoldRange(start, Coordinate(line, it), Braces));
 					}
 				}
 			}
@@ -4535,7 +4542,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 							Coordinate start = tagStack[k].start;
 							tagStack.resize(k);
 							if (start.line < line)
-								push_back(FoldRange(start, Coordinate(line, (int)p), Region));
+								out.push_back(FoldRange(start, Coordinate(line, (int)p), Region));
 							break;
 						}
 					}
@@ -4562,7 +4569,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				ifStack.pop_back();
 				if (start.line < line)
 				{
-					push_back(FoldRange(start, Coordinate(line, static_cast<int>(idx)), IfDef));
+					out.push_back(FoldRange(start, Coordinate(line, static_cast<int>(idx)), IfDef));
 				}
 			}
 		}
@@ -4583,7 +4590,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				regionStack.pop_back();
 				if (start.line < line)
 				{
-					push_back(FoldRange(start, Coordinate(line, static_cast<int>(idx)), Region));
+					out.push_back(FoldRange(start, Coordinate(line, static_cast<int>(idx)), Region));
 				}
 			}
 		}
@@ -4602,7 +4609,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				pragmaStack.pop_back();
 				if (start.line < line)
 				{
-					push_back(FoldRange(start, Coordinate(line, static_cast<int>(idx)), PragmaRegion));
+					out.push_back(FoldRange(start, Coordinate(line, static_cast<int>(idx)), PragmaRegion));
 				}
 			}
 		}
@@ -4623,7 +4630,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 						inComment = false;
 						if (commentStartPoint.line < line)
 						{
-							push_back(FoldRange(commentStartPoint, Coordinate(line, static_cast<int>(endPos)), Comment));
+							out.push_back(FoldRange(commentStartPoint, Coordinate(line, static_cast<int>(endPos)), Comment));
 						}
 					}
 				}
@@ -4636,7 +4643,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 					inComment = false;
 					if (commentStartPoint.line < line)
 					{
-						push_back(FoldRange(commentStartPoint, Coordinate(line, static_cast<int>(endPos)), Comment));
+						out.push_back(FoldRange(commentStartPoint, Coordinate(line, static_cast<int>(endPos)), Comment));
 					}
 				}
 			}
@@ -4687,7 +4694,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 				int lastBodyLine = line - 1;
 				if (headerLine >= 0 && headerLine < lastBodyLine)
 				{
-					push_back(FoldRange(
+					out.push_back(FoldRange(
 						Coordinate(headerLine, 0),
 						Coordinate(lastBodyLine, blk.indent),
 						Indent));
@@ -4737,7 +4744,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 							Coordinate start = luaStack.back();
 							luaStack.pop_back();
 							if (start.line < line)
-								push_back(FoldRange(start, Coordinate(line, static_cast<int>(s)), Indent));
+								out.push_back(FoldRange(start, Coordinate(line, static_cast<int>(s)), Indent));
 						}
 					}
 				}
@@ -4758,7 +4765,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 			if (s2 < text.size() && text[s2] == '[')
 			{
 				if (iniHeaderLine >= 0 && iniHeaderLine < line - 1)
-					push_back(FoldRange(Coordinate(iniHeaderLine, 0),
+					out.push_back(FoldRange(Coordinate(iniHeaderLine, 0),
 										Coordinate(line - 1, 0), Region));
 				iniHeaderLine = line;
 			}
@@ -4767,7 +4774,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 
 	// Close a still-open INI section at EOF.
 	if (useIniFolding && iniHeaderLine >= 0 && iniHeaderLine < lineCount - 1)
-		push_back(FoldRange(Coordinate(iniHeaderLine, 0),
+		out.push_back(FoldRange(Coordinate(iniHeaderLine, 0),
 							Coordinate(lineCount - 1, 0), Region));
 
 	// Close any line-comment run still open at EOF
@@ -4782,7 +4789,7 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 			int lastBodyLine = lineCount - 1;
 			if (headerLine >= 0 && headerLine < lastBodyLine)
 			{
-				push_back(FoldRange(
+				out.push_back(FoldRange(
 					Coordinate(headerLine, 0),
 					Coordinate(lastBodyLine, blk.indent),
 					Indent));
@@ -4793,29 +4800,95 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	// Close open multiline comment at EOF
 	if (inComment && commentStartPoint.line >= 0 && commentStartPoint.line < lineCount - 1)
 	{
-		push_back(FoldRange(commentStartPoint, Coordinate(lineCount - 1, 0), Comment));
+		out.push_back(FoldRange(commentStartPoint, Coordinate(lineCount - 1, 0), Comment));
 	}
 
 	// Deduplicate by start line — keep the outermost (largest end.line)
 	// so each line shows at most one fold arrow.
 	{
 		std::unordered_map<int, size_t> bestByStart;
-		for (size_t i = 0; i < size(); ++i)
+		for (size_t i = 0; i < out.size(); ++i)
 		{
-			const auto& fr = (*this)[i];
+			const auto& fr = out[i];
 			auto it = bestByStart.find(fr.start.line);
-			if (it == bestByStart.end() || (*this)[it->second].end.line < fr.end.line)
+			if (it == bestByStart.end() || out[it->second].end.line < fr.end.line)
 			{
 				bestByStart[fr.start.line] = i;
 			}
 		}
 		std::vector<FoldRange> kept;
 		kept.reserve(bestByStart.size());
-		for (auto& kv : bestByStart) kept.push_back((*this)[kv.second]);
-		static_cast<std::vector<FoldRange>&>(*this) = std::move(kept);
+		for (auto& kv : bestByStart) kept.push_back(out[kv.second]);
+		out = std::move(kept);
 	}
 
-	// Restore previously folded state
+	return out;
+}
+
+
+
+
+
+
+
+
+// Snapshot exactly what the pure scan needs from the live document, so the worker
+// never touches Document/Language after this point.
+TextEditor::Folder::FoldLangSpec TextEditor::Folder::specOf(Document& document)
+{
+	TextEditor::Folder::FoldLangSpec spec;
+
+	if (auto lang = document.getLanguage())
+	{
+		spec.name = lang->name;
+		spec.commentStart = lang->commentStart;
+		spec.commentEnd = lang->commentEnd;
+		spec.singleLineComment = lang->singleLineComment;
+		spec.singleLineCommentAlt = lang->singleLineCommentAlt;
+	}
+
+	return spec;
+}
+
+std::vector<std::string> TextEditor::Folder::linesOf(Document& document)
+{
+	std::vector<std::string> lines;
+	const int n = document.lineCount();
+	lines.reserve(static_cast<size_t>(n < 0 ? 0 : n));
+
+	for (int i = 0; i < n; ++i)
+	{
+		lines.push_back(document.getLineText(i));
+	}
+
+	return lines;
+}
+
+// Swap in a freshly computed set, preserving which folds the user had collapsed
+// (keyed by start line). Touches the Document (visibility) -> UI thread only.
+void TextEditor::Folder::applyComputedFolds(std::vector<FoldRange>&& ranges, Document& document)
+{
+	std::unordered_set<int> previouslyFolded;
+
+	for (const auto& fr : *this)
+	{
+		if (fr.folded)
+		{
+			previouslyFolded.insert(fr.start.line);
+		}
+	}
+
+	// A result computed against an older, longer document could name lines that no
+	// longer exist — drop those rather than index out of range in updateVisibility.
+	const int lineCount = document.lineCount();
+	ranges.erase(std::remove_if(ranges.begin(), ranges.end(),
+								[lineCount](const FoldRange& fr) {
+									return fr.start.line >= lineCount || fr.end.line >= lineCount;
+								}),
+				 ranges.end());
+
+	static_cast<std::vector<FoldRange>&>(*this) = std::move(ranges);
+
 	for (auto& fr : *this)
 	{
 		if (previouslyFolded.count(fr.start.line))
@@ -4827,12 +4900,82 @@ void TextEditor::Folder::rebuildFoldRanges(Document& document)
 	updateVisibility(document);
 }
 
+void TextEditor::Folder::rebuildFoldRanges(Document& document)
+{
+	applyComputedFolds(computeFoldRanges(linesOf(document), specOf(document)), document);
+}
 
+// Kick the scan onto a worker. Only one runs at a time; an edit landing mid-scan
+// sets `again`, and pollFoldRebuild re-dispatches once the in-flight one is applied.
+void TextEditor::Folder::rebuildFoldRangesAsync(Document& document)
+{
+#ifdef __EMSCRIPTEN__
+	rebuildFoldRanges(document);   // the web build has no worker threads
+#else
+	auto work = foldWork;
 
+	if (work->building.exchange(true))
+	{
+		work->again = true;
+		return;
+	}
 
+	const int gen = ++work->gen;
+	auto lines = linesOf(document);
+	auto spec = specOf(document);
 
+	std::thread([work, gen, lines = std::move(lines), spec = std::move(spec)]() {
+		auto ranges = computeFoldRanges(lines, spec);
 
+		{
+			std::lock_guard<std::mutex> lock(work->mutex);
+			work->result = std::move(ranges);
+			work->resultGen = gen;
+		}
 
+		work->ready = true;
+		work->building = false;
+	}).detach();
+#endif
+}
+
+bool TextEditor::Folder::pollFoldRebuild(Document& document)
+{
+	auto work = foldWork;
+
+	if (!work->ready.load())
+	{
+		return false;
+	}
+
+	std::vector<FoldRange> ranges;
+	int gen = -1;
+
+	{
+		std::lock_guard<std::mutex> lock(work->mutex);
+		ranges = std::move(work->result);
+		work->result.clear();
+		gen = work->resultGen;
+	}
+
+	work->ready = false;
+
+	bool applied = false;
+
+	if (gen == work->gen.load())
+	{
+		applyComputedFolds(std::move(ranges), document);
+		applied = true;
+	}
+
+	// The document changed while that scan ran — go again with the current text.
+	if (work->again.exchange(false))
+	{
+		rebuildFoldRangesAsync(document);
+	}
+
+	return applied;
+}
 
 void TextEditor::Folder::updateVisibility(Document& document)
 {

@@ -210,6 +210,20 @@ int main(int argc, char** argv)
 			"end\n";
 		CHECK(foldCount(TextEditor::Language::Lua(), luaFn) >= 1,
 			"Lua: function ... end produces a fold");
+
+		// The fold scan was extracted into a pure text->ranges function so it can run
+		// on a worker (Folder::computeFoldRanges). Prove it still folds correctly at a
+		// size well past the async threshold (kAsyncFoldLines = 5000).
+		{
+			std::string big;
+			const int blocks = 3000;              // 3 lines each -> 9000 lines
+			big.reserve(blocks * 24);
+			for (int i = 0; i < blocks; ++i)
+				big += "void f() {\n    int x = 1;\n}\n";
+			size_t n = foldCount(TextEditor::Language::Cpp(), big);
+			CHECK(n == static_cast<size_t>(blocks),
+				"folds: a 9000-line file folds every brace block (pure scan scales)");
+		}
 	}
 
 	// ── Ctrl+L (selectCursorLines): per-cursor whole-line select, grows on repeat ──

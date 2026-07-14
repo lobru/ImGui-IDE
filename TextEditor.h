@@ -27,6 +27,7 @@
 
 #include "imgui.h"
 #include <atomic>
+#include <mutex>
 
 
 
@@ -1310,6 +1311,52 @@ protected:
 		void rebuildFoldRanges(Document& document);
 		void updateVisibility(Document& document);
 		void toggleFold(int line, Document& document);
+
+		// ── Background fold detection ───────────────────────────────────────
+		// The fold SCAN is pure: it reads only line TEXT (never glyph colors), so
+		// it can run off the UI thread. Only applying the result touches the
+		// Document (updateVisibility), which stays on the UI thread.
+		//
+		//   computeFoldRanges  — pure text -> ranges (also used by the sync path)
+		//   rebuildFoldRangesAsync — snapshot + dispatch to a worker
+		//   pollFoldRebuild    — apply a finished scan if it's still current
+		//
+		// Large files stall the frame on a synchronous rebuild; above
+		// kAsyncFoldLines we go async and keep the previous folds until the new
+		// ones land. A rebuild whose generation is stale (the doc changed while it
+		// ran) is discarded.
+		static constexpr int kAsyncFoldLines = 5000;
+
+		// Everything the scan needs from the Language — copied so the worker never
+		// touches the live Language/Document.
+		struct FoldLangSpec {
+			std::string name;
+			std::string commentStart, commentEnd;
+			std::string singleLineComment, singleLineCommentAlt;
+		};
+
+		static std::vector<FoldRange> computeFoldRanges(const std::vector<std::string>& lines,
+														const FoldLangSpec& lang);
+
+		// Snapshot helpers (members, so they can see the protected nested types).
+		static FoldLangSpec specOf(Document& document);
+		static std::vector<std::string> linesOf(Document& document);
+
+		void rebuildFoldRangesAsync(Document& document);
+		bool pollFoldRebuild(Document& document);   // true if a result was applied
+		void applyComputedFolds(std::vector<FoldRange>&& ranges, Document& document);
+
+		// Shared so a detached worker outlives a destroyed editor safely.
+		struct FoldWork {
+			std::mutex mutex;
+			std::atomic<bool> building{ false };
+			std::atomic<bool> ready{ false };
+			std::atomic<bool> again{ false };  // doc changed mid-scan -> rescan after applying
+			std::atomic<int>  gen{ 0 };        // bumped per dispatch; stale results are dropped
+			std::vector<FoldRange> result;
+			int resultGen = -1;
+		};
+		std::shared_ptr<FoldWork> foldWork = std::make_shared<FoldWork>();
 
 		// Unfold every fold that hides `line`, so the line becomes visible.
 		// Returns true if anything was changed.
