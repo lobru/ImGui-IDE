@@ -1553,6 +1553,38 @@ int main(int argc, char** argv)
 			// a real .uproject still wins when both are reachable (richer descriptor)
 			CHECK(unreal::findUProjectOrPlugin(gameHdr.parent_path()) == uproj,
 				"UE: a .uproject is preferred over a .uplugin");
+
+			// ── Tolerant descriptor parsing: a real UE .uproject with a TRAILING COMMA
+			//    (UE's own editor writes them) must still yield its EngineAssociation.
+			//    This is the "ue source linking broken" bug: a strict parse discarded
+			//    the file, so the engine was never found and includes wouldn't resolve. ──
+			auto lenientProj = root / "Lenient" / "Lenient.uproject";
+			fs::create_directories(lenientProj.parent_path(), ec);
+			{
+				std::ofstream lf(lenientProj);
+				lf << "{\n"
+				      "  \"FileVersion\": 3,\n"
+				      "  \"EngineAssociation\": \"5.4\",\n"
+				      "  \"Modules\": [\n"
+				      "    { \"Name\": \"Lenient\", \"AdditionalDependencies\": [ \"Engine\", \"CoreUObject\", ] },\n" // trailing comma
+				      "  ],\n"   // trailing comma
+				      "}\n";
+			}
+			std::string lassoc;
+			unreal::findEngineRoot(lenientProj, lassoc);
+			CHECK(lassoc == "5.4",
+				"UE: a .uproject with trailing commas still yields EngineAssociation (tolerant parse)");
+
+			// the stripper itself: drops trailing commas + comments, keeps string content
+			CHECK(unreal::stripJsonLeniencies("[1,2,]") == "[1,2]", "strip: trailing comma in array");
+			CHECK(unreal::stripJsonLeniencies("{\"a\":1,}") == "{\"a\":1}", "strip: trailing comma in object");
+			CHECK(unreal::stripJsonLeniencies("[\"a,\",]") == "[\"a,\"]",
+				"strip: a comma INSIDE a string is preserved; only the trailing one drops");
+			{
+				std::string commented = "{ \"x\": 1 // note\n}";
+				CHECK(unreal::stripJsonLeniencies(commented).find("//") == std::string::npos,
+					"strip: line comment removed");
+			}
 		}
 		CHECK(unreal::resolveInclude(engine, uproj, "MyChar.h") == gameHdr,
 			"UE: game module Public header resolves");

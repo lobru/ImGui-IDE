@@ -21,6 +21,80 @@ static std::string quoted(const std::filesystem::path& p)
 	return "\"" + p.string() + "\"";
 }
 
+// Unreal descriptors (.uproject/.uplugin) are hand- and tool-edited and routinely
+// contain things strict JSON rejects — most commonly a TRAILING COMMA before a ]
+// or } (UE's own editor writes them). nlohmann is strict, so a lenient descriptor
+// parses to "discarded" and everything downstream (engine lookup, module list)
+// silently fails. Clean the two lenient bits UE tolerates — // and /* */ comments
+// and trailing commas — then parse. String scan, comment/comma aware, so it never
+// touches a `,` or `//` INSIDE a string value.
+std::string stripJsonLeniencies(const std::string& in)
+{
+	std::string out;
+	out.reserve(in.size());
+	bool inStr = false, esc = false;
+
+	for (size_t i = 0; i < in.size(); ++i)
+	{
+		char c = in[i];
+
+		if (inStr)
+		{
+			out.push_back(c);
+			if (esc)          esc = false;
+			else if (c == '\\') esc = true;
+			else if (c == '"')  inStr = false;
+			continue;
+		}
+
+		// line comment
+		if (c == '/' && i + 1 < in.size() && in[i + 1] == '/')
+		{
+			i += 2;
+			while (i < in.size() && in[i] != '\n')
+				++i;
+			if (i < in.size())
+				out.push_back('\n');
+			continue;
+		}
+		// block comment
+		if (c == '/' && i + 1 < in.size() && in[i + 1] == '*')
+		{
+			i += 2;
+			while (i + 1 < in.size() && !(in[i] == '*' && in[i + 1] == '/'))
+				++i;
+			i += 1; // land on the '/'
+			continue;
+		}
+		// trailing comma: a ',' whose next non-whitespace char closes an array/object
+		if (c == ',')
+		{
+			size_t j = i + 1;
+			while (j < in.size() && (in[j] == ' ' || in[j] == '\t' || in[j] == '\r' || in[j] == '\n'))
+				++j;
+			if (j < in.size() && (in[j] == ']' || in[j] == '}'))
+				continue; // drop the comma
+		}
+
+		if (c == '"')
+			inStr = true;
+
+		out.push_back(c);
+	}
+
+	return out;
+}
+
+// Parse a descriptor's text, tolerating the leniencies above. Returns a discarded
+// json on genuine syntax errors.
+nlohmann::json parseDescriptor(const std::string& text)
+{
+	auto j = nlohmann::json::parse(text, nullptr, /*allow_exceptions*/ false);
+	if (!j.is_discarded())
+		return j;
+	return nlohmann::json::parse(stripJsonLeniencies(text), nullptr, /*allow_exceptions*/ false);
+}
+
 std::filesystem::path findUProject(const std::filesystem::path& searchStart)
 {
 	std::error_code ec;
@@ -153,7 +227,8 @@ std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std:
 		std::ifstream f(uproject);
 		if (f.is_open())
 		{
-			auto j = nlohmann::json::parse(f, nullptr, /*allow_exceptions*/ false);
+			std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+			auto j = parseDescriptor(text); // tolerant: UE descriptors have trailing commas
 			if (!j.is_discarded() && j.is_object())
 			{
 				if (isPluginDescriptor(uproject))
@@ -517,7 +592,7 @@ const std::vector<std::string>& loadingPhases() {
 
 std::string descriptorAddPlugin(const std::string& json, const std::string& name, bool enabled,
 								std::string& err) {
-	auto j = nlohmann::json::parse(json, nullptr, /*allow_exceptions*/ false);
+	auto j = parseDescriptor(json); // tolerant: UE descriptors have trailing commas
 	if (j.is_discarded() || !j.is_object()) {
 		err = "not a valid descriptor (JSON object expected)";
 		return {};
@@ -540,7 +615,7 @@ std::string descriptorAddPlugin(const std::string& json, const std::string& name
 
 std::string descriptorAddModule(const std::string& json, const std::string& name,
 								const std::string& type, const std::string& phase, std::string& err) {
-	auto j = nlohmann::json::parse(json, nullptr, /*allow_exceptions*/ false);
+	auto j = parseDescriptor(json); // tolerant: UE descriptors have trailing commas
 	if (j.is_discarded() || !j.is_object()) {
 		err = "not a valid descriptor (JSON object expected)";
 		return {};

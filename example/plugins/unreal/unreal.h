@@ -29,6 +29,10 @@ std::filesystem::path findUProjectOrPlugin(const std::filesystem::path& searchSt
 // True when `descriptor` is a .uplugin (vs a .uproject).
 bool isPluginDescriptor(const std::filesystem::path& descriptor);
 
+// Strip the leniencies UE tolerates in descriptors but strict JSON rejects:
+// // and /* */ comments, and trailing commas before ] or }. String-aware.
+std::string stripJsonLeniencies(const std::string& in);
+
 // Engine root for a .uproject. Fills `engineAssociation` with the raw association
 // string (version like "5.4", a source-build GUID, or "" for a relative checkout).
 std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std::string& engineAssociation);
