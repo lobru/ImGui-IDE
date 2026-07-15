@@ -4285,8 +4285,15 @@ void BlueprintEditor::renderGraphContextMenu() {
 				groups[paletteAction->category].push_back(paletteAction);
 			}
 
+			// Collapse groups by default when just BROWSING — an all-expanded list is a
+			// wall of nodes to scroll past. But a drag-out (pending && contextSensitive)
+			// has already filtered to pin-compatible nodes, so that short, relevant list
+			// stays open. A single-group result opens regardless.
+			const bool expandByDefault =
+				(pending && contextSensitive) || groups.size() <= 1;
+
 			for (auto& group : groups) {
-				ImGui::SetNextItemOpen(true, ImGuiCond_Once);
+				ImGui::SetNextItemOpen(expandByDefault, ImGuiCond_Once);
 
 				if (ImGui::TreeNode(group.first.c_str())) {
 					for (auto paletteAction : group.second) {

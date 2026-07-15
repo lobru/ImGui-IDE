@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "TextEditor.h"
+#include "git_url.h"
 #include "notes.h"
 #include "screenshot.h"
 #include "tsindex.h"
@@ -536,6 +537,23 @@ int main(int argc, char** argv)
 		notes::shiftLines(shiftMe, "src/b.cpp", 10, +3);
 		CHECK(shiftMe[0].line == 5, "shiftLines leaves notes above the edit alone");
 		CHECK(shiftMe[1].line == 23, "shiftLines pushes notes below the edit down");
+	}
+
+	// ── Git remote → web URL normalization ──
+	{
+		CHECK(gitRemoteToWebUrl("git@github.com:lobru/ImGui-IDE.git") == "https://github.com/lobru/ImGui-IDE",
+			  "scp-style git@ remote → https, .git stripped");
+		CHECK(gitRemoteToWebUrl("ssh://git@github.com/lobru/ImGui-IDE.git") == "https://github.com/lobru/ImGui-IDE",
+			  "ssh:// remote → https, git@ authority stripped");
+		CHECK(gitRemoteToWebUrl("https://github.com/lobru/ImGui-IDE.git") == "https://github.com/lobru/ImGui-IDE",
+			  "https remote keeps host, .git stripped");
+		CHECK(gitRemoteToWebUrl("http://example.com/a/b") == "https://example.com/a/b",
+			  "http upgraded to https");
+		CHECK(gitRemoteToWebUrl("git@gitlab.com:group/sub/proj.git") == "https://gitlab.com/group/sub/proj",
+			  "nested path on scp-style remote");
+		CHECK(gitRemoteToWebUrl("").empty(), "empty remote → empty");
+		CHECK(gitRemoteToWebUrl("/local/path/repo").empty(), "a local path is not a web URL");
+		CHECK(gitRemoteToWebUrl("file:///srv/git/x.git").empty(), "file:// is not a web URL");
 	}
 
 	// ── Screenshot PNG encoder. Hand-rolled (STORED deflate + CRC32 + Adler32), so

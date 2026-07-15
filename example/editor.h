@@ -29,6 +29,7 @@
 #include "../TextDiff.h"
 #include "tsindex.h"
 #include "lsp_client.h"
+#include "git_url.h"
 #include "nav_history.h"
 #include "notes.h"
 #include "screenshot.h"
@@ -1026,9 +1027,37 @@ private:
 	// message dialog; Discard confirms first (destructive).
 	std::string gitRoot();
 	void        runGit(const std::string& args);
+	std::string gitCapture(const std::string& args) const; // run `git -C <root> <args>`, return stdout (trimmed of trailing ws)
 	bool        gitCommitRequest  = false;
 	char        gitCommitMsg[1024] = {};
 	char        gitNewBranchBuf[128] = {}; // "New Branch" inline input
+
+	// ── Git remote → web ────────────────────────────────────────────────────
+	std::string gitWebUrl() const;          // origin remote as an https:// browse URL ("" if none)
+	void        openGitOnWeb();             // open gitWebUrl() in the browser
+
+	// ── Commit history / rollback ───────────────────────────────────────────
+	// A VS-style history window: recent commits for the repo (or the active file),
+	// each with view-diff / checkout / reset / revert. Log is captured on a worker.
+	struct GitLogEntry { std::string hash, shortHash, subject, author, date; };
+	struct GitLog {
+		std::mutex               mutex;
+		std::atomic<bool>        loading{ false };
+		std::vector<GitLogEntry> entries;
+		std::string              scopeFile;   // "" = whole repo, else project-relative path
+		std::string              status;
+	};
+	std::shared_ptr<GitLog> gitLog = std::make_shared<GitLog>();
+	bool  gitHistoryVisible = false;
+	bool  gitHistoryFileScope = false;       // limit the log to the active file
+	int   gitHistorySelected = -1;
+	void  renderGitHistory();
+	void  refreshGitHistory();               // (re)load the log on a worker
+	void  gitCheckoutCommit(const std::string& hash);   // detached checkout (with a warning)
+	void  gitResetToCommit(const std::string& hash, bool hard);
+	void  gitRevertCommit(const std::string& hash);
+	int   gitPendingAction = 0;              // 0 none, 1 checkout, 2 soft reset, 3 hard reset, 4 revert
+	std::string gitPendingHash;
 
 	// ── GitHub repo browser (read-only) ─────────────────────────────────────
 	// Browse a public GitHub repo's file tree over the API and open any file

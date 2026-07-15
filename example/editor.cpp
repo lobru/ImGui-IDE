@@ -9966,6 +9966,7 @@ void Editor::render()
     renderNotesPanel();
 
     renderNavigationPanel();
+    renderGitHistory();
     renderTour();   // after the panels exist, so a step can anchor to a real window
     renderGithubBrowser();
     renderImageWindows();
@@ -11788,122 +11789,147 @@ void Editor::renderMenuBar()
         }
         if (ImGui::BeginMenu("Tools"))
         {
-            // Plugins contribute their tool-panel toggles here (Blueprint, UEVR Live).
-            pluginRegistry.menu(*this, PluginMenu::Tools);
-            ImGui::Separator();
             if (ImGui::MenuItem("Developer Tools", nullptr, &devToolsVisible))
             {
             }
             if (ImGui::MenuItem("External Changes", nullptr, &externalChangesVisible))
             {
             }
+            // Plugins contribute their tool-panel toggles here (Blueprint, UEVR Live).
+            pluginRegistry.menu(*this, PluginMenu::Tools);
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Git"))
+        {
+            bool inRepo;
+            {
+                std::lock_guard<std::mutex> lk(gitInfo->mutex);
+                inRepo = !gitInfo->branch.empty();
+            }
+            if (!inRepo)
+                ImGui::TextDisabled("(not a git repository)");
+
+            if (ImGui::MenuItem("Fetch", nullptr, false, inRepo))
+            {
+                runGit("fetch");
+            }
+            if (ImGui::MenuItem("Pull", nullptr, false, inRepo))
+            {
+                runGit("pull");
+            }
+            // Switch Branch — lists local branches (current is checked); switching
+            // shells out to `git checkout`. A dirty tree makes git refuse the
+            // switch (output shows why) rather than us clobbering changes.
+            {
+                std::string cur;
+                std::vector<std::string> branches;
+                {
+                    std::lock_guard<std::mutex> lk(gitInfo->mutex);
+                    cur = gitInfo->branch;
+                    branches = gitInfo->branches;
+                }
+                if (ImGui::BeginMenu("Switch Branch", inRepo && !branches.empty()))
+                {
+                    for (const auto &b : branches)
+                    {
+                        bool isCur = (b == cur);
+                        if (ImGui::MenuItem(b.c_str(), nullptr, isCur) && !isCur)
+                            runGit("checkout \"" + b + "\"");
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("New Branch", inRepo))
+                {
+                    ImGui::TextDisabled("Create + switch to a new branch");
+                    ImGui::SetNextItemWidth(200.0f);
+                    bool go = ImGui::InputTextWithHint("##newbranch", "branch name", gitNewBranchBuf,
+                                                       sizeof(gitNewBranchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button("Create") || go) && gitNewBranchBuf[0])
+                    {
+                        runGit(std::string("checkout -b \"") + gitNewBranchBuf + "\"");
+                        gitNewBranchBuf[0] = '\0';
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndMenu();
+                }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Commit All…", nullptr, false, inRepo))
+            {
+                gitCommitMsg[0] = '\0';
+                gitCommitRequest = true;
+            }
+            if (ImGui::MenuItem("Push", nullptr, false, inRepo))
+            {
+                runGit("push");
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("History…", nullptr, &gitHistoryVisible, inRepo))
+            {
+                if (gitHistoryVisible)
+                    refreshGitHistory();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Browse commits; checkout / reset / revert any of them");
+            if (ImGui::MenuItem("Status", nullptr, false, inRepo))
+            {
+                runGit("status");
+            }
+            if (ImGui::MenuItem("Open on Web", nullptr, false, inRepo))
+            {
+                openGitOnWeb();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Open the 'origin' remote in your browser");
+            if (ImGui::BeginMenu("Submodules", inRepo))
+            {
+                if (ImGui::MenuItem("Update (init, recursive)"))
+                    runGit("submodule update --init --recursive");
+                if (ImGui::MenuItem("Sync URLs"))
+                    runGit("submodule sync --recursive");
+                if (ImGui::MenuItem("Status"))
+                    runGit("submodule status --recursive");
+                if (ImGui::MenuItem("Pull latest (remote)"))
+                    runGit("submodule update --remote --recursive");
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Discard All Changes…", nullptr, false, inRepo))
+            {
+                gitDiscardRequest = true;
+            }
+            if (ImGui::MenuItem("Compare File with Revision…", nullptr, false, inRepo && !tabs.empty()))
+            {
+                std::snprintf(gitRevBuf, sizeof(gitRevBuf), "HEAD");
+                gitRevCompareRequest = true;
+            }
+
+            if (ImGui::MenuItem("Browse GitHub Repo…", nullptr, &ghBrowseVisible))
+            {
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Browse a public GitHub repo's files read-only over the API (no clone)");
+
+            if (ImGui::MenuItem("Clone Repository from URL…"))
+            {
+                gitCloneUrl[0] = '\0';
+                if (gitCloneDir[0] == '\0')
+                {
+                    // default parent = current project's parent, else cwd
+                    std::error_code dec;
+                    auto parent = !projectRoot.empty() ? projectRoot.parent_path()
+                                                       : std::filesystem::current_path();
+                    std::snprintf(gitCloneDir, sizeof(gitCloneDir), "%s", parent.string().c_str());
+                    (void)dec;
+                }
+                gitCloneRequest = true;
+            }
             ImGui::EndMenu();
         }
         // PROJECT — build / run / project tooling.
         if (ImGui::BeginMenu("Project"))
         {
-            if (ImGui::BeginMenu("Git"))
-            {
-                bool inRepo;
-                {
-                    std::lock_guard<std::mutex> lk(gitInfo->mutex);
-                    inRepo = !gitInfo->branch.empty();
-                }
-                if (!inRepo)
-                    ImGui::TextDisabled("(not a git repository)");
 
-                if (ImGui::MenuItem("Fetch", nullptr, false, inRepo))
-                {
-                    runGit("fetch");
-                }
-                if (ImGui::MenuItem("Pull", nullptr, false, inRepo))
-                {
-                    runGit("pull");
-                }
-                // Switch Branch — lists local branches (current is checked); switching
-                // shells out to `git checkout`. A dirty tree makes git refuse the
-                // switch (output shows why) rather than us clobbering changes.
-                {
-                    std::string cur;
-                    std::vector<std::string> branches;
-                    {
-                        std::lock_guard<std::mutex> lk(gitInfo->mutex);
-                        cur = gitInfo->branch;
-                        branches = gitInfo->branches;
-                    }
-                    if (ImGui::BeginMenu("Switch Branch", inRepo && !branches.empty()))
-                    {
-                        for (const auto &b : branches)
-                        {
-                            bool isCur = (b == cur);
-                            if (ImGui::MenuItem(b.c_str(), nullptr, isCur) && !isCur)
-                                runGit("checkout \"" + b + "\"");
-                        }
-                        ImGui::EndMenu();
-                    }
-                    if (ImGui::BeginMenu("New Branch", inRepo))
-                    {
-                        ImGui::TextDisabled("Create + switch to a new branch");
-                        ImGui::SetNextItemWidth(200.0f);
-                        bool go = ImGui::InputTextWithHint("##newbranch", "branch name", gitNewBranchBuf,
-                                                           sizeof(gitNewBranchBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                        ImGui::SameLine();
-                        if ((ImGui::Button("Create") || go) && gitNewBranchBuf[0])
-                        {
-                            runGit(std::string("checkout -b \"") + gitNewBranchBuf + "\"");
-                            gitNewBranchBuf[0] = '\0';
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::EndMenu();
-                    }
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Commit All…", nullptr, false, inRepo))
-                {
-                    gitCommitMsg[0] = '\0';
-                    gitCommitRequest = true;
-                }
-                if (ImGui::MenuItem("Push", nullptr, false, inRepo))
-                {
-                    runGit("push");
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Status", nullptr, false, inRepo))
-                {
-                    runGit("status");
-                }
-                if (ImGui::MenuItem("Discard All Changes…", nullptr, false, inRepo))
-                {
-                    gitDiscardRequest = true;
-                }
-                if (ImGui::MenuItem("Compare File with Revision…", nullptr, false, inRepo && !tabs.empty()))
-                {
-                    std::snprintf(gitRevBuf, sizeof(gitRevBuf), "HEAD");
-                    gitRevCompareRequest = true;
-                }
-
-                if (ImGui::MenuItem("Browse GitHub Repo…", nullptr, &ghBrowseVisible))
-                {
-                }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Browse a public GitHub repo's files read-only over the API (no clone)");
-
-                if (ImGui::MenuItem("Clone Repository from URL…"))
-                {
-                    gitCloneUrl[0] = '\0';
-                    if (gitCloneDir[0] == '\0')
-                    {
-                        // default parent = current project's parent, else cwd
-                        std::error_code dec;
-                        auto parent = !projectRoot.empty() ? projectRoot.parent_path()
-                                                           : std::filesystem::current_path();
-                        std::snprintf(gitCloneDir, sizeof(gitCloneDir), "%s", parent.string().c_str());
-                        (void)dec;
-                    }
-                    gitCloneRequest = true;
-                }
-                ImGui::EndMenu();
-            }
             if (ImGui::MenuItem("Symbols", nullptr, &symbolsPanelVisible))
             {
             }
@@ -12364,6 +12390,321 @@ void Editor::runGit(const std::string &args)
     }
     runCommandInOutputPanel("git " + args, root);
     gitPollTime = -1000.0; // force the status indicator to refresh after the action
+}
+
+std::string Editor::gitCapture(const std::string &args) const
+{
+    std::string root = const_cast<Editor *>(this)->gitRoot();
+    if (root.empty())
+        return {};
+
+    std::string cmd = "git -C \"" + root + "\" " + args + " 2>nul";
+    std::string out;
+
+    if (FILE *p = _popen(cmd.c_str(), "r"))
+    {
+        char buf[4096];
+        while (fgets(buf, sizeof(buf), p))
+            out += buf;
+        _pclose(p);
+    }
+
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
+        out.pop_back();
+    return out;
+}
+
+// ── Git remote → web ─────────────────────────────────────────────────────────
+
+std::string Editor::gitWebUrl() const
+{
+    return gitRemoteToWebUrl(const_cast<Editor *>(this)->gitCapture("remote get-url origin"));
+}
+
+void Editor::openGitOnWeb()
+{
+    std::string url = gitWebUrl();
+    if (url.empty())
+    {
+        pushToast("Git: no web-browsable 'origin' remote", IM_COL32(230, 160, 90, 255), 3);
+        return;
+    }
+    navOpenExternally(url);
+}
+
+// ── Commit history / rollback ────────────────────────────────────────────────
+
+void Editor::refreshGitHistory()
+{
+    std::string root = gitRoot();
+    if (root.empty())
+        return;
+
+    std::string scope;
+    if (gitHistoryFileScope && !tabs.empty() && doc().filename != "untitled")
+        scope = doc().filename;
+
+    {
+        std::lock_guard<std::mutex> lk(gitLog->mutex);
+        if (gitLog->loading)
+            return;
+        gitLog->loading = true;
+        gitLog->scopeFile = scope;
+        gitLog->status = "loading…";
+    }
+
+    auto log = gitLog;
+
+    std::thread([log, root, scope]() {
+        // A unit-separated format so subjects with spaces/pipes survive parsing.
+        std::string cmd = "git -C \"" + root +
+                          "\" log -n 200 --pretty=format:\"%H\x1f%h\x1f%an\x1f%ad\x1f%s\" --date=short";
+        if (!scope.empty())
+            cmd += " -- \"" + scope + "\"";
+        cmd += " 2>nul";
+
+        std::vector<GitLogEntry> entries;
+
+        if (FILE *p = _popen(cmd.c_str(), "r"))
+        {
+            std::string out;
+            char buf[8192];
+            while (fgets(buf, sizeof(buf), p))
+                out += buf;
+            _pclose(p);
+
+            std::istringstream ss(out);
+            std::string line;
+            while (std::getline(ss, line))
+            {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                if (line.empty())
+                    continue;
+
+                GitLogEntry e;
+                std::string *fields[] = {&e.hash, &e.shortHash, &e.author, &e.date, &e.subject};
+                size_t start = 0;
+                int fi = 0;
+                for (; fi < 5; fi++)
+                {
+                    size_t sep = line.find('\x1f', start);
+                    std::string val = line.substr(start, sep == std::string::npos ? std::string::npos : sep - start);
+                    *fields[fi] = val;
+                    if (sep == std::string::npos)
+                        break;
+                    start = sep + 1;
+                }
+                if (!e.hash.empty())
+                    entries.push_back(std::move(e));
+            }
+        }
+
+        std::lock_guard<std::mutex> lk(log->mutex);
+        log->entries = std::move(entries);
+        log->loading = false;
+        log->status = log->entries.empty() ? "no commits" : "";
+    }).detach();
+}
+
+void Editor::gitCheckoutCommit(const std::string &hash)
+{
+    // Detached checkout — the user gets a warning modal first (renderGitHistory).
+    runGit("checkout " + hash);
+    refreshGitHistory();
+}
+
+void Editor::gitResetToCommit(const std::string &hash, bool hard)
+{
+    runGit(std::string("reset ") + (hard ? "--hard " : "--soft ") + hash);
+    refreshGitHistory();
+}
+
+void Editor::gitRevertCommit(const std::string &hash)
+{
+    // --no-edit: don't drop the user into an editor we don't control.
+    runGit("revert --no-edit " + hash);
+    refreshGitHistory();
+}
+
+void Editor::renderGitHistory()
+{
+    if (!gitHistoryVisible)
+        return;
+
+    ImGui::SetNextWindowSize(ImVec2(720, 460), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Git History", &gitHistoryVisible))
+    {
+        ImGui::End();
+        return;
+    }
+
+    if (gitRoot().empty())
+    {
+        ImGui::TextDisabled("Not a git repository.");
+        ImGui::End();
+        return;
+    }
+
+    if (ImGui::Button("Refresh"))
+        refreshGitHistory();
+    ImGui::SameLine();
+    if (ImGui::Checkbox("This file only", &gitHistoryFileScope))
+    {
+        gitHistorySelected = -1;
+        refreshGitHistory();
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Open on Web"))
+        openGitOnWeb();
+
+    // First open: kick a load.
+    bool needInitialLoad = false;
+    {
+        std::lock_guard<std::mutex> lk(gitLog->mutex);
+        needInitialLoad = gitLog->entries.empty() && !gitLog->loading && gitLog->status.empty();
+    }
+    if (needInitialLoad)
+        refreshGitHistory();
+
+    ImGui::Separator();
+
+    std::vector<GitLogEntry> entries;
+    bool loading;
+    std::string status;
+    {
+        std::lock_guard<std::mutex> lk(gitLog->mutex);
+        entries = gitLog->entries;
+        loading = gitLog->loading;
+        status = gitLog->status;
+    }
+
+    if (loading)
+        ImGui::TextDisabled("Loading history…");
+    else if (entries.empty())
+        ImGui::TextDisabled("%s", status.empty() ? "No commits." : status.c_str());
+
+    if (ImGui::BeginTable("##gitlog", 4,
+                          ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY))
+    {
+        ImGui::TableSetupColumn("Commit", ImGuiTableColumnFlags_WidthFixed, 78.0f);
+        ImGui::TableSetupColumn("Subject", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Author", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        ImGui::TableSetupColumn("Date", ImGuiTableColumnFlags_WidthFixed, 92.0f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+
+        for (int i = 0; i < (int)entries.size(); i++)
+        {
+            const auto &e = entries[i];
+            ImGui::TableNextRow();
+            ImGui::PushID(i);
+
+            ImGui::TableSetColumnIndex(0);
+            if (ImGui::Selectable(e.shortHash.c_str(), gitHistorySelected == i,
+                                  ImGuiSelectableFlags_SpanAllColumns))
+                gitHistorySelected = i;
+
+            if (ImGui::BeginPopupContextItem("##commitctx"))
+            {
+                gitHistorySelected = i;
+                if (ImGui::MenuItem("Compare file with this commit", nullptr, false,
+                                    !tabs.empty() && doc().filename != "untitled"))
+                {
+                    std::snprintf(gitRevBuf, sizeof(gitRevBuf), "%s", e.hash.c_str());
+                    gitRevCompareRequest = true;
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Checkout (detached)"))
+                {
+                    gitPendingAction = 1;
+                    gitPendingHash = e.hash;
+                }
+                if (ImGui::MenuItem("Soft reset to here"))
+                {
+                    gitPendingAction = 2;
+                    gitPendingHash = e.hash;
+                }
+                if (ImGui::MenuItem("Hard reset to here"))
+                {
+                    gitPendingAction = 3;
+                    gitPendingHash = e.hash;
+                }
+                if (ImGui::MenuItem("Revert this commit"))
+                {
+                    gitPendingAction = 4;
+                    gitPendingHash = e.hash;
+                }
+                if (ImGui::MenuItem("Copy hash"))
+                    ImGui::SetClipboardText(e.hash.c_str());
+                ImGui::EndPopup();
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(e.subject.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextDisabled("%s", e.author.c_str());
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextDisabled("%s", e.date.c_str());
+
+            ImGui::PopID();
+        }
+
+        ImGui::EndTable();
+    }
+
+    // Confirm the destructive rollbacks — a hard reset or a detached checkout on a
+    // dirty tree loses work, so name exactly what's about to happen.
+    if (gitPendingAction != 0)
+        ImGui::OpenPopup("Confirm git action");
+
+    if (ImGuiViewport *vp = ImGui::GetWindowViewport())
+    {
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                                       vp->WorkPos.y + vp->WorkSize.y * 0.5f),
+                                ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    }
+    if (ImGui::BeginPopupModal("Confirm git action", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        const char *what =
+            gitPendingAction == 1 ? "Check out this commit (detached HEAD)?\nUncommitted changes may block or be lost."
+            : gitPendingAction == 2 ? "Soft reset to this commit?\nHistory after it becomes staged changes (work kept)."
+            : gitPendingAction == 3 ? "HARD reset to this commit?\nAll changes after it are DISCARDED. This cannot be undone."
+                                    : "Revert this commit?\nA new commit undoing its changes is created.";
+
+        ImGui::TextUnformatted(what);
+        ImGui::TextDisabled("%s", gitPendingHash.substr(0, 10).c_str());
+        ImGui::Separator();
+
+        const bool destructive = gitPendingAction == 1 || gitPendingAction == 3;
+        if (destructive)
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(150, 60, 55, 255));
+        if (ImGui::Button(destructive ? "Yes, do it" : "Confirm", ImVec2(120, 0)))
+        {
+            switch (gitPendingAction)
+            {
+            case 1: gitCheckoutCommit(gitPendingHash); break;
+            case 2: gitResetToCommit(gitPendingHash, false); break;
+            case 3: gitResetToCommit(gitPendingHash, true); break;
+            case 4: gitRevertCommit(gitPendingHash); break;
+            }
+            gitPendingAction = 0;
+            ImGui::CloseCurrentPopup();
+        }
+        if (destructive)
+            ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0)))
+        {
+            gitPendingAction = 0;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::End();
 }
 
 // ── GitHub repo browser helpers ─────────────────────────────────────────────

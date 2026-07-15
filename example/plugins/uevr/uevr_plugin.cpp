@@ -41,21 +41,23 @@ void UevrPlugin::onFrame(PluginHost &host)
 
 void UevrPlugin::onMenu(PluginHost &host, PluginMenu which)
 {
-    // Panel toggles live under Tools (the host's reorganized "Panels" menu). These
-    // are plugin windows, so they belong with the other tool panels, not in View.
+    // Panel toggles live under Tools, but grouped in ONE "UEVR / Blueprint" submenu
+    // rather than three flat entries — a plugin shouldn't spend three top-level Tools
+    // slots when the user isn't doing VR modding.
     if (which == PluginMenu::Tools)
     {
-        if (ImGui::MenuItem("Blueprint Editor (UEVR)", nullptr, &blueprintVisible))
-        {
-        }
-        if (ImGui::MenuItem("UEVR Live (bridge)", nullptr, &uevrLiveVisible))
-        {
-        }
-        if (ImGui::MenuItem("Class Browser (UEVR)", nullptr, &classBrowserVisible))
+        if (!ImGui::BeginMenu("UEVR / Blueprint"))
+            return;
+
+        ImGui::MenuItem("Blueprint Editor", nullptr, &blueprintVisible);
+        ImGui::MenuItem("UEVR Live (bridge)", nullptr, &uevrLiveVisible);
+        if (ImGui::MenuItem("Class Browser", nullptr, &classBrowserVisible))
         {
             if (classBrowserVisible)
                 rebuildClassTree(); // the SDK may have been (re)imported since last time
         }
+
+        ImGui::EndMenu();
         return;
     }
 
