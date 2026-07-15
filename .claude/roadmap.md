@@ -64,18 +64,26 @@ that is still genuinely outstanding.
       annotations/keywords, so a contributor (or an AI) can add examples without
       touching C++. USER FLAGGED as possibly excessive — DO NOT REGRESS the working
       codegen; design a parallel path first.
-- [ ] **cppgen loses virtual members** (and similar) — fix the declaration parse.
-      Then consider making cppgen a plugin, expanded with snippets + more static
-      codegen.
+- [x] **cppgen "loses virtual members"** (f0725d7) — the parser was actually correct
+      on every virtual shape (override/final dropped, const/noexcept kept, pure→no
+      body, verified by probe). The real loss was whole-class generation SILENTLY
+      skipping pure virtuals; it now emits a marker comment so they stay visible.
+- [ ] Make cppgen a plugin, expanded with snippets + more static codegen.
 - [ ] **Plugin-ize the standalone file-classes** (pdfview, notes, lsp_protocol, …)
       — ONLY if no features are lost. Audit each for host-API gaps first.
 - [ ] BP core is hard to hand-edit — the annotated-Lua move above is the enabler for
       retargeting it (e.g. normal UE via UnrealSharp codegen).
 
 ### UE tooling
-- [ ] **Auto-populate available modules/plugins** in the descriptor editor from the
-      UE engine source (Engine/Plugins/**/*.uplugin, Engine/Source/**/*.Build.cs)
-      AND from the project, instead of a hardcoded list.
+- [x] **.uplugin repos recognized as UE projects** (3728573) — engine-source nav +
+      descriptor editor + class wizard for a standalone plugin checkout.
+- [x] **Tolerant descriptor parsing** (c6cc269) — a .uproject/.uplugin with trailing
+      commas / comments still parses (fixed "UE source linking broken").
+- [x] **Auto-populate available plugins** (5452f7a) — the descriptor editor's
+      plugin-dependency picker lists every .uplugin under the project + engine
+      Plugins trees (224 on a real UE 5.4), filterable. No more free-text typos.
+- [ ] **Auto-populate available MODULES** too — from the project's Source/*/*.Build.cs
+      and the engine modules (the plugin half is done; modules still free-text).
 
 ## 🚀 User backlog (2026-07-13) — big requests, capture so nothing is lost
 
