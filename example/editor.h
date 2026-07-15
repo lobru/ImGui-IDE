@@ -687,6 +687,16 @@ private:
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused
 
+	// ── Symbol packs ────────────────────────────────────────────────────────
+	// Pregenerated type→member maps loaded from disk (<exe>/symbols and the user
+	// config dir), merged into the completion table (ts::registerTypeMembers). This
+	// is the "cheat" that gives VS-like member completion for whole frameworks the
+	// project index never parses: STL by C++ standard, .NET BCL, Python, Lua,
+	// Unreal, … A pack is JSON: {"name":"…","types":{"TypeName":["member",…]}}.
+	int  symbolPacksLoaded = 0;      // types registered from packs (status line)
+	void loadSymbolPacks();          // scan the pack dirs; called once at startup
+	static int loadSymbolPackFile(const std::filesystem::path& file); // -> types added
+
 	// ── Screenshot ──────────────────────────────────────────────────────────
 	// The app captures ITSELF: main.cpp re-renders the frame into an offscreen GPU
 	// texture and downloads it. OS screen capture can't see an SDL3/D3D12 swapchain

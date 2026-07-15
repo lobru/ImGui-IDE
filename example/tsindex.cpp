@@ -335,7 +335,10 @@ bool readIndexCache(const std::string& path, std::unordered_map<std::string, Fil
 	return true;
 }
 
-const std::vector<std::string>* stlMembers(const std::string& simpleType)
+// defined below; consulted when the compiled table misses
+static const std::vector<std::string>* runtimeMembers(const std::string& simpleType);
+
+static const std::vector<std::string>* compiledMembers(const std::string& simpleType)
 {
 	// Member NAMES only (no signatures) — completion inserts the name and the
 	// user types the call. Curated for the everyday containers/wrappers; common
@@ -446,6 +449,72 @@ const std::vector<std::string>* stlMembers(const std::string& simpleType)
 	};
 	auto it = table.find(simpleType);
 	return it == table.end() ? nullptr : &it->second;
+}
+
+const std::vector<std::string>* stlMembers(const std::string& simpleType)
+{
+	// A pack for a type seeds the runtime list from the compiled table (see
+	// registerTypeMembers), so when a runtime entry exists it is the AUTHORITATIVE,
+	// merged list — prefer it. Otherwise fall back to the compiled table directly,
+	// keeping the exact original behavior for types no pack touched.
+	if (const auto* rt = runtimeMembers(simpleType))
+		return rt;
+
+	return compiledMembers(simpleType);
+}
+
+// ── Runtime member registry (disk symbol packs) ─────────────────────────────
+//
+// A node-based unordered_map: inserting/merging never invalidates pointers to
+// existing mapped vectors, so a pointer handed out by stlMembers() stays valid
+// even after more packs load. (We never erase.)
+
+static std::unordered_map<std::string, std::vector<std::string>>& runtimeTable()
+{
+	static std::unordered_map<std::string, std::vector<std::string>> t;
+	return t;
+}
+
+static const std::vector<std::string>* runtimeMembers(const std::string& simpleType)
+{
+	auto& t = runtimeTable();
+	auto it = t.find(simpleType);
+	return it == t.end() ? nullptr : &it->second;
+}
+
+void registerTypeMembers(const std::string& simpleType, const std::vector<std::string>& members)
+{
+	if (simpleType.empty() || members.empty())
+		return;
+
+	auto& t = runtimeTable();
+	bool fresh = t.find(simpleType) == t.end();
+	auto& list = t[simpleType];
+
+	// First time we augment a type that ALSO exists in the compiled table, seed the
+	// runtime list with the compiled members — stlMembers() prefers the runtime
+	// entry once it exists, so without this seeding a pack for "vector" would REPLACE
+	// push_back/size/… instead of adding to them.
+	if (fresh)
+	{
+		if (const auto* base = compiledMembers(simpleType))
+			list = *base;
+	}
+
+	// merge, deduped, order-preserving — a pack that overlaps the compiled table
+	// or another pack shouldn't produce a completion list full of duplicates
+	std::unordered_set<std::string> seen(list.begin(), list.end());
+
+	for (const auto& m : members)
+	{
+		if (!m.empty() && seen.insert(m).second)
+			list.push_back(m);
+	}
+}
+
+size_t registeredTypeCount()
+{
+	return runtimeTable().size();
 }
 
 std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)

@@ -48,6 +48,8 @@
 #define _pclose pclose
 #endif
 
+#include <nlohmann/json.hpp>
+
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -426,6 +428,10 @@ Editor::Editor()
 {
     // Load user-defined language definitions (HTML, INI, YAML, CFG, BAT, PS1).
     loadRuntimeLanguages();
+    // Merge any on-disk symbol packs into the completion member table. Done here,
+    // before the first document / render, so the registry is fully populated by the
+    // time member completion queries it (no race with the read path).
+    loadSymbolPacks();
     // Load editor-wide preferences (interpreter overrides, build commands, etc.)
     loadSettings();
     applyTheme(prefTheme); // restore the saved theme over main.cpp's default
@@ -14941,6 +14947,82 @@ void Editor::buildProjectTrie()
 //
 //  Editor::buildAutocompleteTrie
 //
+
+//
+//  ── Symbol packs ───────────────────────────────────────────────────────────
+//
+//  A pack is JSON: { "name": "...", "types": { "TypeName": ["m1","m2", ...] } }.
+//  Members are name-only (completion inserts the name), matching the compiled
+//  ts::stlMembers table it merges into. Loaded once at startup, before the render
+//  loop queries members, so there's no race with the registry read path.
+//
+
+int Editor::loadSymbolPackFile(const std::filesystem::path &file)
+{
+    std::ifstream f(file, std::ios::binary);
+    if (!f.is_open())
+        return 0;
+
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+    // A malformed or hand-edited pack must not take startup down — a bad file is
+    // "no symbols", not a crash.
+    nlohmann::json j = nlohmann::json::parse(text, nullptr, false);
+    if (j.is_discarded() || !j.is_object())
+        return 0;
+
+    auto types = j.find("types");
+    if (types == j.end() || !types->is_object())
+        return 0;
+
+    int added = 0;
+    for (auto it = types->begin(); it != types->end(); ++it)
+    {
+        if (!it.value().is_array())
+            continue;
+
+        std::vector<std::string> members;
+        for (const auto &m : it.value())
+        {
+            if (m.is_string())
+                members.push_back(m.get<std::string>());
+        }
+
+        if (!members.empty())
+        {
+            ts::registerTypeMembers(it.key(), members);
+            added++;
+        }
+    }
+
+    return added;
+}
+
+void Editor::loadSymbolPacks()
+{
+    std::error_code ec;
+    std::vector<std::filesystem::path> dirs = {
+        hostExeDir() / "symbols",
+        userConfigDir() / "symbols",
+    };
+
+    int types = 0;
+    for (const auto &dir : dirs)
+    {
+        if (!std::filesystem::is_directory(dir, ec))
+            continue;
+
+        for (auto &entry : std::filesystem::directory_iterator(dir, ec))
+        {
+            if (ec)
+                break;
+            if (entry.is_regular_file(ec) && entry.path().extension() == ".json")
+                types += loadSymbolPackFile(entry.path());
+        }
+    }
+
+    symbolPacksLoaded = types;
+}
 
 //
 //  ── Screenshot ─────────────────────────────────────────────────────────────

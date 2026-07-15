@@ -255,7 +255,11 @@ add_custom_command(TARGET example POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
 		"${CMAKE_CURRENT_SOURCE_DIR}/../tools/ue-plugins"
 		"$<TARGET_FILE_DIR:example>/ue-plugins"
-	COMMENT "Syncing languages/ + CHANGELOG.md + ue-plugins/ next to example.exe")
+	# Pregenerated symbol packs (type→member maps) for framework-wide completion.
+	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
+		"${CMAKE_CURRENT_SOURCE_DIR}/symbols"
+		"$<TARGET_FILE_DIR:example>/symbols"
+	COMMENT "Syncing languages/ + CHANGELOG.md + ue-plugins/ + symbols/ next to example.exe")
 
 # ── Headless logic self-test ─────────────────────────────────────────────
 # A tiny console executable that exercises the pure (non-UI) code paths —

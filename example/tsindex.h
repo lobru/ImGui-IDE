@@ -88,6 +88,21 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 // Returns nullptr when the type isn't in the table.
 const std::vector<std::string>* stlMembers(const std::string& simpleType);
 
+// Augment the member table at runtime from a pregenerated symbol pack (loaded off
+// disk — see Editor::loadSymbolPacks). The project index can only see types it
+// parses, and the compiled table above only covers hand-curated STL/UE types; a
+// pack teaches it members for a whole framework (STL by C++ standard, .NET BCL,
+// Python builtins, Lua stdlib, Unreal, …) without a recompile.
+//
+// Merges into the type's member list (deduped, order-preserving). The registry is
+// a node-based unordered_map, so pointers returned by stlMembers() stay valid
+// across later registrations. NOT thread-safe against a concurrent stlMembers()
+// read — register everything during startup, before the render loop queries it.
+void registerTypeMembers(const std::string& simpleType, const std::vector<std::string>& members);
+
+// How many types the runtime registry currently holds (for a status line / tests).
+size_t registeredTypeCount();
+
 // True if tree-sitter built in and a grammar is available.
 bool available();
 

@@ -737,6 +737,47 @@ int main(int argc, char** argv)
 		CHECK(has(opt, "value") && has(opt, "has_value"), "optional members include value/has_value");
 		CHECK(ts::stlMembers("NotAStlType") == nullptr, "unknown type -> no STL members");
 
+		// ── Runtime symbol packs: a registered type completes like a compiled one,
+		//    a pointer handed out before more registrations stays valid, and merging
+		//    into an EXISTING compiled type dedups rather than duplicating. ──
+		{
+			CHECK(ts::registeredTypeCount() == 0, "registry starts empty");
+			CHECK(ts::stlMembers("MyPackType") == nullptr, "an unregistered pack type has no members");
+
+			ts::registerTypeMembers("MyPackType", {"alpha", "beta", "gamma"});
+			const auto *mine = ts::stlMembers("MyPackType");
+			CHECK(mine != nullptr && has(mine, "alpha") && has(mine, "gamma"),
+				  "a registered pack type completes like a compiled one");
+			CHECK(ts::registeredTypeCount() == 1, "registry counts the new type");
+
+			// pointer stability: register more types, the earlier pointer must survive
+			for (int i = 0; i < 200; i++)
+				ts::registerTypeMembers("Filler" + std::to_string(i), {"x", "y"});
+			CHECK(mine == ts::stlMembers("MyPackType"),
+				  "a member-list pointer stays valid across later registrations (node-based map)");
+			CHECK(has(ts::stlMembers("MyPackType"), "beta"), "and still resolves its members");
+
+			// merging into a type: dedup, order-preserving, additive
+			ts::registerTypeMembers("MyPackType", {"alpha", "delta"}); // alpha dup, delta new
+			const auto *merged = ts::stlMembers("MyPackType");
+			size_t alphas = 0;
+			for (const auto &m : *merged)
+				if (m == "alpha")
+					alphas++;
+			CHECK(alphas == 1, "re-registering a member does not duplicate it");
+			CHECK(has(merged, "delta"), "re-registering adds the genuinely new member");
+
+			// a pack merging into a COMPILED type augments it without losing the originals
+			ts::registerTypeMembers("vector", {"custom_pack_method"});
+			const auto *v2 = ts::stlMembers("vector");
+			CHECK(has(v2, "push_back") && has(v2, "custom_pack_method"),
+				  "a pack augments a compiled type (keeps push_back, adds the new one)");
+
+			ts::registerTypeMembers("", {"nope"});
+			ts::registerTypeMembers("Empty", {});
+			CHECK(ts::stlMembers("Empty") == nullptr, "registering an empty member list is a no-op");
+		}
+
 		// Unreal Engine container / core-type members.
 		const auto* tarr = ts::stlMembers("TArray");
 		CHECK(has(tarr, "Add") && has(tarr, "Num") && has(tarr, "Contains") && has(tarr, "RemoveAt"),
