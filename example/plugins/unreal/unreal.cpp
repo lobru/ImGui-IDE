@@ -55,6 +55,78 @@ std::filesystem::path findUProject(const std::filesystem::path& searchStart)
 	return {};
 }
 
+bool isPluginDescriptor(const std::filesystem::path& descriptor)
+{
+	auto ext = descriptor.extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(),
+		[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	return ext == ".uplugin";
+}
+
+// Find a .uplugin near `searchStart`: the folder itself, one level of children
+// (plugin repos ship it as <Name>/<Name>.uplugin), then walking UP (a plugin
+// checked out inside an engine's Engine/Plugins or a project's Plugins tree).
+static std::filesystem::path findUPlugin(const std::filesystem::path& searchStart)
+{
+	std::error_code ec;
+
+	auto scanDir = [&](const std::filesystem::path& dir) -> std::filesystem::path {
+		std::error_code iec;
+		for (auto it = std::filesystem::directory_iterator(
+				 dir, std::filesystem::directory_options::skip_permission_denied, iec);
+			 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
+		{
+			std::error_code fec;
+			if (!it->is_regular_file(fec) || fec)
+				continue;
+			if (isPluginDescriptor(it->path()))
+				return it->path();
+		}
+		return {};
+	};
+
+	if (!std::filesystem::is_directory(searchStart, ec))
+		return {};
+
+	// the folder itself
+	if (auto here = scanDir(searchStart); !here.empty())
+		return here;
+
+	// one level of immediate subfolders (the common <Repo>/<Name>/<Name>.uplugin)
+	{
+		std::error_code iec;
+		for (auto it = std::filesystem::directory_iterator(
+				 searchStart, std::filesystem::directory_options::skip_permission_denied, iec);
+			 !iec && it != std::filesystem::directory_iterator(); it.increment(iec))
+		{
+			std::error_code dec;
+			if (it->is_directory(dec) && !dec)
+			{
+				if (auto found = scanDir(it->path()); !found.empty())
+					return found;
+			}
+		}
+	}
+
+	// walk up (a plugin living under Engine/Plugins/... or Project/Plugins/...)
+	for (auto cur = searchStart; cur.has_parent_path() && cur.parent_path() != cur; cur = cur.parent_path())
+	{
+		if (auto found = scanDir(cur); !found.empty())
+			return found;
+	}
+
+	return {};
+}
+
+std::filesystem::path findUProjectOrPlugin(const std::filesystem::path& searchStart)
+{
+	// A .uproject wins (it's the richer, buildable descriptor); a .uplugin repo is
+	// the fallback so a standalone plugin checkout is still recognized as UE.
+	if (auto proj = findUProject(searchStart); !proj.empty())
+		return proj;
+	return findUPlugin(searchStart);
+}
+
 #ifdef _WIN32
 // Read a REG_SZ; empty on any failure.
 static std::string readRegString(HKEY root, const char* subkey, const char* value)
@@ -73,15 +145,37 @@ std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std:
 	engineAssociation.clear();
 	std::error_code ec;
 
-	// EngineAssociation from the .uproject JSON ("5.4", a source-build GUID, or
-	// absent/empty for a project living inside an engine checkout).
+	// A .uproject carries "EngineAssociation" ("5.4", a source-build GUID, or empty
+	// for a project inside an engine checkout). A .uplugin instead carries
+	// "EngineVersion" ("4.26.0") — reduce it to the "major.minor" the launcher
+	// registers ("4.26"). Either way the value feeds the same engine lookup below.
 	{
 		std::ifstream f(uproject);
 		if (f.is_open())
 		{
 			auto j = nlohmann::json::parse(f, nullptr, /*allow_exceptions*/ false);
 			if (!j.is_discarded() && j.is_object())
-				engineAssociation = j.value("EngineAssociation", "");
+			{
+				if (isPluginDescriptor(uproject))
+				{
+					std::string ver = j.value("EngineVersion", "");
+					// "4.26.0" -> "4.26" (drop the patch component the registry omits)
+					size_t first = ver.find('.');
+					if (first != std::string::npos)
+					{
+						size_t second = ver.find('.', first + 1);
+						engineAssociation = (second == std::string::npos) ? ver : ver.substr(0, second);
+					}
+					else
+					{
+						engineAssociation = ver;
+					}
+				}
+				else
+				{
+					engineAssociation = j.value("EngineAssociation", "");
+				}
+			}
 		}
 	}
 

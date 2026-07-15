@@ -22,6 +22,13 @@ namespace unreal {
 // The .uproject in `searchStart` or the nearest ancestor (12 levels). Empty if none.
 std::filesystem::path findUProject(const std::filesystem::path& searchStart);
 
+// Like findUProject, but falls back to a .uplugin (a standalone plugin repo) when
+// there's no .uproject — so a plugin checkout is recognized as an Unreal project.
+std::filesystem::path findUProjectOrPlugin(const std::filesystem::path& searchStart);
+
+// True when `descriptor` is a .uplugin (vs a .uproject).
+bool isPluginDescriptor(const std::filesystem::path& descriptor);
+
 // Engine root for a .uproject. Fills `engineAssociation` with the raw association
 // string (version like "5.4", a source-build GUID, or "" for a relative checkout).
 std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std::string& engineAssociation);

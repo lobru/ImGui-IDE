@@ -1524,6 +1524,36 @@ int main(int argc, char** argv)
 			"UE: findUProject walks up from Source/");
 		CHECK(unreal::targetName(uproj) == "FakeProjEditor", "UE: editor target name");
 		CHECK(unreal::hasCppSource(uproj), "UE: Source/ detected");
+
+		// ── .uplugin recognition: a standalone plugin repo (no .uproject) is still
+		//    recognized as an Unreal project, with the engine taken from EngineVersion. ──
+		{
+			auto pluginRoot = root / "PluginRepo";
+			auto uplugin = pluginRoot / "MyPlugin" / "MyPlugin.uplugin";   // nested <Name>/<Name>.uplugin
+			fs::create_directories(uplugin.parent_path(), ec);
+			std::ofstream pf(uplugin);
+			pf << "{ \"FileVersion\": 3, \"EngineVersion\": \"5.4.0\", \"Modules\": [] }\n";
+			pf.close();
+			mk(pluginRoot / "MyPlugin" / "Source" / "MyPlugin" / "MyPlugin.cpp");
+
+			// a plain findUProject sees nothing here…
+			CHECK(unreal::findUProject(pluginRoot).empty(), "UE: no .uproject in a plugin-only repo");
+			// …but findUProjectOrPlugin finds the .uplugin, even nested one level down
+			CHECK(unreal::findUProjectOrPlugin(pluginRoot) == uplugin,
+				"UE: findUProjectOrPlugin finds a nested .uplugin");
+			CHECK(unreal::isPluginDescriptor(uplugin), "UE: .uplugin is a plugin descriptor");
+			CHECK(!unreal::isPluginDescriptor(uproj), "UE: .uproject is NOT a plugin descriptor");
+			CHECK(unreal::hasCppSource(uplugin), "UE: plugin Source/ detected");
+
+			// EngineVersion "5.4.0" reduces to the "5.4" association the launcher registers
+			std::string assoc;
+			unreal::findEngineRoot(uplugin, assoc);
+			CHECK(assoc == "5.4", "UE: .uplugin EngineVersion 5.4.0 -> association 5.4");
+
+			// a real .uproject still wins when both are reachable (richer descriptor)
+			CHECK(unreal::findUProjectOrPlugin(gameHdr.parent_path()) == uproj,
+				"UE: a .uproject is preferred over a .uplugin");
+		}
 		CHECK(unreal::resolveInclude(engine, uproj, "MyChar.h") == gameHdr,
 			"UE: game module Public header resolves");
 		CHECK(unreal::resolveInclude(engine, uproj, "GameFramework/Actor.h") == engHdr,

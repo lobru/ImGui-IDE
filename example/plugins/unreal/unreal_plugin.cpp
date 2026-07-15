@@ -368,22 +368,29 @@ void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
         menuCachedRoot = projectRoot;
         menuAssoc.clear();
         menuProj = projectRoot.empty() ? std::filesystem::path{}
-                                       : unreal::findUProject(projectRoot);
+                                       : unreal::findUProjectOrPlugin(projectRoot);
         menuEngine = menuProj.empty() ? std::filesystem::path{}
                                       : unreal::findEngineRoot(menuProj, menuAssoc);
     }
     if (menuProj.empty() || !ImGui::BeginMenu("Unreal Engine"))
         return;
 
-    ImGui::TextDisabled("%s  \xc2\xb7  UE %s%s", menuProj.filename().string().c_str(),
+    const bool isPlugin = unreal::isPluginDescriptor(menuProj);
+
+    ImGui::TextDisabled("%s%s  \xc2\xb7  UE %s%s", menuProj.filename().string().c_str(),
+                        isPlugin ? "  (plugin)" : "",
                         menuAssoc.empty() ? "(source build)" : menuAssoc.c_str(),
                         menuEngine.empty() ? "  \xe2\x80\x94 engine NOT found" : "");
     ImGui::Separator();
     bool haveEngine = !menuEngine.empty();
     bool cpp = unreal::hasCppSource(menuProj);
-    if (ImGui::MenuItem("Build Editor Target", "F6", false, haveEngine && cpp))
+    // Building / launching needs a .uproject — a standalone plugin repo can't be
+    // built or launched on its own (it needs a host project). A plugin still gets
+    // engine-source browsing, the descriptor editor and the class wizard.
+    bool buildable = !isPlugin && haveEngine && cpp;
+    if (ImGui::MenuItem("Build Editor Target", "F6", false, buildable))
         host.hostRunProjectBuild(); // the build resolver picks the UBT command
-    if (ImGui::MenuItem("Generate IntelliSense DB (clangd)", nullptr, false, haveEngine && cpp))
+    if (ImGui::MenuItem("Generate IntelliSense DB (clangd)", nullptr, false, buildable))
     {
         // compile_commands.json lands in the project root; restart C/C++
         // IntelliSense afterwards to pick it up.
@@ -419,7 +426,7 @@ void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Launch Unreal Editor", nullptr, false,
-                        haveEngine && !unreal::editorBinary(menuEngine).empty()))
+                        !isPlugin && haveEngine && !unreal::editorBinary(menuEngine).empty()))
     {
         host.hostRunInDir("\"" + unreal::editorBinary(menuEngine).string() + "\" \"" + menuProj.string() + "\"",
                           menuProj.parent_path());
@@ -548,7 +555,7 @@ std::optional<std::filesystem::path> UnrealPlugin::resolveInclude(const std::fil
 
 std::optional<PluginSourceRoot> UnrealPlugin::extraSourceRoot(const std::filesystem::path &projectRoot)
 {
-    auto uproj = unreal::findUProject(projectRoot);
+    auto uproj = unreal::findUProjectOrPlugin(projectRoot);
     if (uproj.empty())
         return std::nullopt;
     std::string assoc;
