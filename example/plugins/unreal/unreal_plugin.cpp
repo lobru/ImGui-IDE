@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
@@ -96,6 +97,7 @@ void UnrealPlugin::onFrame(PluginHost &host)
     if (requestDescriptorEditor)
     {
         requestDescriptorEditor = false;
+        descriptorChoicesLoaded = false; // re-enumerate plugins for this open
         ImGui::OpenPopup("Edit Descriptor###ueDescriptorEditor");
     }
     renderClassWizard(host);
@@ -122,6 +124,52 @@ void UnrealPlugin::renderDescriptorEditor(PluginHost &host)
     if (descriptorMode == 0)
     {
         ImGui::Checkbox("Enabled", &descriptorEnabled);
+
+        // Auto-populated list of plugins to depend on, enumerated from the project's
+        // Plugins/ and the engine's Engine/Plugins/ — pick instead of typing (and
+        // typos). Lazily filled on open; empty when no engine was found.
+        if (!descriptorChoicesLoaded)
+        {
+            descriptorChoicesLoaded = true;
+            descriptorPluginChoices = unreal::availablePlugins(menuEngine, menuProj.parent_path());
+        }
+
+        if (descriptorPluginChoices.empty())
+        {
+            ImGui::TextDisabled(menuEngine.empty()
+                                    ? "(engine not found \xe2\x80\x94 type the plugin name above)"
+                                    : "(no plugins discovered \xe2\x80\x94 type the name above)");
+        }
+        else
+        {
+            ImGui::TextDisabled("%d plugins available", (int)descriptorPluginChoices.size());
+            ImGui::SetNextItemWidth(240.0f);
+            ImGui::InputTextWithHint("##pluginFilter", "filter available plugins…",
+                                     descriptorPluginFilter, sizeof(descriptorPluginFilter));
+
+            std::string flt = descriptorPluginFilter;
+            std::transform(flt.begin(), flt.end(), flt.begin(),
+                           [](unsigned char c) { return (char)std::tolower(c); });
+
+            if (ImGui::BeginListBox("##pluginList", ImVec2(240.0f, 140.0f)))
+            {
+                for (const auto &name : descriptorPluginChoices)
+                {
+                    if (!flt.empty())
+                    {
+                        std::string low = name;
+                        std::transform(low.begin(), low.end(), low.begin(),
+                                       [](unsigned char c) { return (char)std::tolower(c); });
+                        if (low.find(flt) == std::string::npos)
+                            continue;
+                    }
+                    bool selected = name == descriptorNameBuf;
+                    if (ImGui::Selectable(name.c_str(), selected))
+                        std::snprintf(descriptorNameBuf, sizeof(descriptorNameBuf), "%s", name.c_str());
+                }
+                ImGui::EndListBox();
+            }
+        }
     }
     else
     {

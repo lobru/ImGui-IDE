@@ -33,6 +33,12 @@ bool isPluginDescriptor(const std::filesystem::path& descriptor);
 // // and /* */ comments, and trailing commas before ] or }. String-aware.
 std::string stripJsonLeniencies(const std::string& in);
 
+// Every plugin available to depend on: the <name>.uplugin files under the
+// project's Plugins/ tree and the engine's Engine/Plugins/ tree, deduped + sorted.
+// Either root may be empty. Depth- and budget-capped (an engine tree is huge).
+std::vector<std::string> availablePlugins(const std::filesystem::path& engineRoot,
+										  const std::filesystem::path& projectDir);
+
 // Engine root for a .uproject. Fills `engineAssociation` with the raw association
 // string (version like "5.4", a source-build GUID, or "" for a relative checkout).
 std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std::string& engineAssociation);

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <map>
+#include <set>
 
 #include <nlohmann/json.hpp>
 
@@ -213,6 +214,43 @@ static std::string readRegString(HKEY root, const char* subkey, const char* valu
 	return std::string(buf);
 }
 #endif
+
+std::vector<std::string> availablePlugins(const std::filesystem::path& engineRoot,
+										  const std::filesystem::path& projectDir)
+{
+	std::set<std::string> names;
+	std::error_code ec;
+
+	// Every <name>.uplugin under a Plugins/ tree, depth-capped (plugin folders
+	// nest a category or two deep; a full recursive walk of an engine is huge).
+	auto scan = [&](const std::filesystem::path& root, int maxDepth) {
+		if (!std::filesystem::is_directory(root, ec))
+			return;
+		int budget = 20000;
+		for (auto it = std::filesystem::recursive_directory_iterator(
+				 root, std::filesystem::directory_options::skip_permission_denied, ec);
+			 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+		{
+			if (--budget <= 0)
+				break;
+			if (it.depth() > maxDepth)
+			{
+				it.disable_recursion_pending();
+				continue;
+			}
+			std::error_code fec;
+			if (it->is_regular_file(fec) && !fec && isPluginDescriptor(it->path()))
+				names.insert(it->path().stem().string());
+		}
+	};
+
+	if (!projectDir.empty())
+		scan(projectDir / "Plugins", 6);
+	if (!engineRoot.empty())
+		scan(engineRoot / "Engine" / "Plugins", 5);
+
+	return { names.begin(), names.end() };
+}
 
 std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std::string& engineAssociation)
 {

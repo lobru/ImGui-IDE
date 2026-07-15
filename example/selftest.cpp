@@ -1585,6 +1585,25 @@ int main(int argc, char** argv)
 				CHECK(unreal::stripJsonLeniencies(commented).find("//") == std::string::npos,
 					"strip: line comment removed");
 			}
+
+			// ── availablePlugins: enumerate .uplugin names from project + engine trees ──
+			{
+				mk(root / "PluginRepo2" / "Plugins" / "AwesomeTool" / "AwesomeTool.uplugin");
+				mk(root / "PluginRepo2" / "Plugins" / "Nested" / "Deep" / "DeepPlugin.uplugin");
+				mk(engine / "Engine" / "Plugins" / "Runtime" / "GameplayAbilities" / "GameplayAbilities.uplugin");
+
+				auto plugs = unreal::availablePlugins(engine, root / "PluginRepo2");
+				auto hasP = [&](const char *n) {
+					return std::find(plugs.begin(), plugs.end(), std::string(n)) != plugs.end();
+				};
+				CHECK(hasP("AwesomeTool"), "availablePlugins: finds a project plugin");
+				CHECK(hasP("DeepPlugin"), "availablePlugins: finds a nested project plugin");
+				CHECK(hasP("GameplayAbilities"), "availablePlugins: finds an engine plugin");
+				// sorted + deduped
+				CHECK(std::is_sorted(plugs.begin(), plugs.end()), "availablePlugins: result is sorted");
+				// empty roots don't crash / add nothing
+				CHECK(unreal::availablePlugins({}, {}).empty(), "availablePlugins: empty roots -> empty");
+			}
 		}
 		CHECK(unreal::resolveInclude(engine, uproj, "MyChar.h") == gameHdr,
 			"UE: game module Public header resolves");
