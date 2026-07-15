@@ -2040,7 +2040,12 @@ int main(int argc, char** argv)
 			CHECK(all.find("Widget::Widget()") != std::string::npos, "cppgen: all-defs includes ctor");
 			CHECK(all.find("int Widget::area() const") != std::string::npos, "cppgen: all-defs includes area");
 			CHECK(all.find("getX") == std::string::npos, "cppgen: all-defs skips inline getX");
-			CHECK(all.find("draw") == std::string::npos, "cppgen: all-defs skips pure draw");
+			// A pure virtual gets NO out-of-line definition, but is now surfaced as a
+			// marker comment so it isn't silently "lost" from the class.
+			CHECK(all.find("void Widget::draw()") == std::string::npos,
+			      "cppgen: all-defs generates no body for pure draw");
+			CHECK(all.find("draw()") != std::string::npos && all.find("pure virtual") != std::string::npos,
+			      "cppgen: pure virtual draw is surfaced as a marker comment, not dropped");
 			CHECK(all.find("int x") == std::string::npos, "cppgen: all-defs skips data member");
 		}
 

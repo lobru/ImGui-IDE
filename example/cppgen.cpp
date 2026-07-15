@@ -696,6 +696,19 @@ namespace cppgen
                     out += "\n";
                 out += def;
             }
+            else if (m.isPureVirtual)
+            {
+                // A pure virtual has no out-of-line body to generate, but SILENTLY
+                // dropping it made whole-class generation look like it "lost" the
+                // virtual members. Leave a one-line marker so the override surface
+                // is visible in the generated file.
+                if (!out.empty())
+                    out += "\n";
+                out += "// " + (m.returnType.empty() ? std::string() : m.returnType + " ") +
+                       m.name + "(" + m.params + ")" +
+                       (m.trailing.empty() ? std::string() : " " + m.trailing) +
+                       " = 0;  // pure virtual - override in a derived class\n";
+            }
         };
         while (i < bodyClose)
         {
