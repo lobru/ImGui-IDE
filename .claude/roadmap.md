@@ -27,6 +27,56 @@ that is still genuinely outstanding.
 ### Polish (self-contained, no build needed to write)
 - (none open)
 
+## 🚀 User backlog (2026-07-15) — new batch
+
+### Git (mostly shipped 481c163)
+- [x] Commit history browsing + rollback (VS-style): Git ▸ History… — log on a
+      worker, checkout/soft-reset/hard-reset/revert with confirm modals, file-scope
+      toggle, compare-file-with-commit.
+- [x] Open repo in web browser (origin remote → https; `gitRemoteToWebUrl`, tested).
+- [x] Submodule support (update --init --recursive / sync / status / --remote).
+- [ ] Deeper git: stage/unstage hunks, per-file diff view in the History window,
+      stash list, tag browsing, blame gutter (notes already do a blame-style view).
+
+### Symbols / autocomplete (foundation shipped c83e224)
+- [x] **Disk symbol packs** — `ts::registerTypeMembers` + `<exe>/symbols/*.json`,
+      merged at startup, augments compiled types. Ships cpp-std + python packs.
+- [ ] **Pregenerate the big packs**: STL by C++ standard (14/17/20/23), .NET BCL
+      (4.8/6/8/10), Lua stdlib, a full Unreal pack. These are DATA now — generate
+      (script or LLM) against each framework's reference; no code change needed.
+- [ ] **Signatures, not just names**: extend the pack schema + completion to carry
+      parameter lists / return types (real VS-like tooltips). Bigger: touches the
+      completion popup + resolver.
+- [ ] **Worker-thread variable-type tracking**: move the per-file live type
+      inference (resolveMemberChain and friends) onto a worker so a big file's
+      type map builds off the UI thread.
+
+### Menus
+- [x] UEVR plugin grouped under one Tools ▸ "UEVR / Blueprint" submenu (was 3 flat).
+      (Unreal plugin was already gated behind a .uproject-only "Unreal Engine" menu.)
+
+### Blueprint / cppgen (LARGE — flagged, not started)
+- [x] BP node groups collapse by default when browsing (was force-open every frame).
+- [ ] **Forward connections still awkward** — dragging OUT of an output pin to make
+      a node. Audit the drag-target hit-testing + the pending-pin auto-connect.
+- [ ] **Templates/snippets are generated through C++** — backwards. Move to storing
+      snapshots as **annotated Lua** and generate consistent bidirectional Lua from
+      annotations/keywords, so a contributor (or an AI) can add examples without
+      touching C++. USER FLAGGED as possibly excessive — DO NOT REGRESS the working
+      codegen; design a parallel path first.
+- [ ] **cppgen loses virtual members** (and similar) — fix the declaration parse.
+      Then consider making cppgen a plugin, expanded with snippets + more static
+      codegen.
+- [ ] **Plugin-ize the standalone file-classes** (pdfview, notes, lsp_protocol, …)
+      — ONLY if no features are lost. Audit each for host-API gaps first.
+- [ ] BP core is hard to hand-edit — the annotated-Lua move above is the enabler for
+      retargeting it (e.g. normal UE via UnrealSharp codegen).
+
+### UE tooling
+- [ ] **Auto-populate available modules/plugins** in the descriptor editor from the
+      UE engine source (Engine/Plugins/**/*.uplugin, Engine/Source/**/*.Build.cs)
+      AND from the project, instead of a hardcoded list.
+
 ## 🚀 User backlog (2026-07-13) — big requests, capture so nothing is lost
 
 Status: [ ] not started · [~] in progress/partial · [x] done. Items sized for one
