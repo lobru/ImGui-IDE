@@ -82,8 +82,9 @@ that is still genuinely outstanding.
 - [x] **Auto-populate available plugins** (5452f7a) — the descriptor editor's
       plugin-dependency picker lists every .uplugin under the project + engine
       Plugins trees (224 on a real UE 5.4), filterable. No more free-text typos.
-- [ ] **Auto-populate available MODULES** too — from the project's Source/*/*.Build.cs
-      and the engine modules (the plugin half is done; modules still free-text).
+- [x] **Auto-populate available MODULES** (f7bf26b) — the descriptor editor's Module
+      picker lists every <Name>.Build.cs under the project Source + Plugins trees,
+      filterable. Verified: Calculator→2, JsonAsAsset plugin→3.
 
 ## 🚀 User backlog (2026-07-13) — big requests, capture so nothing is lost
 
