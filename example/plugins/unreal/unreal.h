@@ -39,6 +39,11 @@ std::string stripJsonLeniencies(const std::string& in);
 std::vector<std::string> availablePlugins(const std::filesystem::path& engineRoot,
 										  const std::filesystem::path& projectDir);
 
+// Every module that physically exists in the project: the <Name>.Build.cs files
+// under <project>/Source and <project>/Plugins/**/Source, deduped + sorted. These
+// are the modules you can declare in a descriptor's Modules array.
+std::vector<std::string> availableModules(const std::filesystem::path& projectDir);
+
 // Engine root for a .uproject. Fills `engineAssociation` with the raw association
 // string (version like "5.4", a source-build GUID, or "" for a relative checkout).
 std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std::string& engineAssociation);

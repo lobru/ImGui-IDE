@@ -127,11 +127,13 @@ void UnrealPlugin::renderDescriptorEditor(PluginHost &host)
 
         // Auto-populated list of plugins to depend on, enumerated from the project's
         // Plugins/ and the engine's Engine/Plugins/ — pick instead of typing (and
-        // typos). Lazily filled on open; empty when no engine was found.
+        // typos). Lazily filled on open; empty when no engine was found. Both the
+        // plugin and module lists load together so switching modes doesn't miss one.
         if (!descriptorChoicesLoaded)
         {
             descriptorChoicesLoaded = true;
             descriptorPluginChoices = unreal::availablePlugins(menuEngine, menuProj.parent_path());
+            descriptorModuleChoices = unreal::availableModules(menuProj.parent_path());
         }
 
         if (descriptorPluginChoices.empty())
@@ -191,6 +193,50 @@ void UnrealPlugin::renderDescriptorEditor(PluginHost &host)
             descriptorPhaseIdx = 0;
         combo("Type", types, descriptorTypeIdx);
         combo("LoadingPhase", phases, descriptorPhaseIdx);
+
+        // Auto-populated list of modules that physically exist in the project (and
+        // its plugins) — a descriptor Module entry usually declares one of these.
+        if (!descriptorChoicesLoaded)
+        {
+            descriptorChoicesLoaded = true;
+            descriptorPluginChoices = unreal::availablePlugins(menuEngine, menuProj.parent_path());
+            descriptorModuleChoices = unreal::availableModules(menuProj.parent_path());
+        }
+
+        if (descriptorModuleChoices.empty())
+        {
+            ImGui::TextDisabled("(no modules discovered \xe2\x80\x94 type the name above)");
+        }
+        else
+        {
+            ImGui::TextDisabled("%d modules in this project", (int)descriptorModuleChoices.size());
+            ImGui::SetNextItemWidth(240.0f);
+            ImGui::InputTextWithHint("##moduleFilter", "filter modules…",
+                                     descriptorModuleFilter, sizeof(descriptorModuleFilter));
+
+            std::string flt = descriptorModuleFilter;
+            std::transform(flt.begin(), flt.end(), flt.begin(),
+                           [](unsigned char c) { return (char)std::tolower(c); });
+
+            if (ImGui::BeginListBox("##moduleList", ImVec2(240.0f, 120.0f)))
+            {
+                for (const auto &name : descriptorModuleChoices)
+                {
+                    if (!flt.empty())
+                    {
+                        std::string low = name;
+                        std::transform(low.begin(), low.end(), low.begin(),
+                                       [](unsigned char c) { return (char)std::tolower(c); });
+                        if (low.find(flt) == std::string::npos)
+                            continue;
+                    }
+                    bool selected = name == descriptorNameBuf;
+                    if (ImGui::Selectable(name.c_str(), selected))
+                        std::snprintf(descriptorNameBuf, sizeof(descriptorNameBuf), "%s", name.c_str());
+                }
+                ImGui::EndListBox();
+            }
+        }
     }
 
     ImGui::Separator();

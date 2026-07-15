@@ -1604,6 +1604,27 @@ int main(int argc, char** argv)
 				// empty roots don't crash / add nothing
 				CHECK(unreal::availablePlugins({}, {}).empty(), "availablePlugins: empty roots -> empty");
 			}
+
+			// ── availableModules: enumerate <Name>.Build.cs across Source + Plugins ──
+			{
+				auto proj = root / "ModProj";
+				mk(proj / "Source" / "ModGame" / "ModGame.Build.cs");
+				mk(proj / "Source" / "ModGameEditor" / "ModGameEditor.Build.cs");
+				mk(proj / "Plugins" / "MyPlug" / "Source" / "MyPlugRuntime" / "MyPlugRuntime.Build.cs");
+				mk(proj / "Source" / "ModGame" / "ModGame.cpp"); // not a .Build.cs → ignored
+
+				auto mods = unreal::availableModules(proj);
+				auto hasM = [&](const char *n) {
+					return std::find(mods.begin(), mods.end(), std::string(n)) != mods.end();
+				};
+				CHECK(hasM("ModGame"), "availableModules: finds a project module");
+				CHECK(hasM("ModGameEditor"), "availableModules: finds a second project module");
+				CHECK(hasM("MyPlugRuntime"), "availableModules: finds a module inside a project plugin");
+				CHECK(!hasM("ModGame.cpp") && !hasM("ModGame.Build"),
+					"availableModules: the name is the module, not the filename");
+				CHECK(std::is_sorted(mods.begin(), mods.end()), "availableModules: sorted");
+				CHECK(unreal::availableModules({}).empty(), "availableModules: empty root -> empty");
+			}
 		}
 		CHECK(unreal::resolveInclude(engine, uproj, "MyChar.h") == gameHdr,
 			"UE: game module Public header resolves");

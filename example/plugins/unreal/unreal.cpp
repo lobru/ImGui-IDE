@@ -252,6 +252,51 @@ std::vector<std::string> availablePlugins(const std::filesystem::path& engineRoo
 	return { names.begin(), names.end() };
 }
 
+std::vector<std::string> availableModules(const std::filesystem::path& projectDir)
+{
+	std::set<std::string> names;
+	std::error_code ec;
+
+	// A module is a <Name>.Build.cs file. Real ones live under <project>/Source and
+	// under each plugin's Plugins/<name>/Source. Recurse both, depth-capped.
+	auto scan = [&](const std::filesystem::path& root) {
+		if (!std::filesystem::is_directory(root, ec))
+			return;
+		int budget = 20000;
+		for (auto it = std::filesystem::recursive_directory_iterator(
+				 root, std::filesystem::directory_options::skip_permission_denied, ec);
+			 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+		{
+			if (--budget <= 0)
+				break;
+			if (it.depth() > 6)
+			{
+				it.disable_recursion_pending();
+				continue;
+			}
+			std::error_code fec;
+			if (!it->is_regular_file(fec) || fec)
+				continue;
+			// filename "<Module>.Build.cs" -> "<Module>"
+			std::string fn = it->path().filename().string();
+			const std::string suffix = ".Build.cs";
+			if (fn.size() > suffix.size() &&
+				fn.compare(fn.size() - suffix.size(), suffix.size(), suffix) == 0)
+			{
+				names.insert(fn.substr(0, fn.size() - suffix.size()));
+			}
+		}
+	};
+
+	if (!projectDir.empty())
+	{
+		scan(projectDir / "Source");
+		scan(projectDir / "Plugins");
+	}
+
+	return { names.begin(), names.end() };
+}
+
 std::filesystem::path findEngineRoot(const std::filesystem::path& uproject, std::string& engineAssociation)
 {
 	engineAssociation.clear();

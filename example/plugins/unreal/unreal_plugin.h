@@ -71,8 +71,10 @@ private:
     int  descriptorTypeIdx = 0;              // Module: index into unreal::moduleTypes()
     int  descriptorPhaseIdx = 0;             // Module: index into unreal::loadingPhases()
     std::vector<std::string> descriptorPluginChoices; // available plugins (engine + project), lazily filled
+    std::vector<std::string> descriptorModuleChoices; // available modules (project + its plugins)
     bool descriptorChoicesLoaded = false;
     char descriptorPluginFilter[96] = {0};
+    char descriptorModuleFilter[96] = {0};
     void renderDescriptorEditor(PluginHost &host);
 
     // Parse the active .uasset/.umap's header/name-table/imports and open a report.
