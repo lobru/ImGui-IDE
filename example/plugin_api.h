@@ -146,6 +146,13 @@ public:
     // contribute items into the named menu (called inside that menu's scope)
     virtual void onMenu(PluginHost &, PluginMenu) {}
 
+    // Own a TOP-LEVEL menu-bar entry. Return the menu title (e.g. "Unreal") to get
+    // a dedicated menu between Tools and Help instead of nesting items under an
+    // existing menu; return nullptr (default) for no top-level menu. When present,
+    // the host opens the BeginMenu for you and calls onTopLevelMenu() inside it.
+    virtual const char *topLevelMenu() const { return nullptr; }
+    virtual void onTopLevelMenu(PluginHost &) {}
+
     // contribute autocomplete words for a document (add() inserts one word)
     virtual void contributeAutocomplete(PluginHost &, const PluginDocInfo &,
                                         const std::function<void(const std::string &)> &) {}

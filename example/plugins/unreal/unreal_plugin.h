@@ -33,7 +33,9 @@ public:
 
     void onRegister(PluginHost &host) override;
     void onFrame(PluginHost &host) override; // renders the scaffolding wizard modals
-    void onMenu(PluginHost &host, PluginMenu which) override;
+    // Unreal gets its own top-level menu-bar entry rather than nesting in Project.
+    const char *topLevelMenu() const override { return "Unreal"; }
+    void onTopLevelMenu(PluginHost &host) override;
     // Claim .uasset/.umap (binary) so opening one shows an inspection report in a
     // tab instead of launching the external default app.
     bool openFile(PluginHost &host, const std::filesystem::path &path) override;

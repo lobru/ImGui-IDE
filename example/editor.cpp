@@ -11978,6 +11978,10 @@ void Editor::renderMenuBar()
             ImGui::EndMenu();
         }
 
+        // Plugins that own a top-level menu-bar entry (e.g. Unreal) draw it here,
+        // between Project and Help — a dedicated menu rather than nesting in Project.
+        pluginRegistry.topLevelMenus(*this);
+
         if (ImGui::BeginMenu("Help"))
         {
             ImGui::MenuItem(("Version  " + std::string(kAppVersion)).c_str(), nullptr, false, false);

@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "imgui.h"
 #include "plugin_api.h"
 
 class PluginRegistry
@@ -81,6 +82,23 @@ public:
         for (auto &p : plugins)
             if (p->enabled())
                 p->onMenu(host, which);
+    }
+
+    // Render each enabled plugin's own top-level menu-bar entry (BeginMenu owned by
+    // the host). Call between the Tools and Help menus in renderMenuBar().
+    void topLevelMenus(PluginHost &host)
+    {
+        for (auto &p : plugins)
+        {
+            if (!p->enabled())
+                continue;
+            const char *title = p->topLevelMenu();
+            if (title && *title && ImGui::BeginMenu(title))
+            {
+                p->onTopLevelMenu(host);
+                ImGui::EndMenu();
+            }
+        }
     }
 
     // gather autocomplete words

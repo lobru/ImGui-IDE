@@ -451,11 +451,9 @@ bool UnrealPlugin::openFile(PluginHost &host, const std::filesystem::path &path)
     return true;
 }
 
-void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
+// Drawn inside the host-owned top-level "Unreal" menu (see topLevelMenu()).
+void UnrealPlugin::onTopLevelMenu(PluginHost &host)
 {
-    if (which != PluginMenu::Project)
-        return;
-
     std::filesystem::path projectRoot = host.hostProjectRoot();
     if (menuCachedRoot != projectRoot)
     {
@@ -466,8 +464,12 @@ void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
         menuEngine = menuProj.empty() ? std::filesystem::path{}
                                       : unreal::findEngineRoot(menuProj, menuAssoc);
     }
-    if (menuProj.empty() || !ImGui::BeginMenu("Unreal Engine"))
+    if (menuProj.empty())
+    {
+        ImGui::TextDisabled(projectRoot.empty() ? "(no project open)"
+                                                : "(not an Unreal project)");
         return;
+    }
 
     const bool isPlugin = unreal::isPluginDescriptor(menuProj);
 
@@ -574,7 +576,6 @@ void UnrealPlugin::onMenu(PluginHost &host, PluginMenu which)
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Copies the ImGuiIDESourceCodeAccess plugin into %s",
                           (menuProj.parent_path() / "Plugins").string().c_str());
-    ImGui::EndMenu();
 }
 
 void UnrealPlugin::contributeAutocomplete(PluginHost &, const PluginDocInfo &doc,
