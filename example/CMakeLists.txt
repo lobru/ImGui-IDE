@@ -100,10 +100,11 @@ target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imgu
 # (the C++ interface) and plugin_abi.h (the extern-"C" DLL boundary).
 option(IMGUIIDE_PLUGIN_UNREAL "Build the Unreal Engine integration plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_TERMINAL "Build the integrated terminal plugin (DLL)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
@@ -168,6 +169,15 @@ if(IMGUIIDE_PLUGIN_UEVR)
 	# DLL; Lua highlighting reads only its own statics, so no cross-DLL shared state).
 	target_link_libraries(imguiide_uevr PRIVATE nlohmann_json TextEditorLib)
 	target_compile_definitions(imguiide_uevr PRIVATE IMGUIIDE_PLUGIN_UEVR=1)
+endif()
+
+if(IMGUIIDE_PLUGIN_TERMINAL)
+	# Integrated terminal: a persistent shell with piped I/O. No extra deps beyond
+	# the OS process API (Win32 / posix_spawn).
+	imguiide_add_plugin(imguiide_terminal createTerminalPlugin
+		plugins/terminal/terminal_plugin.cpp)
+	target_include_directories(imguiide_terminal PRIVATE plugins/terminal)
+	target_compile_definitions(imguiide_terminal PRIVATE IMGUIIDE_PLUGIN_TERMINAL=1)
 endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP; the PDF viewer uses the
