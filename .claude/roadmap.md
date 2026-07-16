@@ -74,6 +74,16 @@ that is still genuinely outstanding.
 - [ ] BP core is hard to hand-edit — the annotated-Lua move above is the enabler for
       retargeting it (e.g. normal UE via UnrealSharp codegen).
 
+### Plugins
+- [x] **Top-level plugin menus** (409e817) — `EditorPlugin::topLevelMenu()` gives a
+      plugin its own menu-bar entry; Unreal moved out of Project into a top-level
+      "Unreal" menu.
+- [x] **NEW: integrated terminal plugin** (71a92b4) — Tools ▸ Terminal, a persistent
+      project-local shell (cmd/$SHELL) with piped I/O, worker-thread output,
+      Ctrl-C/Restart/Clear. Third DLL plugin.
+- [ ] Plugin-ize existing file-classes (cppgen, pdfview, notes, lsp_protocol) — only
+      if no features lost.
+
 ### UE tooling
 - [x] **.uplugin repos recognized as UE projects** (3728573) — engine-source nav +
       descriptor editor + class wizard for a standalone plugin checkout.
