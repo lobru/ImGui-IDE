@@ -77,6 +77,24 @@ target_compile_options(lspproto PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
+# ── DAP protocol layer ───────────────────────────────────────────────────
+# Pure Debug Adapter Protocol builders/parsers (no SDL) — reuses lspproto's
+# Content-Length framing. Links into the app and the headless selftest.
+add_library(dapproto STATIC dap_protocol.cpp dap_protocol.h)
+target_link_libraries(dapproto PUBLIC lspproto nlohmann_json)
+target_include_directories(dapproto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(dapproto PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
+# ── DAP client transport (spawns a debug adapter via SDL3 process API) ────
+add_library(dapclient STATIC dap_client.cpp dap_client.h)
+target_link_libraries(dapclient PUBLIC dapproto SDL3::SDL3 SDL3_Headers)
+target_include_directories(dapclient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(dapclient PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
 # ── LSP client transport (spawns clangd via SDL3 process API) ─────────────
 add_library(lspclient STATIC lsp_client.cpp lsp_client.h)
 target_link_libraries(lspclient PUBLIC lspproto SDL3::SDL3 SDL3_Headers)
@@ -91,7 +109,7 @@ add_executable(example
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient unrealgen)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient dapclient unrealgen)
 
 # Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
 # build scripts / object paths are unchanged) — only the produced file is renamed.
@@ -133,7 +151,7 @@ add_custom_command(TARGET example POST_BUILD
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
 add_executable(selftest selftest.cpp)
-target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto unrealgen)
+target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto dapproto unrealgen)
 target_compile_options(selftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
@@ -150,3 +168,14 @@ target_compile_options(lsptest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 add_test(NAME lsptest COMMAND lsptest)
 set_tests_properties(lsptest PROPERTIES SKIP_RETURN_CODE 77)
+
+# ── DAP integration gate ──────────────────────────────────────────────────
+# Spawns a real debugpy adapter and asserts a breakpoint → stop → inspect →
+# continue → exit round trip. SKIPs (77) when python/debugpy is absent.
+add_executable(daptest daptest.cpp)
+target_link_libraries(daptest PRIVATE dapclient SDL3::SDL3 SDL3_Headers)
+target_compile_options(daptest PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+add_test(NAME daptest COMMAND daptest)
+set_tests_properties(daptest PROPERTIES SKIP_RETURN_CODE 77)

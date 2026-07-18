@@ -19,6 +19,7 @@
 #include "TextEditor.h"
 #include "tsindex.h"
 #include "lsp_protocol.h"
+#include "dap_protocol.h"
 #include "nav_history.h"
 #include "unreal.h"
 
@@ -1014,6 +1015,99 @@ int main()
 		std::string pd2 = unreal::generatePropertyDecl(prop);
 		CHECK(pd2.find("VisibleAnywhere") != std::string::npos && pd2.find("BlueprintReadOnly") != std::string::npos,
 			  "unreal: read-only / visible-anywhere flags");
+	}
+
+	// ── DAP protocol layer (pure: builders, routing, parsers) ──
+	{
+		// Builders produce framed messages whose body inspects back correctly.
+		auto unframe = [](const std::string& framed) {
+			std::size_t pos = 0;
+			std::string body;
+			return lsp::parseFrame(framed, pos, body) ? body : std::string();
+		};
+		std::string init = unframe(dap::buildInitialize(1));
+		CHECK(!init.empty(), "dap: initialize frames + unframes");
+		CHECK(init.find("\"command\":\"initialize\"") != std::string::npos, "dap: initialize command");
+		CHECK(init.find("\"linesStartAt1\":true") != std::string::npos, "dap: 1-based lines advertised");
+		{
+			dap::Incoming in = dap::inspect(init);
+			CHECK(in.type == "request" && in.command == "initialize" && in.seq == 1,
+				  "dap: inspect routes a request");
+		}
+
+		std::string launch = unframe(dap::buildLaunch(2, "python", "C:/x/a.py", "C:/x", false));
+		CHECK(launch.find("\"type\":\"python\"") != std::string::npos, "dap: launch adapter type");
+		CHECK(launch.find("\"program\":\"C:/x/a.py\"") != std::string::npos, "dap: launch program");
+		// Empty adapter type → arguments carry no "type" key. The envelope's own
+		// "type":"request" is expected, so count occurrences: exactly one.
+		{
+			std::string noType = unframe(dap::buildLaunch(3, "", "/a", "", false));
+			size_t n = 0;
+			for (size_t p = noType.find("\"type\""); p != std::string::npos; p = noType.find("\"type\"", p + 1))
+				++n;
+			CHECK(n == 1, "dap: empty adapter type omitted from launch arguments");
+		}
+
+		std::string bps = unframe(dap::buildSetBreakpoints(4, "/x/a.py", {3, 10}));
+		CHECK(bps.find("\"line\":3") != std::string::npos && bps.find("\"line\":10") != std::string::npos,
+			  "dap: setBreakpoints lines");
+		CHECK(bps.find("\"path\":\"/x/a.py\"") != std::string::npos, "dap: setBreakpoints source path");
+
+		// Response routing: request_seq + success.
+		dap::Incoming resp = dap::inspect(
+			R"({"seq":9,"type":"response","request_seq":4,"success":true,"command":"setBreakpoints"})");
+		CHECK(resp.type == "response" && resp.requestSeq == 4 && resp.success,
+			  "dap: inspect routes a response");
+		dap::Incoming fail = dap::inspect(
+			R"({"seq":9,"type":"response","request_seq":5,"success":false,"command":"launch"})");
+		CHECK(!fail.success, "dap: failed response flagged");
+
+		// Event parsers.
+		dap::StoppedInfo st;
+		CHECK(dap::parseStopped(
+				  R"({"type":"event","event":"stopped","body":{"reason":"breakpoint","threadId":7,"allThreadsStopped":true}})",
+				  st) && st.reason == "breakpoint" && st.threadId == 7 && st.allThreadsStopped,
+			  "dap: stopped event parsed");
+		std::string cat, txt;
+		CHECK(dap::parseOutput(
+				  R"({"type":"event","event":"output","body":{"category":"stdout","output":"hi\n"}})",
+				  cat, txt) && cat == "stdout" && txt == "hi\n",
+			  "dap: output event parsed");
+		CHECK(dap::parseExitCode(R"({"type":"event","event":"exited","body":{"exitCode":3}})") == 3,
+			  "dap: exit code parsed");
+
+		// Body parsers.
+		auto ths = dap::parseThreads(
+			R"({"type":"response","body":{"threads":[{"id":1,"name":"main"},{"id":2,"name":"worker"}]}})");
+		CHECK(ths.size() == 2 && ths[0].id == 1 && ths[1].name == "worker", "dap: threads parsed");
+		auto frames = dap::parseStackTrace(
+			R"({"type":"response","body":{"stackFrames":[)"
+			R"({"id":11,"name":"f","line":12,"source":{"path":"/x/a.py"}},)"
+			R"({"id":12,"name":"<module>","line":30}]}})");
+		CHECK(frames.size() == 2 && frames[0].id == 11 && frames[0].sourcePath == "/x/a.py" &&
+				  frames[0].line == 12 && frames[1].sourcePath.empty(),
+			  "dap: stack frames parsed (missing source tolerated)");
+		auto scopes = dap::parseScopes(
+			R"({"type":"response","body":{"scopes":[{"name":"Locals","variablesReference":5,"expensive":false}]}})");
+		CHECK(scopes.size() == 1 && scopes[0].variablesReference == 5, "dap: scopes parsed");
+		auto vars = dap::parseVariables(
+			R"({"type":"response","body":{"variables":[)"
+			R"({"name":"x","value":"3","type":"int","variablesReference":0},)"
+			R"({"name":"d","value":"{...}","variablesReference":9}]}})");
+		CHECK(vars.size() == 2 && vars[0].name == "x" && vars[0].variablesReference == 0 &&
+				  vars[1].variablesReference == 9,
+			  "dap: variables parsed (expandable flagged)");
+		CHECK(dap::parseEvaluate(R"({"type":"response","body":{"result":"42"}})") == "42",
+			  "dap: evaluate result parsed");
+		// Malformed / wrong-shape input degrades to empty, never throws.
+		CHECK(dap::parseThreads("not json").empty(), "dap: parser survives garbage");
+		CHECK(!dap::parseStopped(R"({"type":"event"})", st), "dap: stopped without body -> false");
+
+		// Reverse-request refusal echoes the request seq + command.
+		std::string refuse = unframe(dap::buildErrorResponse(77, "runInTerminal"));
+		CHECK(refuse.find("\"request_seq\":77") != std::string::npos &&
+				  refuse.find("\"success\":false") != std::string::npos,
+			  "dap: reverse request refused");
 	}
 
 	if (gFailures == 0) {

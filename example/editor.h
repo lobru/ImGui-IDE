@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <atomic>
 #include <filesystem>
@@ -28,6 +29,7 @@
 #include "../TextDiff.h"
 #include "tsindex.h"
 #include "lsp_client.h"
+#include "dap_client.h"
 #include "nav_history.h"
 #include "unreal.h"
 
@@ -80,6 +82,7 @@ class Editor {
 		bool        externalChange = false;
 		bool        externallyTouched = false;   // edited on disk since you last viewed this tab (badge)
 		bool        externalMarkers   = false;   // gutter markers on externally-changed lines are live
+		bool        debugMarkers      = false;   // breakpoint / stop-line markers are live on this tab
 		std::string syncedText;                  // last persisted content (load/save/reload) = 3-way merge base
 	};
 
@@ -736,6 +739,52 @@ private:
 	void runFindInFiles();
 	void renderFindInFilesPanel();
 	void openFindInFiles();        // show the panel, focus the query, seed from selection
+
+	// ── Debugger (DAP) ───────────────────────────────────────────────────────
+	// Debug Adapter Protocol client + UI: breakpoints with gutter markers (F9),
+	// a Debug panel (controls / call stack / variables / console), and stepping
+	// (F10 over, F11 into, Shift+F11 out; F5 continues while a session is live).
+	// Adapters resolve per extension — Python works out of the box via debugpy
+	// (`python -m debugpy.adapter`); other languages can map an adapter command
+	// in settings ([debug_adapters] ".ext=lldb-dap …"). Same async architecture
+	// as the LSP client: the adapter runs as a child process, a reader thread
+	// queues results, and pollDap() drains them on the UI thread each frame.
+	dap::DapClient dapClient;
+	bool  dbgPanelVisible = false;
+	bool  dbgSessionActive = false;   // adapter spawned, session not ended yet
+	bool  dbgLaunchSent = false;      // launch request went out (after initialize response)
+	bool  dbgStopped = false;         // paused at a breakpoint/step/exception
+	std::string dbgStopReason;
+	std::string dbgStopFile;          // canonical path of the stopped frame ("" = unknown)
+	int   dbgStopLine = -1;           // 0-based editor line of the stop marker
+	int   dbgThreadId = 0;            // thread of the last stop
+	int   dbgCurrentFrame = 0;        // frameId whose scopes/variables are shown
+	std::string dbgProgram;           // program being debugged (panel readout)
+	std::string dbgAdapterType;       // launch "type" for the active adapter
+	std::vector<dap::StackFrame> dbgFrames;
+	std::vector<dap::Scope>      dbgScopes;
+	std::unordered_map<int, std::vector<dap::Variable>> dbgVarChildren;  // varRef -> children
+	std::unordered_set<int>      dbgVarRequested;   // varRefs with an in-flight request
+	std::string dbgConsole;           // output events + evaluate results
+	bool  dbgConsoleScrollDown = false;
+	char  dbgEvalBuf[256] = "";
+	// Breakpoints per canonical file path, 0-based editor lines (session-only).
+	std::unordered_map<std::string, std::set<int>> dbgBreakpoints;
+	std::unordered_map<std::string, std::string> debugAdapterOverrides;  // ".ext" -> adapter cmdline
+	std::string dbgCanonPath(const std::string& file) const;
+	void  toggleBreakpointAtCursor();
+	void  applyDebugMarkers(TabDocument& t);        // rebuild bp + stop-line markers for one tab
+	void  refreshAllDebugMarkers();
+	void  sendBreakpointsFor(const std::string& canonPath);
+	// Resolve {argv, launch-type} for a file; empty argv = no adapter known.
+	std::vector<std::string> debugAdapterFor(const std::string& ext,
+	                                         const std::filesystem::path& scriptPath,
+	                                         std::string& adapterType) const;
+	void  startDebugSession();        // debug the active doc
+	void  stopDebugSession();         // disconnect + kill + clear state
+	void  pollDap();                  // per-frame: drain adapter results
+	void  dbgJumpTo(const std::string& file, int line0);
+	void  renderDebugPanel();
 
 	// ── Unreal Engine integration ────────────────────────────────────────────
 	// When the open project root contains a .uproject, an "Unreal" menu appears

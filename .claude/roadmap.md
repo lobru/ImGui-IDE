@@ -43,6 +43,30 @@ that is still genuinely outstanding.
 
 ## ✅ Shipped (changelog)
 
+### 2026-07-18 (round 2) — integrated debugger (DAP)
+- **Debug Adapter Protocol client**, same split + async architecture as LSP:
+  `dap_protocol.{h,cpp}` (pure builders/parsers, reuses lspproto's
+  Content-Length framing, selftest-covered) + `dap_client.{h,cpp}` (SDL3
+  process transport, reader thread enqueues, UI thread owns all writes,
+  request-seq → kind/context pending map, adapter-gone sentinel).
+- **Editor integration**: breakpoints per canonical file (F9 toggle, red
+  gutter markers via the marker API; a yellow marker tracks the stopped
+  line), Debug menu + rebindable F10/F11/Shift+F11/Shift+F5 keybinds (F5 =
+  Continue while a session is paused, project-run otherwise), and a Debug
+  panel — controls, live call stack (click to jump + switch frame),
+  variables tree (scopes eager, children lazy via variablesReference),
+  console streaming output events + an evaluate REPL.
+- **Adapters**: Python works out of the box via debugpy
+  (`python -m debugpy.adapter`, interpreter resolved like the script
+  runner: override → venv → PATH). Any other language maps a command in
+  settings `[debug_adapters]` (".ext=lldb-dap" etc.).
+- **daptest** integration gate (mirrors lsptest, SKIP=77 without debugpy):
+  spawns a real debugpy and asserts breakpoint → stopped → stack → locals →
+  evaluate → continue → exit against a live session. 22 new selftest checks
+  for the protocol layer (242 total).
+- Breakpoints are session-only (not persisted) — persistence + conditional
+  breakpoints are natural follow-ups.
+
 ### 2026-07-18 — performance + Unreal batch
 - **Multithreaded project indexing.** `rebuildProjectIndex` now runs in three
   phases: serial candidate enumeration → parallel parse on a worker pool
