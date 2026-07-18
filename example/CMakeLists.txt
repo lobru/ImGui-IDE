@@ -106,6 +106,7 @@ target_compile_options(dapclient PRIVATE
 # ── Example executable ───────────────────────────────────────────────────
 add_executable(example
 	editor.cpp
+	debugger_ui.cpp
 	updater.cpp
 	pdfview.cpp
 	cppgen.cpp
@@ -116,7 +117,7 @@ add_executable(example
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient dapclient dbgbridge)
 
 # ── Feature plugins, packaged as runtime-loaded DLLs ──────────────────────
 # Domain-specific features live in plugins, each behind its own flag (default

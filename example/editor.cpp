@@ -9973,6 +9973,8 @@ void Editor::render()
 
     renderNavigationPanel();
     renderGitHistory();
+    pollDap();          // drain debug-adapter results (stops, output, stack, vars)
+    renderDebugPanel();
     renderTour();   // after the panels exist, so a step can anchor to a real window
     renderGithubBrowser();
     renderImageWindows();
@@ -11967,6 +11969,40 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("Output", "F5", &script->visible))
             {
             }
+            ImGui::Separator();
+            // ── Debugger (DAP) ──
+            if (!dbgSessionActive)
+            {
+                if (ImGui::MenuItem("Start Debugging", nullptr, false, !tabs.empty()))
+                    startDebugSession();
+            }
+            else
+            {
+                if (ImGui::MenuItem("Stop Debugging", "Shift+F5"))
+                    stopDebugSession();
+                if (dbgStopped)
+                {
+                    if (ImGui::MenuItem("Continue", "F5"))
+                        dapClient.continueExec(dbgThreadId);
+                    if (ImGui::MenuItem("Step Over"))
+                        dapClient.next(dbgThreadId);
+                    if (ImGui::MenuItem("Step Into"))
+                        dapClient.stepIn(dbgThreadId);
+                    if (ImGui::MenuItem("Step Out"))
+                        dapClient.stepOut(dbgThreadId);
+                }
+            }
+            if (ImGui::MenuItem("Toggle Breakpoint", "F9", false, !tabs.empty()))
+                toggleBreakpointAtCursor();
+            ImGui::MenuItem("Debug Panel", nullptr, &dbgPanelVisible);
+            if (ImGui::BeginMenu("Launch in External Debugger"))
+            {
+                if (ImGui::MenuItem("raddbg"))
+                    debugInRadDbg();
+                if (ImGui::MenuItem("Visual Studio"))
+                    debugInVisualStudio();
+                ImGui::EndMenu();
+            }
             // Project-type plugins (e.g. Unreal) contribute their submenu here.
             pluginRegistry.menu(*this, PluginMenu::Project);
 
@@ -12163,7 +12199,23 @@ void Editor::renderMenuBar()
         // → Keybinds catalogue. Order: more-specific (Shift) chords first where a
         // plain chord could otherwise swallow them.
         tickKeyChordPending(); // age out / cancel a half-entered two-stroke chord
-        if (keybindPressed("view.screenshot", "Ctrl+Alt+S"))
+        // Debugger keys. F9 toggles a breakpoint. Shift+F5 stops a live session.
+        // F5 CONTINUES only while paused, otherwise it falls through to Run (F5's
+        // existing binding). Stepping is on the Debug panel buttons — F10/F11 stay
+        // free (F11 is Focus Mode). Starting a session is explicit (Tools ▸ Debug).
+        if (!tabs.empty() && ImGui::IsKeyPressed(ImGuiKey_F9, false))
+        {
+            toggleBreakpointAtCursor();
+        }
+        else if (dbgSessionActive && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F5, false))
+        {
+            stopDebugSession();
+        }
+        else if (dbgStopped && !io.KeyShift && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F5, false))
+        {
+            dapClient.continueExec(dbgThreadId);
+        }
+        else if (keybindPressed("view.screenshot", "Ctrl+Alt+S"))
         {
             requestScreenshot();
         }
