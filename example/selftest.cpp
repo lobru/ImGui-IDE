@@ -11,6 +11,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -20,6 +22,7 @@
 #include "tsindex.h"
 #include "lsp_protocol.h"
 #include "dap_protocol.h"
+#include "debug_bridge.h"
 #include "nav_history.h"
 #include "unreal.h"
 
@@ -1108,6 +1111,67 @@ int main()
 		CHECK(refuse.find("\"request_seq\":77") != std::string::npos &&
 				  refuse.find("\"success\":false") != std::string::npos,
 			  "dap: reverse request refused");
+	}
+
+	// ── Native-debugger bridges (pure command builders + detection helpers) ──
+	{
+		auto sp = dbgbridge::splitCommandLine("  lldb-dap  --port 0 ");
+		CHECK(sp.size() == 3 && sp[0] == "lldb-dap" && sp[2] == "0", "bridge: command line split");
+		CHECK(dbgbridge::splitCommandLine("").empty(), "bridge: empty command line");
+
+		CHECK(dbgbridge::expandTemplate("add_breakpoint {file}:{line}", "C:/x/a.cpp", 42) ==
+				  "add_breakpoint C:/x/a.cpp:42",
+			  "bridge: template placeholders expand");
+		CHECK(dbgbridge::expandTemplate("{line}-{line}", "f", 7) == "7-7",
+			  "bridge: repeated placeholder expands everywhere");
+
+		auto launch = dbgbridge::raddbgLaunch("raddbg", "C:/g/Game.exe", "-windowed -log");
+		CHECK(launch.size() == 4 && launch[0] == "raddbg" && launch[1] == "C:/g/Game.exe" &&
+				  launch[3] == "-log",
+			  "bridge: raddbg launch argv");
+
+		auto bps = dbgbridge::raddbgBreakpointCmds("raddbg", "", {{"a.cpp", 10}, {"b.cpp", 20}});
+		CHECK(bps.size() == 2 && bps[0].size() == 3 && bps[0][1] == "--ipc" &&
+				  bps[0][2] == "add_breakpoint a.cpp:10" && bps[1][2] == "add_breakpoint b.cpp:20",
+			  "bridge: raddbg --ipc breakpoint commands (default verb)");
+		auto custom = dbgbridge::raddbgBreakpointCmds("raddbg", "bp {file} {line}", {{"a.cpp", 3}});
+		CHECK(custom.size() == 1 && custom[0][2] == "bp a.cpp 3",
+			  "bridge: breakpoint verb template overridable");
+
+		auto vs = dbgbridge::devenvDebugExe("devenv.exe", "C:/g/Game.exe", "-log");
+		CHECK(vs.size() == 4 && vs[1] == "/DebugExe" && vs[2] == "C:/g/Game.exe" && vs[3] == "-log",
+			  "bridge: devenv /DebugExe argv");
+
+#ifndef _WIN32
+		CHECK(dbgbridge::commandOnPath("sh"), "bridge: commandOnPath finds sh");
+#endif
+		CHECK(!dbgbridge::commandOnPath("definitely-not-a-real-tool-xyz"),
+			  "bridge: commandOnPath rejects a missing tool");
+
+		// Unreal target resolution against a scratch project layout.
+		namespace fs = std::filesystem;
+		fs::path root = fs::temp_directory_path() / "selftest_ue_proj";
+		std::error_code ec;
+		fs::remove_all(root, ec);
+		fs::create_directories(root / "Binaries" / "Win64", ec);
+		{
+			std::ofstream f(root / "Binaries" / "Win64" / "DemoEditor.exe");
+			f << "x";
+		}
+		dbgbridge::UnrealDebugTarget t;
+		CHECK(dbgbridge::unrealEditorTarget(root, root / "Demo.uproject", t) &&
+				  t.exe.find("DemoEditor.exe") != std::string::npos && t.args.empty(),
+			  "bridge: project editor binary preferred, no args needed");
+		fs::remove(root / "Binaries" / "Win64" / "DemoEditor.exe", ec);
+		{
+			std::ofstream f(root / "Binaries" / "Win64" / "UnrealEditor.exe");
+			f << "x";
+		}
+		CHECK(dbgbridge::unrealEditorTarget(root, root / "Demo.uproject", t) &&
+				  t.exe.find("UnrealEditor.exe") != std::string::npos &&
+				  t.args.find("Demo.uproject") != std::string::npos,
+			  "bridge: stock UnrealEditor gets the .uproject argument");
+		fs::remove_all(root, ec);
 	}
 
 	if (gFailures == 0) {

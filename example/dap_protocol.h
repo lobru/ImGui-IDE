@@ -20,10 +20,13 @@ namespace dap {
 // linesStartAt1/columnsStartAt1 (the DAP default); the editor converts.
 std::string buildInitialize(int seq);
 // `adapterType` fills the launch config's "type" ("python" for debugpy);
-// empty omits it (lldb-dap and friends don't need one).
+// empty omits it (lldb-dap and friends don't need one). `extraStrings` are
+// additional string fields merged into the launch config — MIEngine
+// (OpenDebugAD7) needs e.g. {"MIMode","gdb"} + {"miDebuggerPath","gdb"}.
 std::string buildLaunch(int seq, const std::string& adapterType,
                         const std::string& program, const std::string& cwd,
-                        bool stopOnEntry);
+                        bool stopOnEntry,
+                        const std::vector<std::pair<std::string, std::string>>& extraStrings = {});
 std::string buildSetBreakpoints(int seq, const std::string& sourcePath, const std::vector<int>& lines);
 std::string buildConfigurationDone(int seq);
 std::string buildContinue(int seq, int threadId);

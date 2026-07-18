@@ -30,6 +30,7 @@
 #include "tsindex.h"
 #include "lsp_client.h"
 #include "dap_client.h"
+#include "debug_bridge.h"
 #include "nav_history.h"
 #include "unreal.h"
 
@@ -740,6 +741,18 @@ private:
 	void renderFindInFilesPanel();
 	void openFindInFiles();        // show the panel, focus the query, seed from selection
 
+	// ── Command palette (Ctrl+Shift+P) ───────────────────────────────────────
+	// Universal fuzzy-searchable command list floating over the main viewport:
+	// every app action (file/view/find/code/project/debug/git/Unreal/themes,
+	// plus recent files and projects) is one Enter away. Arrow keys move the
+	// selection; Enter runs; Escape or defocus closes. Rebindable (view.palette).
+	bool palVisible = false;
+	bool palFocus = false;        // focus the query box next frame (just opened)
+	char palQuery[256] = "";
+	int  palSelected = 0;
+	void openCommandPalette();
+	void renderCommandPalette();
+
 	// ── Debugger (DAP) ───────────────────────────────────────────────────────
 	// Debug Adapter Protocol client + UI: breakpoints with gutter markers (F9),
 	// a Debug panel (controls / call stack / variables / console), and stepping
@@ -776,15 +789,37 @@ private:
 	void  applyDebugMarkers(TabDocument& t);        // rebuild bp + stop-line markers for one tab
 	void  refreshAllDebugMarkers();
 	void  sendBreakpointsFor(const std::string& canonPath);
-	// Resolve {argv, launch-type} for a file; empty argv = no adapter known.
+	// Resolve {argv, launch-type, launch extras} for a file; empty argv = no
+	// adapter known. Native (C/C++) adapters are detected once and cached:
+	// vsdbg (cppvsdbg) → OpenDebugAD7+gdb (cppdbg) → lldb-dap → `gdb -i dap`.
 	std::vector<std::string> debugAdapterFor(const std::string& ext,
 	                                         const std::filesystem::path& scriptPath,
-	                                         std::string& adapterType) const;
-	void  startDebugSession();        // debug the active doc
+	                                         std::string& adapterType,
+	                                         std::vector<std::pair<std::string, std::string>>& launchExtras) const;
+	static bool isNativeDebugExt(const std::string& extLower);   // C-family → debug the built exe
+	mutable bool nativeAdapterDetected = false;   // one-shot detection cache
+	mutable std::vector<std::string> nativeAdapterArgv;
+	mutable std::string nativeAdapterType;
+	mutable std::vector<std::pair<std::string, std::string>> nativeAdapterExtras;
+	std::vector<std::pair<std::string, std::string>> dbgLaunchExtras;   // for the active session
+	void  startDebugSession();        // debug the active doc (or built exe for C/C++)
 	void  stopDebugSession();         // disconnect + kill + clear state
 	void  pollDap();                  // per-frame: drain adapter results
 	void  dbgJumpTo(const std::string& file, int line0);
 	void  renderDebugPanel();
+
+	// External native debuggers (raddbg / Visual Studio) — launch the target
+	// in the tool's own UI, seeding raddbg with our breakpoints via --ipc.
+	// Paths + the raddbg breakpoint verb come from settings [debug_bridge]
+	// (keys: raddbg, devenv, raddbg_bp_template) with auto-detection fallback.
+	std::unordered_map<std::string, std::string> debugBridgeSettings;
+	std::string bridgeToolPath(const char* key, std::string (*detect)()) const;
+	// {exe, args} the external debugger should target: Unreal editor for
+	// .uproject roots, else the freshest built exe, else the active script.
+	bool  externalDebugTarget(std::string& exe, std::string& args, std::string& why);
+	void  launchDetached(const std::vector<std::string>& argv);   // spawn, no pipes, fire-and-forget
+	void  debugInRadDbg();
+	void  debugInVisualStudio();
 
 	// ── Unreal Engine integration ────────────────────────────────────────────
 	// When the open project root contains a .uproject, an "Unreal" menu appears

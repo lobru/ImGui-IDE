@@ -43,6 +43,29 @@ that is still genuinely outstanding.
 
 ## ✅ Shipped (changelog)
 
+### 2026-07-18 (round 3) — command palette + native debugger bridges
+- **Ctrl+Shift+P command palette** (`view.palette`, rebindable; View menu):
+  fuzzy-searchable registry of every app command — file/view/find/code/
+  project/debug/git/Unreal/themes plus recent files and projects. Registry
+  rebuilt per open frame (closures over live state), fuzzy subsequence
+  scoring (consecutive/word-start/head bonuses), clipper-rendered list,
+  arrows + Enter + Escape, actions deferred until after End().
+- **Native debugger bridges** (`debug_bridge.{h,cpp}`, pure + selftest-covered):
+  - *In-client DAP*: C-family debugging auto-detects the best adapter —
+    Microsoft vsdbg (`cppvsdbg`, VS Code C++ tools) → OpenDebugAD7 + gdb
+    (`cppdbg`, MIEngine launch extras MIMode/miDebuggerPath) → lldb-dap →
+    `gdb -i dap` (gdb 14+). Native sources debug the freshest BUILT exe
+    (findBuiltExe), not the source path. `buildLaunch` gained extra string
+    fields for MIEngine configs.
+  - *External tools with their own UI*: "Launch in raddbg" starts the target
+    in RAD Debugger and pushes current breakpoints over `raddbg --ipc`
+    (verb template settings-overridable: `raddbg_bp_template`, {file}/{line});
+    "Launch in Visual Studio" runs `devenv /DebugExe`. Targets resolve
+    Unreal-first (project's `Binaries/<plat>/<Project>Editor` or stock
+    UnrealEditor + .uproject) then built exe. `[debug_bridge]` settings keys
+    (raddbg / devenv / raddbg_bp_template) with env + well-known-path
+    detection fallbacks. 12 new selftest checks (254 total).
+
 ### 2026-07-18 (round 2) — integrated debugger (DAP)
 - **Debug Adapter Protocol client**, same split + async architecture as LSP:
   `dap_protocol.{h,cpp}` (pure builders/parsers, reuses lspproto's

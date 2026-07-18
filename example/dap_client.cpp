@@ -219,11 +219,12 @@ int DapClient::request(ResultKind kind, int seq, std::string framed, int context
 }
 
 int DapClient::launch(const std::string& adapterType, const std::string& program,
-                      const std::string& cwd, bool stopOnEntry)
+                      const std::string& cwd, bool stopOnEntry,
+                      const std::vector<std::pair<std::string, std::string>>& extraStrings)
 {
 	if (!mProcess) return 0;
 	int s = mNextSeq++;
-	return request(ResultKind::Launch, s, buildLaunch(s, adapterType, program, cwd, stopOnEntry));
+	return request(ResultKind::Launch, s, buildLaunch(s, adapterType, program, cwd, stopOnEntry, extraStrings));
 }
 
 int DapClient::setBreakpoints(const std::string& sourcePath, const std::vector<int>& lines1Based)

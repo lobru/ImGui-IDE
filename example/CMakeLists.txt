@@ -87,6 +87,15 @@ target_compile_options(dapproto PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
+# ── Native-debugger bridges (raddbg / Visual Studio / MS DAP adapters) ────
+# Pure command builders + tool detection, no ImGui/SDL — links into the app
+# and the headless selftest.
+add_library(dbgbridge STATIC debug_bridge.cpp debug_bridge.h)
+target_include_directories(dbgbridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(dbgbridge PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
 # ── DAP client transport (spawns a debug adapter via SDL3 process API) ────
 add_library(dapclient STATIC dap_client.cpp dap_client.h)
 target_link_libraries(dapclient PUBLIC dapproto SDL3::SDL3 SDL3_Headers)
@@ -109,7 +118,7 @@ add_executable(example
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient dapclient unrealgen)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient dapclient dbgbridge unrealgen)
 
 # Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
 # build scripts / object paths are unchanged) — only the produced file is renamed.
@@ -151,7 +160,7 @@ add_custom_command(TARGET example POST_BUILD
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
 add_executable(selftest selftest.cpp)
-target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto dapproto unrealgen)
+target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto dapproto dbgbridge unrealgen)
 target_compile_options(selftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)

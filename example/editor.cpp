@@ -48,6 +48,8 @@
 #define _pclose pclose
 #endif
 
+#include <SDL3/SDL_process.h>   // launchDetached (external debugger bridges)
+
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -5713,6 +5715,296 @@ void Editor::renderFindInFilesPanel()
     ImGui::End();
 }
 
+// ── Command palette (Ctrl+Shift+P) ──────────────────────────────────────
+//
+// One fuzzy-searchable list over every app command. The registry is built
+// fresh each frame the palette is open (a few dozen closures — trivial), so
+// entries always reflect live state (session active, project set, recents).
+
+// Case-insensitive fuzzy subsequence score: every needle char must appear in
+// order in the label. Consecutive matches and word starts score higher, and a
+// match at the very start of the label gets a bonus. -1 = no match.
+static int paletteFuzzyScore(const std::string &label, const char *needle)
+{
+    if (!needle || !*needle)
+        return 0;   // empty query matches everything equally
+    int score = 0;
+    size_t li = 0;
+    bool prevMatched = false;
+    for (const char *n = needle; *n; ++n)
+    {
+        char nc = (char) std::tolower((unsigned char) *n);
+        if (nc == ' ')
+        {
+            prevMatched = false;
+            continue;   // spaces in the query just separate words
+        }
+        bool found = false;
+        for (; li < label.size(); ++li)
+        {
+            char lc = (char) std::tolower((unsigned char) label[li]);
+            if (lc == nc)
+            {
+                bool wordStart = li == 0 || label[li - 1] == ' ' || label[li - 1] == ':' ||
+                                 label[li - 1] == '/' || label[li - 1] == '.';
+                score += prevMatched ? 3 : (wordStart ? 2 : 1);
+                if (li == 0)
+                    score += 2;   // matching the label head reads best
+                prevMatched = true;
+                ++li;
+                found = true;
+                break;
+            }
+            prevMatched = false;
+        }
+        if (!found)
+            return -1;
+    }
+    return score;
+}
+
+void Editor::openCommandPalette()
+{
+    palVisible = true;
+    palFocus = true;
+    palQuery[0] = 0;
+    palSelected = 0;
+}
+
+void Editor::renderCommandPalette()
+{
+    if (!palVisible)
+        return;
+
+    struct PalCmd {
+        std::string           label;
+        const char           *chord;   // display only ("" = none)
+        std::function<void()> run;
+    };
+    std::vector<PalCmd> cmds;
+    auto add = [&](std::string label, const char *chord, std::function<void()> fn) {
+        cmds.push_back({std::move(label), chord, std::move(fn)});
+    };
+
+    bool hasDoc = !tabs.empty();
+    // File
+    add("File: New", "Ctrl+N", [this] { newFile(); });
+    add("File: Open...", "Ctrl+O", [this] { openFile(); });
+    add("File: Open Project...", "", [this] { openProjectFolderPicker(); });
+    if (hasDoc)
+    {
+        add("File: Save", "Ctrl+S", [this] {
+            if (doc().filename == "untitled") showSaveFileAs();
+            else saveFile();
+        });
+        add("File: Save As...", "Ctrl+Shift+S", [this] { showSaveFileAs(); });
+        add("File: Close Tab", "Ctrl+W", [this] {
+            if (isDirty()) showConfirmClose([this]() { closeTab(activeTab); });
+            else closeTab(activeTab);
+        });
+        add("File: Open Containing Folder", "", [this] { openContainingFolder(); });
+    }
+    add("File: Reopen Closed Tab", "Ctrl+Shift+T", [this] { reopenLastClosedTab(); });
+    add("File: Exit", "", [this] { tryToQuit(); });
+
+    // View / panels
+    add("View: Navigation Panel", "", [this] { navPanelVisible = !navPanelVisible; });
+    add("View: Symbols Panel", "", [this] { symbolsPanelVisible = !symbolsPanelVisible; });
+    add("View: References Panel", "", [this] { referencesVisible = !referencesVisible; });
+    add("View: Markdown Preview", "", [this] { mdPreviewVisible = !mdPreviewVisible; });
+    add("View: External Changes", "", [this] { externalChangesVisible = !externalChangesVisible; });
+    add("View: Debug Panel", "", [this] { dbgPanelVisible = !dbgPanelVisible; });
+    add("View: Developer Tools", "", [this] { devToolsVisible = !devToolsVisible; });
+    add("View: Style Editor", "", [this] { showStyleEditor = !showStyleEditor; });
+    add("View: Settings", "", [this] { settingsVisible = true; settingsFocusRequest = true; });
+    if (hasDoc)
+        add("View: Split Tab Right", "Ctrl+\\", [this] { splitActiveTabRight(); });
+    add("View: Zoom In", "Ctrl+=", [this] { increaseFontSIze(); });
+    add("View: Zoom Out", "Ctrl+-", [this] { decreaseFontSIze(); });
+    if (hasDoc)
+    {
+        add("View: Pop Out Document (Left)", "Ctrl+Alt+Left", [this] { popOutActiveDoc(-1); });
+        add("View: Pop Out Document (Right)", "Ctrl+Alt+Right", [this] { popOutActiveDoc(1); });
+        add("View: Merge Window Back", "Ctrl+Alt+M", [this] { remergeActiveWindow(); });
+    }
+    add("View: Merge All Windows", "Ctrl+Alt+Shift+M", [this] { remergeAllWindows(); });
+    for (int i = 0; i < themeCount(); ++i)
+        add(std::string("Theme: ") + themeName(i), prefTheme == i ? "(current)" : "", [this, i] {
+            prefTheme = i;
+            applyTheme(i);
+            saveSettings();
+        });
+
+    // Find / navigate
+    add("Find: In Files...", "Ctrl+Shift+F", [this] { openFindInFiles(); });
+    add("Find: Go to Line...", "Ctrl+G", [this] { showGotoLine(); });
+    add("Go: Back", "Alt+Left", [this] { navigateBack(); });
+    add("Go: Forward", "Alt+Right", [this] { navigateForward(); });
+
+    // Code / project
+    if (hasDoc)
+    {
+        add("Code: Toggle Header/Source", "Alt+O", [this] { toggleHeaderSource(); });
+        add("Code: Format Document", "Alt+Shift+F", [this] { formatActiveDocument(); });
+        add("Diff: Against Saved", "", [this] { showDiff(); });
+        add("Diff: Against Another File...", "", [this] { openDiffOtherDialog(); });
+    }
+    add("Code: Rebuild Symbol Index", "", [this] { rebuildProjectIndex(); });
+    add("Project: Run", "F5", [this] { runProjectExeOrScript(); });
+    add("Project: Run with Arguments...", "", [this] { runProjectWithArgs(); });
+    add("Project: Build", "F6", [this] { runProjectBuild(); });
+    if (hasDoc)
+        add("Project: Run Active Document", "", [this] { runScriptForDoc(); });
+
+    // Debug
+    if (!dbgSessionActive)
+        add("Debug: Start Debugging", "", [this] { startDebugSession(); });
+    else
+    {
+        add("Debug: Stop", "Shift+F5", [this] { stopDebugSession(); });
+        if (dbgStopped)
+        {
+            add("Debug: Continue", "F5", [this] { dapClient.continueExec(dbgThreadId); });
+            add("Debug: Step Over", "F10", [this] { dapClient.next(dbgThreadId); });
+            add("Debug: Step Into", "F11", [this] { dapClient.stepIn(dbgThreadId); });
+            add("Debug: Step Out", "Shift+F11", [this] { dapClient.stepOut(dbgThreadId); });
+        }
+    }
+    if (hasDoc)
+        add("Debug: Toggle Breakpoint", "F9", [this] { toggleBreakpointAtCursor(); });
+    add("Debug: Launch in raddbg", "", [this] { debugInRadDbg(); });
+    add("Debug: Launch in Visual Studio", "", [this] { debugInVisualStudio(); });
+
+    // Git
+    add("Git: Commit...", "", [this] { gitCommitRequest = true; });
+    add("Git: Discard Changes...", "", [this] { gitDiscardRequest = true; });
+
+    // Unreal (only for .uproject roots)
+    if (!unrealProjectName.empty())
+    {
+        add("Unreal: New Unreal Class...", "", [this] { openUnrealClassWizard(); });
+        add("Unreal: Blueprint Stubs", "", [this] { ueStubVisible = true; });
+    }
+
+    // Recents
+    {
+        int shown = 0;
+        for (auto &p : recentFiles)
+        {
+            if (++shown > 8) break;
+            std::string leaf = std::filesystem::path(p).filename().string();
+            add("Recent File: " + leaf + "  (" + p + ")", "", [this, p] { openFile(p); });
+        }
+        shown = 0;
+        for (auto &p : recentProjects)
+        {
+            if (++shown > 5) break;
+            std::string leaf = std::filesystem::path(p).filename().string();
+            add("Recent Project: " + leaf, "", [this, p] { setProjectRoot(std::filesystem::path(p)); });
+        }
+    }
+
+    // Filter + rank.
+    struct Row { int score; int idx; };
+    std::vector<Row> rows;
+    rows.reserve(cmds.size());
+    for (int i = 0; i < (int) cmds.size(); ++i)
+    {
+        int s = paletteFuzzyScore(cmds[(size_t) i].label, palQuery);
+        if (s >= 0)
+            rows.push_back({s, i});
+    }
+    if (palQuery[0])
+        std::stable_sort(rows.begin(), rows.end(), [](const Row &a, const Row &b) { return a.score > b.score; });
+    if (palSelected >= (int) rows.size())
+        palSelected = rows.empty() ? 0 : (int) rows.size() - 1;
+    if (palSelected < 0)
+        palSelected = 0;
+
+    // Float top-center over the main viewport (multi-viewport aware).
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    const float width = 560.0f;
+    ImGui::SetNextWindowViewport(vp->ID);
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 60.0f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(width, 0.0f));
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings;
+    std::function<void()> pending;   // run AFTER End() — actions may open dialogs/popups
+    if (ImGui::Begin("##cmdPalette", nullptr, flags))
+    {
+        if (palFocus)
+            ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(-1.0f);
+        bool entered = ImGui::InputTextWithHint("##palQuery", "Type a command…", palQuery,
+                                                sizeof(palQuery), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::IsItemEdited())
+            palSelected = 0;
+
+        // Keyboard: arrows move the selection even while the input keeps focus.
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+            palSelected = rows.empty() ? 0 : (palSelected + 1) % (int) rows.size();
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+            palSelected = rows.empty() ? 0 : (palSelected + (int) rows.size() - 1) % (int) rows.size();
+        if (ImGui::IsKeyPressed(ImGuiKey_PageDown))
+            palSelected = (std::min)((int) rows.size() - 1, palSelected + 10);
+        if (ImGui::IsKeyPressed(ImGuiKey_PageUp))
+            palSelected = (std::max)(0, palSelected - 10);
+
+        ImGui::Separator();
+        ImGui::BeginChild("##palList", ImVec2(0.0f, 360.0f));
+        ImGuiListClipper clipper;
+        clipper.Begin((int) rows.size());
+        // Keep the keyboard selection visible while stepping through the list.
+        static int lastSel = -1;
+        bool selMoved = palSelected != lastSel;
+        lastSel = palSelected;
+        while (clipper.Step())
+        {
+            for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r)
+            {
+                const PalCmd &c = cmds[(size_t) rows[(size_t) r].idx];
+                ImGui::PushID(r);
+                if (ImGui::Selectable(c.label.c_str(), r == palSelected))
+                {
+                    pending = c.run;
+                    palVisible = false;
+                }
+                if (r == palSelected && selMoved)
+                    ImGui::SetScrollHereY(0.5f);
+                if (c.chord && c.chord[0])
+                {
+                    ImGui::SameLine();
+                    float w = ImGui::CalcTextSize(c.chord).x;
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - w);
+                    ImGui::TextDisabled("%s", c.chord);
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::TextDisabled("%zu command%s   ↑↓ select · Enter run · Esc close",
+                            rows.size(), rows.size() == 1 ? "" : "s");
+
+        if (entered && !rows.empty())
+        {
+            pending = cmds[(size_t) rows[(size_t) palSelected].idx].run;
+            palVisible = false;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+            palVisible = false;
+        // Clicking anywhere else dismisses the palette (after the open frame,
+        // where focus hasn't landed yet).
+        if (!palFocus && !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            palVisible = false;
+        palFocus = false;
+    }
+    ImGui::End();
+    if (pending)
+        pending();
+}
+
 // ── Debugger (DAP) — breakpoints, session control, panel ───────────────
 //
 // The adapter runs as a child process speaking the Debug Adapter Protocol
@@ -5799,24 +6091,29 @@ void Editor::sendBreakpointsFor(const std::string &canonPath)
     dapClient.setBreakpoints(canonPath, lines1);
 }
 
+bool Editor::isNativeDebugExt(const std::string &extLower)
+{
+    return extLower == ".c" || extLower == ".cpp" || extLower == ".cc" || extLower == ".cxx" ||
+           extLower == ".h" || extLower == ".hpp" || extLower == ".hxx" || extLower == ".hh" ||
+           extLower == ".inl" || extLower == ".exe";
+}
+
 // Resolve the adapter command for a file extension. The settings override
 // ([debug_adapters] ".ext=cmd arg …", split on spaces) wins; Python falls back
-// to debugpy through the same interpreter the script runner would use.
+// to debugpy through the same interpreter the script runner would use; the
+// C-family bridges into the best native DAP adapter found on this machine
+// (Microsoft's vsdbg / OpenDebugAD7 from the VS Code C++ tools, lldb-dap,
+// or gdb 14+'s built-in DAP interpreter), detected once and cached.
 std::vector<std::string> Editor::debugAdapterFor(const std::string &ext,
                                                  const std::filesystem::path &scriptPath,
-                                                 std::string &adapterType) const
+                                                 std::string &adapterType,
+                                                 std::vector<std::pair<std::string, std::string>> &launchExtras) const
 {
     adapterType.clear();
+    launchExtras.clear();
     auto ov = debugAdapterOverrides.find(ext);
     if (ov != debugAdapterOverrides.end() && !ov->second.empty())
-    {
-        std::vector<std::string> argv;
-        std::istringstream ss(ov->second);
-        std::string tok;
-        while (ss >> tok)   // simple space split — quote paths via 8.3/short names if needed
-            argv.push_back(tok);
-        return argv;
-    }
+        return dbgbridge::splitCommandLine(ov->second);
     if (ext == ".py" || ext == ".pyw")
     {
         adapterType = "python";
@@ -5829,6 +6126,39 @@ std::vector<std::string> Editor::debugAdapterFor(const std::string &ext,
         if (python.empty())
             python = "python";
         return {python, "-m", "debugpy.adapter"};
+    }
+    if (isNativeDebugExt(ext))
+    {
+        if (!nativeAdapterDetected)
+        {
+            nativeAdapterDetected = true;   // detect once; tools don't appear mid-session
+            if (auto vsdbg = dbgbridge::findVsdbg(); !vsdbg.empty())
+            {
+                // Microsoft VS debugger engine (the VS Code "cppvsdbg" plugin).
+                nativeAdapterArgv = {vsdbg, "--interpreter=vscode"};
+                nativeAdapterType = "cppvsdbg";
+            }
+            else if (auto ad7 = dbgbridge::findOpenDebugAD7();
+                     !ad7.empty() && dbgbridge::commandOnPath("gdb"))
+            {
+                // Microsoft MIEngine (the VS Code "cppdbg" plugin) over gdb.
+                nativeAdapterArgv = {ad7};
+                nativeAdapterType = "cppdbg";
+                nativeAdapterExtras = {{"MIMode", "gdb"}, {"miDebuggerPath", "gdb"}};
+            }
+            else if (dbgbridge::commandOnPath("lldb-dap"))
+            {
+                nativeAdapterArgv = {"lldb-dap"};
+            }
+            else if (dbgbridge::commandOnPath("gdb"))
+            {
+                // gdb >= 14 ships a native DAP interpreter.
+                nativeAdapterArgv = {"gdb", "-i", "dap"};
+            }
+        }
+        adapterType = nativeAdapterType;
+        launchExtras = nativeAdapterExtras;
+        return nativeAdapterArgv;
     }
     return {};
 }
@@ -5847,12 +6177,24 @@ void Editor::startDebugSession()
     auto ext = prog.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
     std::string type;
-    auto argv = debugAdapterFor(ext, prog, type);
+    std::vector<std::pair<std::string, std::string>> extras;
+    auto argv = debugAdapterFor(ext, prog, type, extras);
     if (argv.empty())
     {
         pushToast("No debug adapter for " + ext + " — map one in settings [debug_adapters]",
                   IM_COL32(240, 110, 90, 255));
         return;
+    }
+    // C-family sources aren't the debuggee — the built executable is.
+    if (isNativeDebugExt(ext) && ext != ".exe")
+    {
+        auto exe = findBuiltExe();
+        if (exe.empty())
+        {
+            pushToast("Debug: no built executable found — build first (F6)", IM_COL32(240, 200, 90, 255));
+            return;
+        }
+        prog = exe;
     }
 
     if (dapClient.spawned())
@@ -5877,6 +6219,7 @@ void Editor::startDebugSession()
     }
     dbgProgram = prog.string();
     dbgAdapterType = type;
+    dbgLaunchExtras = std::move(extras);
     dbgSessionActive = true;
     dbgPanelVisible = true;
     dbgConsole += "[adapter] " + argv[0] + " started\n";
@@ -5928,7 +6271,7 @@ void Editor::pollDap()
                 {
                     std::filesystem::path prog(dbgProgram);
                     dapClient.launch(dbgAdapterType, dbgProgram, prog.parent_path().string(),
-                                     /*stopOnEntry*/ false);
+                                     /*stopOnEntry*/ false, dbgLaunchExtras);
                     dbgLaunchSent = true;
                 }
                 break;
@@ -6058,7 +6401,8 @@ void Editor::renderDebugPanel()
                 auto ext = p.extension().string();
                 std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
                 std::string type;
-                auto argv = debugAdapterFor(ext, p, type);
+                std::vector<std::pair<std::string, std::string>> extras;
+                auto argv = debugAdapterFor(ext, p, type, extras);
                 if (argv.empty())
                     hint = "no adapter for " + ext + " — settings [debug_adapters]";
                 else
@@ -6217,6 +6561,131 @@ void Editor::renderDebugPanel()
         }
     }
     ImGui::End();
+}
+
+// ── External native debuggers (raddbg / Visual Studio) ─────────────────
+//
+// These tools bring their own UI, so instead of speaking DAP to them we
+// launch them at our target and seed raddbg with our breakpoints over its
+// --ipc channel. Command builders live in debug_bridge.{h,cpp} (pure,
+// selftest-covered); verbs are settings-templated so a CLI change in the
+// tool is a settings tweak, not a rebuild.
+
+// Settings override wins ([debug_bridge] key=path), else auto-detect.
+std::string Editor::bridgeToolPath(const char *key, std::string (*detect)()) const
+{
+    auto it = debugBridgeSettings.find(key);
+    if (it != debugBridgeSettings.end() && !it->second.empty())
+        return it->second;
+    return detect();
+}
+
+// What an external debugger should target: the Unreal editor for .uproject
+// roots, else the freshest built exe, else the active document if it IS an
+// exe. `why` explains a false return for the toast.
+bool Editor::externalDebugTarget(std::string &exe, std::string &args, std::string &why)
+{
+    exe.clear();
+    args.clear();
+    if (!unrealProjectName.empty())
+    {
+        dbgbridge::UnrealDebugTarget t;
+        if (dbgbridge::unrealEditorTarget(projectRoot, unrealProjectFile, t))
+        {
+            exe = t.exe;
+            args = t.args;
+            return true;
+        }
+        why = "no Unreal editor binary found (build the editor target first)";
+        return false;
+    }
+    auto built = findBuiltExe();
+    if (!built.empty())
+    {
+        exe = built.string();
+        return true;
+    }
+    if (!tabs.empty() && doc().filename != "untitled")
+    {
+        auto ext = std::filesystem::path(doc().filename).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+        if (ext == ".exe")
+        {
+            exe = doc().filename;
+            return true;
+        }
+    }
+    why = "no built executable found — build first (F6)";
+    return false;
+}
+
+// Spawn without pipes and drop the handle — the tool owns its own lifetime.
+void Editor::launchDetached(const std::vector<std::string> &argv)
+{
+    if (argv.empty())
+        return;
+    std::vector<const char *> args;
+    args.reserve(argv.size() + 1);
+    for (auto &a : argv)
+        args.push_back(a.c_str());
+    args.push_back(nullptr);
+    SDL_Process *p = SDL_CreateProcess(args.data(), /*pipe_stdio*/ false);
+    if (!p)
+    {
+        pushToast("Failed to launch " + argv[0], IM_COL32(240, 110, 90, 255));
+        return;
+    }
+    SDL_DestroyProcess(p);   // releases the handle; the child keeps running
+}
+
+void Editor::debugInRadDbg()
+{
+    std::string raddbg = bridgeToolPath("raddbg", dbgbridge::findRadDbg);
+    if (raddbg.empty())
+    {
+        pushToast("raddbg not found — set [debug_bridge] raddbg=<path> in settings",
+                  IM_COL32(240, 110, 90, 255));
+        return;
+    }
+    std::string exe, args, why;
+    if (!externalDebugTarget(exe, args, why))
+    {
+        pushToast("raddbg: " + why, IM_COL32(240, 200, 90, 255));
+        return;
+    }
+    launchDetached(dbgbridge::raddbgLaunch(raddbg, exe, args));
+    // Seed our breakpoints into the running instance. The verb template is
+    // settings-overridable (raddbg_bp_template, {file}/{line} placeholders).
+    std::vector<std::pair<std::string, int>> bps;
+    for (auto &kv : dbgBreakpoints)
+        for (int line : kv.second)
+            bps.push_back({kv.first, line + 1});
+    std::string tmpl;
+    if (auto it = debugBridgeSettings.find("raddbg_bp_template"); it != debugBridgeSettings.end())
+        tmpl = it->second;
+    for (auto &cmd : dbgbridge::raddbgBreakpointCmds(raddbg, tmpl, bps))
+        launchDetached(cmd);
+    pushToast("Launched raddbg" + (bps.empty() ? std::string() : " (+" + std::to_string(bps.size()) + " breakpoints)"),
+              IM_COL32(120, 200, 120, 255));
+}
+
+void Editor::debugInVisualStudio()
+{
+    std::string devenv = bridgeToolPath("devenv", dbgbridge::findDevenv);
+    if (devenv.empty())
+    {
+        pushToast("Visual Studio (devenv) not found — set [debug_bridge] devenv=<path> in settings",
+                  IM_COL32(240, 110, 90, 255));
+        return;
+    }
+    std::string exe, args, why;
+    if (!externalDebugTarget(exe, args, why))
+    {
+        pushToast("VS debugger: " + why, IM_COL32(240, 200, 90, 255));
+        return;
+    }
+    launchDetached(dbgbridge::devenvDebugExe(devenv, exe, args));
+    pushToast("Launched Visual Studio debugger", IM_COL32(120, 200, 120, 255));
 }
 
 // ── Unreal Engine integration — class wizard + Blueprint stub tool ─────
@@ -7235,6 +7704,8 @@ void Editor::loadSettings()
             interpreterOverrides[k] = v;
         else if (section == "debug_adapters")
             debugAdapterOverrides[k] = v;   // ".ext" -> adapter command line
+        else if (section == "debug_bridge")
+            debugBridgeSettings[k] = v;     // raddbg / devenv / raddbg_bp_template
         else if (section == "build")
             projectBuildOverrides[k] = v;
         else if (section == "keybinds")
@@ -7432,6 +7903,9 @@ void Editor::saveSettings()
         f << k << "=" << v << "\n";
     f << "\n[debug_adapters]\n";
     for (auto &[k, v] : debugAdapterOverrides)
+        f << k << "=" << v << "\n";
+    f << "\n[debug_bridge]\n";
+    for (auto &[k, v] : debugBridgeSettings)
         f << k << "=" << v << "\n";
     f << "\n[build]\n";
     for (auto &[k, v] : projectBuildOverrides)
@@ -7964,6 +8438,7 @@ void Editor::renderSettings()
                     {"nav.back", "Navigate back", "Alt+LeftArrow", "Code", true, nullptr},
                     {"nav.forward", "Navigate forward", "Alt+RightArrow", "Code", true, nullptr},
 
+                    {"view.palette", "Command palette", "Ctrl+Shift+P", "View", true, nullptr},
                     {"view.splitR", "Split tab right", "Ctrl+\\", "View", true, nullptr},
                     {"view.zoomIn", "Zoom in", "Ctrl++", "View", true, nullptr},
                     {"view.zoomOut", "Zoom out", "Ctrl+-", "View", true, nullptr},
@@ -9320,6 +9795,7 @@ void Editor::render()
     renderUnrealClassWizard();
     renderBlueprintStubTool();
     renderDebugPanel();
+    renderCommandPalette();
     renderDevTools();
     renderMarkdownPreview();
     renderGitDialogs();
@@ -10697,6 +11173,11 @@ void Editor::renderMenuBar()
         // VIEW — appearance toggles.
         if (ImGui::BeginMenu("View"))
         {
+            if (ImGui::MenuItem("Command Palette...", "^" SHORTCUT "P"))
+            {
+                openCommandPalette();
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Zoom In", " " SHORTCUT "+"))
             {
                 increaseFontSIze();
@@ -10955,6 +11436,17 @@ void Editor::renderMenuBar()
                 dapClient.stepOut(dbgThreadId);
             ImGui::Separator();
             ImGui::MenuItem("Debug Panel", nullptr, &dbgPanelVisible);
+            ImGui::Separator();
+            // External native debuggers — the tool's own UI, our target +
+            // breakpoints. Greyed items explain themselves via tooltip.
+            if (ImGui::MenuItem("Launch in raddbg"))
+                debugInRadDbg();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("RAD Debugger: launches the project exe (or Unreal editor)\nwith current breakpoints pushed over raddbg --ipc");
+            if (ImGui::MenuItem("Launch in Visual Studio"))
+                debugInVisualStudio();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("devenv /DebugExe on the project exe (or Unreal editor)");
             ImGui::EndMenu();
         }
 
@@ -11065,7 +11557,11 @@ void Editor::renderMenuBar()
         // → Keybinds catalogue. Order: more-specific (Shift) chords first where a
         // plain chord could otherwise swallow them.
         tickKeyChordPending(); // age out / cancel a half-entered two-stroke chord
-        if (keybindPressed("file.reopen", "Ctrl+Shift+T"))
+        if (keybindPressed("view.palette", "Ctrl+Shift+P"))
+        {
+            openCommandPalette();
+        }
+        else if (keybindPressed("file.reopen", "Ctrl+Shift+T"))
         {
             reopenLastClosedTab();
         }
