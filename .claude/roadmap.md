@@ -74,6 +74,23 @@ that is still genuinely outstanding.
 - [ ] BP core is hard to hand-edit — the annotated-Lua move above is the enabler for
       retargeting it (e.g. normal UE via UnrealSharp codegen).
 
+### PR #3 port (lobotomy-x #3 — 165 commits stale, UE-in-core arch; ported not merged)
+- [x] **DAP debugger backend** (bf05d3c) — dapproto/dapclient/dbgbridge libs + daptest.
+- [x] **DAP debugger UI** (5d6540c) — debugger_ui.cpp: breakpoints (F9), Debug panel
+      (stack/vars/console), stop marker, pollDap; raddbg/VS bridges. UE-editor
+      target dropped (plugin owns UE).
+- [x] **Command palette** (b936b5d) — command_palette.cpp: Ctrl+Shift+P fuzzy actions;
+      UE commands dropped, this build's features added (debug/git-history/notes/…).
+- [ ] **Async project search** — PR rewrites references/find-in-files to non-blocking
+      ProjectSearch + clippers. My panels already have the symbol-filter cache; this
+      is incremental and rewrites panels I've modified. Deferred.
+- [ ] **Parallel indexing** — PR's rebuildProjectIndex uses a thread pool. Mine is
+      single-thread background (already non-blocking). Porting must preserve my
+      extraSourceLocations indexing. Deferred.
+- [ ] daptest live debugpy round-trip fails (breakpoint stop not observed on 1.8.5).
+- NOTE: debug markers vs sticky-note markers share the editor's one marker list —
+  they can clobber each other in a file with both. Coexistence pass needed.
+
 ### Plugins
 - [x] **Top-level plugin menus** (409e817) — `EditorPlugin::topLevelMenu()` gives a
       plugin its own menu-bar entry; Unreal moved out of Project into a top-level
