@@ -10,8 +10,11 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
+    # No pinned -G: the windows-2025 image dropped VS2022 (broke "Visual
+    # Studio 17 2022"); letting CMake pick the newest installed VS survives
+    # future image bumps too.
     - name: Configure
-      run: cmake -B build -G "Visual Studio 17 2022" -A x64 -S example
+      run: cmake -B build -A x64 -S example
 
     - name: Build
       run: cmake --build build --config Release
