@@ -8244,6 +8244,7 @@ void Editor::renderSettings()
 
                     {"proj.run", "Run", "F5", "Project", true, nullptr},
                     {"proj.build", "Build project", "F6", "Project", true, nullptr},
+                    {"view.palette", "Command palette", "Ctrl+Shift+P", "View", true, nullptr},
                 };
 
                 static std::string capturingId; // id of the row currently waiting for a chord
@@ -9975,6 +9976,7 @@ void Editor::render()
     renderGitHistory();
     pollDap();          // drain debug-adapter results (stops, output, stack, vars)
     renderDebugPanel();
+    renderCommandPalette();
     renderTour();   // after the panels exist, so a step can anchor to a real window
     renderGithubBrowser();
     renderImageWindows();
@@ -11638,6 +11640,11 @@ void Editor::renderMenuBar()
         // VIEW — appearance toggles.
         if (ImGui::BeginMenu("View"))
         {
+            if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P"))
+            {
+                openCommandPalette();
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Zoom In", " " SHORTCUT "+"))
             {
                 increaseFontSIze();
@@ -12203,7 +12210,11 @@ void Editor::renderMenuBar()
         // F5 CONTINUES only while paused, otherwise it falls through to Run (F5's
         // existing binding). Stepping is on the Debug panel buttons — F10/F11 stay
         // free (F11 is Focus Mode). Starting a session is explicit (Tools ▸ Debug).
-        if (!tabs.empty() && ImGui::IsKeyPressed(ImGuiKey_F9, false))
+        if (keybindPressed("view.palette", "Ctrl+Shift+P"))
+        {
+            openCommandPalette();
+        }
+        else if (!tabs.empty() && ImGui::IsKeyPressed(ImGuiKey_F9, false))
         {
             toggleBreakpointAtCursor();
         }

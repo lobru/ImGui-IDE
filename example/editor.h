@@ -1059,6 +1059,17 @@ private:
 	void  debugInRadDbg();
 	void  debugInVisualStudio();
 
+	// ── Command palette (Ctrl+Shift+P) ───────────────────────────────────────
+	// Fuzzy-searchable list of every app action, floating over the main viewport.
+	// Type to filter, ↑/↓ to move, Enter runs, Escape closes. Rebindable
+	// (view.palette). Built fresh each frame from the current state.
+	bool palVisible = false;
+	bool palFocus = false;        // focus the query box next frame (just opened)
+	char palQuery[256] = "";
+	int  palSelected = 0;
+	void openCommandPalette();
+	void renderCommandPalette();
+
 	// Developer tools — Dear ImGui's own inspectors + a "where is this feature's
 	// code" source map (click a row -> project go-to-def to that function), so the
 	// editor can be developed inside itself.

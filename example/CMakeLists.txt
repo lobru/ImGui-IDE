@@ -107,6 +107,7 @@ target_compile_options(dapclient PRIVATE
 add_executable(example
 	editor.cpp
 	debugger_ui.cpp
+	command_palette.cpp
 	updater.cpp
 	pdfview.cpp
 	cppgen.cpp
