@@ -81,9 +81,10 @@ that is still genuinely outstanding.
       target dropped (plugin owns UE).
 - [x] **Command palette** (b936b5d) — command_palette.cpp: Ctrl+Shift+P fuzzy actions;
       UE commands dropped, this build's features added (debug/git-history/notes/…).
-- [ ] **Async project search** — PR rewrites references/find-in-files to non-blocking
-      ProjectSearch + clippers. My panels already have the symbol-filter cache; this
-      is incremental and rewrites panels I've modified. Deferred.
+- [x] **Async project search** (d263cb7) — references + find-in-files scan on a
+      worker pool (search_async.cpp: ProjectSearch + startProjectSearch + poll +
+      clipper-rendered rows). Non-blocking on huge trees; no regression (old search
+      was sync single-root, never covered extra locations).
 - [ ] **Parallel indexing** — PR's rebuildProjectIndex uses a thread pool. Mine is
       single-thread background (already non-blocking). Porting must preserve my
       extraSourceLocations indexing. Deferred.
