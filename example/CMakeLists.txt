@@ -76,6 +76,33 @@ target_compile_options(lspclient PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
+# ── DAP protocol layer ───────────────────────────────────────────────────
+# Pure Debug Adapter Protocol builders/parsers (no SDL) — reuses lspproto's
+# Content-Length framing. Links into the app and the headless selftest.
+add_library(dapproto STATIC dap_protocol.cpp dap_protocol.h)
+target_link_libraries(dapproto PUBLIC lspproto nlohmann_json)
+target_include_directories(dapproto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(dapproto PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
+# ── Native-debugger bridges (raddbg / Visual Studio / MS DAP adapters) ────
+# Pure command builders + tool detection, no ImGui/SDL — links into the app
+# and the headless selftest.
+add_library(dbgbridge STATIC debug_bridge.cpp debug_bridge.h)
+target_include_directories(dbgbridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(dbgbridge PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
+# ── DAP client transport (spawns a debug adapter via SDL3 process API) ────
+add_library(dapclient STATIC dap_client.cpp dap_client.h)
+target_link_libraries(dapclient PUBLIC dapproto SDL3::SDL3 SDL3_Headers)
+target_include_directories(dapclient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(dapclient PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
 # ── Example executable ───────────────────────────────────────────────────
 add_executable(example
 	editor.cpp
@@ -323,3 +350,14 @@ target_compile_options(lsptest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 add_test(NAME lsptest COMMAND lsptest)
 set_tests_properties(lsptest PROPERTIES SKIP_RETURN_CODE 77)
+
+# ── DAP integration gate ──────────────────────────────────────────────────
+# Spawns a real debugpy adapter and asserts a breakpoint → stop → inspect →
+# continue → exit round trip. SKIPs (77) when python/debugpy is absent.
+add_executable(daptest daptest.cpp)
+target_link_libraries(daptest PRIVATE dapclient SDL3::SDL3 SDL3_Headers)
+target_compile_options(daptest PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+add_test(NAME daptest COMMAND daptest)
+set_tests_properties(daptest PROPERTIES SKIP_RETURN_CODE 77)
