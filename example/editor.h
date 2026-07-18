@@ -943,10 +943,48 @@ private:
 	// Find References results panel — project-wide. Each hit records the file
 	// it was found in so clicking opens that file and jumps to the line.
 	struct RefHit { std::string file; int line; std::string text; };
+
+	// ── Async project search (references + find-in-files) ────────────────────
+	// A worker scans files into this mutex-guarded result set; the panels poll it
+	// each frame so a huge search never blocks the UI. `version` bumps per append.
+	struct ProjectSearch {
+		std::mutex          mutex;
+		std::vector<RefHit> hits;                // guarded by mutex
+		int                 fileCount = 0;       // guarded by mutex
+		bool                truncated = false;   // guarded by mutex
+		int                 version = 0;         // guarded by mutex; bumped per append
+		std::atomic<bool>   running{false};
+		std::atomic<int>    gen{0};              // supersede an in-flight pass
+	};
+	std::shared_ptr<ProjectSearch> fifSearch = std::make_shared<ProjectSearch>();
+	std::shared_ptr<ProjectSearch> refSearch = std::make_shared<ProjectSearch>();
+	int fifSearchSeen = -1;   // last version copied into findInFilesHits
+	int refSearchSeen = -1;   // last version copied into referencesHits
+	// Display list per panel: value ≥ 0 = hit index, value < 0 = file-header row
+	// for hit (-value - 1). Precomputed when results change so the render loop can
+	// run through an ImGuiListClipper (touches only the visible ~40 rows).
+	std::vector<int> findInFilesRows;
+	std::vector<int> referencesRows;
+	static void buildSearchRows(const std::vector<RefHit>& hits, std::vector<int>& rows);
+	void renderSearchHits(const std::vector<RefHit>& hits, const std::vector<int>& rows);
+	// Copy fresh results out of a ProjectSearch when its version moved on. Returns
+	// true if `hits` was refreshed (→ rebuild the display rows).
+	static bool pollProjectSearch(ProjectSearch& search, int& seenVersion,
+	                              std::vector<RefHit>& hits, int& fileCount, bool& truncated);
+	// Kick off an async search. The active doc's LIVE buffer is (activeLabel,
+	// activeText), scanned first so unsaved edits count; activeCanon is skipped
+	// during the disk walk. skipDepsVendor mirrors the find-in-files walker.
+	void startProjectSearch(std::shared_ptr<ProjectSearch> search,
+	                        std::string needle, bool caseSensitive, bool wholeWord,
+	                        size_t maxHits, bool skipDepsVendor,
+	                        std::filesystem::path root, std::string activeCanon,
+	                        std::string activeLabel, std::string activeText);
+
 	bool                            referencesVisible = false;
 	std::string                     referencesWord;
 	std::vector<RefHit>             referencesHits;
 	int                             referencesFileCount = 0;
+	bool                            referencesTruncated = false;  // async search hit its cap
 	bool                            referencesAllFiles = false;   // false = active file only (default), true = whole project
 	TabDocument*                    referencesTab = nullptr;      // tab the last search ran against (for the All-files re-run)
 	void findReferencesOf(TabDocument& t, const std::string& word);

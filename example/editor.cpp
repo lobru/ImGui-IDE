@@ -5587,143 +5587,71 @@ void Editor::findReferencesOf(TabDocument &t, const std::string &word)
     referencesWord = word;
     referencesHits.clear();
     referencesFileCount = 0;
-    if (word.empty())
-    {
-        referencesVisible = true;
-        return;
-    }
-
-    auto isBoundary = [](char c) {
-        return !(std::isalnum(static_cast<unsigned char>(c)) || c == '_');
-    };
-    // Whole-word scan of one text blob → append every matching line.
-    auto scanText = [&](const std::string &file, std::istream &in) {
-        std::string line;
-        int ln = 0;
-        bool counted = false;
-        while (std::getline(in, line))
-        {
-            size_t pos = 0;
-            while ((pos = line.find(word, pos)) != std::string::npos)
-            {
-                bool leftOk = (pos == 0) || isBoundary(line[pos - 1]);
-                size_t end = pos + word.size();
-                bool rightOk = (end >= line.size()) || isBoundary(line[end]);
-                if (leftOk && rightOk)
-                {
-                    std::string trimmed = line;
-                    size_t s = trimmed.find_first_not_of(" \t");
-                    if (s != std::string::npos)
-                        trimmed = trimmed.substr(s);
-                    referencesHits.push_back({file, ln, trimmed});
-                    if (!counted)
-                    {
-                        ++referencesFileCount;
-                        counted = true;
-                    }
-                    break;
-                }
-                pos = end;
-            }
-            ++ln;
-        }
-    };
+    referencesVisible = true;
 
     // Remember which tab this search ran against so the panel's "Search all
     // files" checkbox can re-run the same query at a wider scope.
     referencesTab = &t;
 
-    // Default scope is the ACTIVE FILE only (its live buffer, so unsaved edits
-    // count). The user widens to the whole project via the panel checkbox, which
-    // sets referencesAllFiles and re-runs. Current-file scan is always cheap.
-    if (!referencesAllFiles)
+    if (word.empty())
     {
-        std::istringstream ss(t.editor.GetText());
-        scanText(t.filename == "untitled" ? "(untitled)" : t.filename, ss);
-        referencesVisible = true;
+        // Cancel any in-flight search so stale results don't stream in.
+        ++refSearch->gen;
+        std::lock_guard<std::mutex> lk(refSearch->mutex);
+        refSearch->hits.clear();
+        refSearch->fileCount = 0;
+        refSearch->truncated = false;
+        ++refSearch->version;
         return;
     }
 
-    // Project-wide when we have a root (or the active doc's dir); the active
-    // doc is scanned from its live buffer so unsaved edits are reflected.
-    std::filesystem::path root = projectRoot;
-    if (root.empty() && t.filename != "untitled")
-        root = std::filesystem::path(t.filename).parent_path();
-
+    std::string activeLabel = t.filename == "untitled" ? "(untitled)" : t.filename;
     std::string activeCanon;
+    if (t.filename != "untitled")
     {
         std::error_code ec;
-        if (t.filename != "untitled")
-            activeCanon = std::filesystem::weakly_canonical(t.filename, ec).string();
+        activeCanon = std::filesystem::weakly_canonical(t.filename, ec).string();
     }
 
-    if (root.empty())
+    // Default scope is the ACTIVE FILE only (its live buffer, so unsaved edits
+    // count) — an empty root skips the disk walk entirely. The user widens to
+    // the whole project via the panel checkbox (referencesAllFiles), which
+    // re-runs with the real root; deps/vendor are intentionally searched there.
+    std::filesystem::path root;
+    if (referencesAllFiles)
     {
-        // No project context — just scan the active buffer.
-        std::istringstream ss(t.editor.GetText());
-        scanText(t.filename == "untitled" ? "(untitled)" : t.filename, ss);
-        referencesVisible = true;
-        return;
+        root = projectRoot;
+        if (root.empty() && t.filename != "untitled")
+            root = std::filesystem::path(t.filename).parent_path();
     }
 
-    std::error_code ec;
-    int budget = 6000;
-    for (auto it = std::filesystem::recursive_directory_iterator(
-             root, std::filesystem::directory_options::skip_permission_denied, ec);
-         it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
-    {
-        if (ec)
-        {
-            ec.clear();
-            continue;
-        }
-        if (it->is_directory(ec))
-        {
-            auto n = it->path().filename().string();
-            if (n == ".git" || n == ".svn" || n == "node_modules" || n == "bin" ||
-                n == "obj" || n == "out" || n == "build" || n == "target" ||
-                n == ".vs" || n == ".vscode" || n == "__pycache__")
-                it.disable_recursion_pending();
-            continue;
-        }
-        if (--budget < 0)
-            break;
-        if (!navIsCodeFile(it->path()))
-            continue;
-        auto canon = std::filesystem::weakly_canonical(it->path(), ec);
-        // Skip the active doc here; we scan its live buffer separately below.
-        if (!activeCanon.empty() && canon.string() == activeCanon)
-            continue;
-        std::ifstream f(it->path());
-        if (!f.is_open())
-            continue;
-        scanText(it->path().string(), f);
-    }
-    // Active doc from its live buffer.
-    if (!activeCanon.empty())
-    {
-        std::istringstream ss(t.editor.GetText());
-        scanText(t.filename, ss);
-    }
-    referencesVisible = true;
+    startProjectSearch(refSearch, word, /*caseSensitive=*/true, /*wholeWord=*/true,
+                       /*maxHits=*/5000, /*skipDepsVendor=*/false,
+                       root, activeCanon, activeLabel, t.editor.GetText());
 }
 
 void Editor::renderReferencesPanel()
 {
     if (!referencesVisible)
         return;
+    // Stream in fresh results from the async search.
+    if (pollProjectSearch(*refSearch, refSearchSeen, referencesHits, referencesFileCount,
+                          referencesTruncated))
+        buildSearchRows(referencesHits, referencesRows);
     ImGui::SetNextWindowSize(ImVec2(440.0f, 360.0f), ImGuiCond_FirstUseEver);
     // Stable dock ID (### resets the hash seed) so the window can be pre-docked
     // to the right by navInitDockLayout regardless of the symbol in the title.
     std::string title = std::string("References: ") + referencesWord + "###refsPanel";
     if (ImGui::Begin(title.c_str(), &referencesVisible))
     {
-        ImGui::TextDisabled("%zu match%s across %d file%s",
+        ImGui::TextDisabled("%zu match%s across %d file%s%s%s",
                             referencesHits.size(), referencesHits.size() == 1 ? "" : "es",
-                            referencesFileCount, referencesFileCount == 1 ? "" : "s");
+                            referencesFileCount, referencesFileCount == 1 ? "" : "s",
+                            referencesTruncated ? " (truncated)" : "",
+                            refSearch->running.load() ? "  (searching…)" : "");
         // Scope toggle: default is the active file; tick to widen to the whole
         // project and re-run the same query against the tab it came from.
-        if (ImGui::Checkbox("All files", &referencesAllFiles))
+        if (ImGui::Checkbox("Search all files", &referencesAllFiles))
         {
             // Guard the stored pointer: the source tab may have been closed since
             // the search ran. Only re-run if it's still a live tab.
@@ -5739,40 +5667,10 @@ void Editor::renderReferencesPanel()
         }
         ImGui::Separator();
 
-        std::string lastFile;
-        for (size_t i = 0; i < referencesHits.size(); ++i)
-        {
-            auto &hit = referencesHits[i];
-            if (hit.file != lastFile)
-            {
-                lastFile = hit.file;
-                auto leaf = std::filesystem::path(hit.file).filename().string();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
-                ImGui::TextUnformatted(leaf.empty() ? hit.file.c_str() : leaf.c_str());
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", hit.file.c_str());
-            }
-            ImGui::PushID((int)i);
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
-            if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
-            {
-                navHistory.record(currentNavLocation()); // so Back returns here
-                openFile(hit.file);
-                if (!tabs.empty())
-                {
-                    auto &ed = doc().editor;
-                    ed.SetCursor(hit.line, 0);
-                    ed.SelectLine(hit.line); // highlight the whole line, not just the gutter
-                    ed.ScrollToLine(hit.line, TextEditor::Scroll::alignMiddle);
-                }
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", hit.text.c_str());
-            ImGui::PopID();
-        }
-        middleMousePanScroll(4); // references panel
+        ImGui::BeginChild("##refResults");
+        renderSearchHits(referencesHits, referencesRows);
+        middleMousePanScroll(4);   // references panel
+        ImGui::EndChild();
     }
     ImGui::End();
 }
@@ -6122,59 +6020,12 @@ void Editor::openFindInFiles()
 
 void Editor::runFindInFiles()
 {
+    // The scan itself runs on the async worker-pool engine — this just
+    // gathers the query + scope and kicks it off. Results stream into the
+    // panel via fifSearch as the workers publish them.
     findInFilesHits.clear();
     findInFilesFileCount = 0;
     findInFilesTruncated = false;
-    std::string needle = findInFilesQuery;
-    if (needle.empty())
-        return;
-
-    const bool cs = findInFilesCase;
-    const bool ww = findInFilesWholeWord;
-    auto lower = [](std::string s) { for (auto& c : s) c = (char) std::tolower((unsigned char) c); return s; };
-    if (!cs)
-        needle = lower(needle);
-    auto isBoundary = [](char c) { return !(std::isalnum((unsigned char)c) || c == '_'); };
-
-    static constexpr size_t kMaxHits = 5000;
-    auto scanText = [&](const std::string &file, std::istream &in) {
-        std::string line;
-        int ln = 0;
-        bool counted = false;
-        while (std::getline(in, line))
-        {
-            const std::string hay = cs ? line : lower(line);
-            size_t pos = 0;
-            while ((pos = hay.find(needle, pos)) != std::string::npos)
-            {
-                size_t end = pos + needle.size();
-                bool ok = !ww || (((pos == 0) || isBoundary(line[pos - 1])) && ((end >= line.size()) || isBoundary(line[end])));
-                if (ok)
-                {
-                    std::string trimmed = line;
-                    size_t s = trimmed.find_first_not_of(" \t");
-                    if (s != std::string::npos)
-                        trimmed = trimmed.substr(s);
-                    if (trimmed.size() > 400)
-                        trimmed.resize(400);
-                    findInFilesHits.push_back({file, ln, trimmed});
-                    if (!counted)
-                    {
-                        ++findInFilesFileCount;
-                        counted = true;
-                    }
-                    break; // one hit per line
-                }
-                pos = end;
-            }
-            ++ln;
-            if (findInFilesHits.size() >= kMaxHits)
-            {
-                findInFilesTruncated = true;
-                return;
-            }
-        }
-    };
 
     std::filesystem::path root = projectRoot;
     if (root.empty() && !tabs.empty() && doc().filename != "untitled")
@@ -6182,58 +6033,18 @@ void Editor::runFindInFiles()
     if (root.empty())
         root = std::filesystem::current_path();
 
-    std::error_code ec;
-    std::string activeCanon;
+    std::string activeCanon, activeLabel, activeText;
     if (!tabs.empty() && doc().filename != "untitled")
+    {
+        std::error_code ec;
         activeCanon = std::filesystem::weakly_canonical(doc().filename, ec).string();
-
-    // Active doc first (live buffer — unsaved edits count), then the rest.
-    if (!tabs.empty() && doc().filename != "untitled")
-    {
-        std::istringstream ss(doc().editor.GetText());
-        scanText(doc().filename, ss);
+        activeLabel = doc().filename;
+        activeText = doc().editor.GetText();
     }
 
-    int budget = 8000;
-    for (auto it = std::filesystem::recursive_directory_iterator(
-             root, std::filesystem::directory_options::skip_permission_denied, ec);
-         it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
-    {
-        if (findInFilesHits.size() >= kMaxHits)
-        {
-            findInFilesTruncated = true;
-            break;
-        }
-        if (ec)
-        {
-            ec.clear();
-            continue;
-        }
-        if (it->is_directory(ec))
-        {
-            auto n = it->path().filename().string();
-            if (n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" || n == "bin" ||
-                n == "obj" || n == "out" || n == "build" || n == "target" || n == ".vs" ||
-                n == ".vscode" || n == ".idea" || n == "__pycache__" || n == "deps" || n == "vendor" ||
-                n == "Backup" || n == "backup" || n == "Backups" || n == "backups")
-                it.disable_recursion_pending();
-            continue;
-        }
-        if (--budget < 0)
-        {
-            findInFilesTruncated = true;
-            break;
-        }
-        if (!navIsCodeFile(it->path()))
-            continue;
-        auto canon = std::filesystem::weakly_canonical(it->path(), ec);
-        if (!activeCanon.empty() && canon.string() == activeCanon)
-            continue; // already did live buffer
-        std::ifstream f(it->path());
-        if (!f.is_open())
-            continue;
-        scanText(it->path().string(), f);
-    }
+    startProjectSearch(fifSearch, findInFilesQuery, findInFilesCase, findInFilesWholeWord,
+                       /*maxHits=*/5000, /*skipDepsVendor=*/true,
+                       root, std::move(activeCanon), std::move(activeLabel), std::move(activeText));
 }
 
 void Editor::renderFindInFilesPanel()
@@ -6260,47 +6071,21 @@ void Editor::renderFindInFilesPanel()
         if (go)
             runFindInFiles();
 
-        ImGui::TextDisabled("%zu match%s across %d file%s%s",
+        // Stream in fresh results from the async search.
+        if (pollProjectSearch(*fifSearch, fifSearchSeen, findInFilesHits, findInFilesFileCount,
+                              findInFilesTruncated))
+            buildSearchRows(findInFilesHits, findInFilesRows);
+
+        ImGui::TextDisabled("%zu match%s across %d file%s%s%s",
                             findInFilesHits.size(), findInFilesHits.size() == 1 ? "" : "es",
                             findInFilesFileCount, findInFilesFileCount == 1 ? "" : "s",
-                            findInFilesTruncated ? " (truncated)" : "");
+                            findInFilesTruncated ? " (truncated)" : "",
+                            fifSearch->running.load() ? "  (searching…)" : "");
         ImGui::Separator();
 
         ImGui::BeginChild("##fifResults");
-        std::string lastFile;
-        for (size_t i = 0; i < findInFilesHits.size(); ++i)
-        {
-            auto &hit = findInFilesHits[i];
-            if (hit.file != lastFile)
-            {
-                lastFile = hit.file;
-                auto leaf = std::filesystem::path(hit.file).filename().string();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
-                ImGui::TextUnformatted(leaf.empty() ? hit.file.c_str() : leaf.c_str());
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", hit.file.c_str());
-            }
-            ImGui::PushID((int)i);
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
-            if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
-            {
-                navHistory.record(currentNavLocation()); // so Back returns here
-                openFile(hit.file);
-                if (!tabs.empty())
-                {
-                    auto &ed = doc().editor;
-                    ed.SetCursor(hit.line, 0);
-                    ed.SelectLine(hit.line);
-                    ed.ScrollToLine(hit.line, TextEditor::Scroll::alignMiddle);
-                }
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", hit.text.c_str());
-            ImGui::PopID();
-        }
-        middleMousePanScroll(7); // find-in-files results
+        renderSearchHits(findInFilesHits, findInFilesRows);
+        middleMousePanScroll(7);   // find-in-files results
         ImGui::EndChild();
     }
     ImGui::End();
