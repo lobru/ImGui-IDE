@@ -3130,8 +3130,8 @@ void Editor::rebuildProjectIndex()
         // Leave one core for the UI thread; cap the pool — parse throughput
         // flattens past a handful of workers because file I/O serializes.
         unsigned hw = std::thread::hardware_concurrency();
-        int nWorkers = (int) std::min(cands.size(),
-                                      (size_t) std::clamp((int) hw - 1, 1, 8));
+        int nWorkers = (int) (std::min)(cands.size(),
+                                        (size_t) std::clamp((int) hw - 1, 1, 8));
         if (nWorkers < 1)
             nWorkers = 1;
         std::vector<WorkerAgg> agg((size_t) nWorkers);
@@ -5096,7 +5096,7 @@ void Editor::startProjectSearch(std::shared_ptr<ProjectSearch> search,
         // per-file batches keep each file's hits contiguous in the result list
         // (the panels group rows by consecutive file).
         unsigned hw = std::thread::hardware_concurrency();
-        int nWorkers = (int) std::min(files.size(), (size_t) std::clamp((int) hw - 1, 1, 8));
+        int nWorkers = (int) (std::min)(files.size(), (size_t) std::clamp((int) hw - 1, 1, 8));
         if (nWorkers < 1)
             nWorkers = 1;
         std::atomic<size_t> nextFile{0};
@@ -5503,10 +5503,11 @@ void Editor::renderSymbolsPanel()
     {
         if (building)
         {
-            // Live progress from the parallel parse workers.
-            int total = indexState->filesTotal.load();
-            int done = indexState->filesDone.load();
-            ImGui::Text("gen %d  (indexing %d/%d…) · %zu files · %zu types", gen, done, total,
+            // Live progress from the parallel parse workers. (doneCount, not
+            // `done` — that would shadow Editor::done, C4458 under /W4 /WX.)
+            int totalCount = indexState->filesTotal.load();
+            int doneCount = indexState->filesDone.load();
+            ImGui::Text("gen %d  (indexing %d/%d…) · %zu files · %zu types", gen, doneCount, totalCount,
                         idx->fileSymbols.size(), idx->members.size());
         }
         else
