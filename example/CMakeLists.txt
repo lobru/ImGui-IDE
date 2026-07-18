@@ -58,6 +58,15 @@ target_compile_options(tsindex PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
+# ── Unreal Blueprint-style code generation ───────────────────────────────
+# Pure string logic (class wizard templates, UFUNCTION/UPROPERTY stubs,
+# .uproject detection) — no ImGui/SDL, links into the app and the selftest.
+add_library(unrealgen STATIC unreal.cpp unreal.h)
+target_include_directories(unrealgen PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_options(unrealgen PRIVATE
+	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
+	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
+
 # ── LSP protocol layer ───────────────────────────────────────────────────
 # Pure JSON-RPC framing/builders/parsers + UTF offset conversion (no SDL), so
 # the headless selftest can link it. The transport (lsp_client) adds SDL.
@@ -82,7 +91,7 @@ add_executable(example
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient unrealgen)
 
 # Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
 # build scripts / object paths are unchanged) — only the produced file is renamed.
@@ -124,7 +133,7 @@ add_custom_command(TARGET example POST_BUILD
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
 add_executable(selftest selftest.cpp)
-target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto)
+target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto unrealgen)
 target_compile_options(selftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)

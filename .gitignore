@@ -63,3 +63,6 @@ companion.py
 
 # Installer build output
 installer/output/
+
+# selftest scratch artifact (cache-roundtrip test writes it to cwd)
+selftest_cache.idx

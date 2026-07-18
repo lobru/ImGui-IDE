@@ -29,6 +29,7 @@
 #include "tsindex.h"
 #include "lsp_client.h"
 #include "nav_history.h"
+#include "unreal.h"
 
 
 //
@@ -277,6 +278,10 @@ private:
 		std::atomic<bool>                   building{false};
 		std::atomic<int>                    gen{0};
 		std::atomic<bool>                   rebuildRequested{false}; // a save arrived mid-build
+		// Live progress of the current pass (Symbols panel readout): candidates
+		// found by the enumeration walk / files the parse workers have finished.
+		std::atomic<int>                    filesTotal{0};
+		std::atomic<int>                    filesDone{0};
 		// Last-built per-file symbol cache (also persisted to disk). Read at the
 		// start of a build to skip re-parsing unchanged files; guarded by `mutex`.
 		std::unordered_map<std::string, ts::FileSyms> cache;
@@ -640,10 +645,54 @@ private:
 	// Find References results panel — project-wide. Each hit records the file
 	// it was found in so clicking opens that file and jumps to the line.
 	struct RefHit { std::string file; int line; std::string text; };
+
+	// ── Async project-wide text search engine ───────────────────────────────
+	// Shared by Find in Files and project-wide Find References. The walk + scan
+	// runs on a worker pool off the UI thread (a big project froze the app for
+	// seconds when this was synchronous); per-file hit batches are appended
+	// under the mutex and `version` bumps so the UI copies results only when
+	// they actually changed. `gen` cancels a stale search when a new one starts
+	// or the Editor shuts down. Lives in a shared_ptr so detached workers
+	// outlive the Editor safely (same pattern as ScriptState).
+	struct ProjectSearch {
+		std::mutex          mutex;
+		std::vector<RefHit> hits;         // guarded by mutex
+		int                 fileCount = 0;  // guarded by mutex
+		bool                truncated = false;  // guarded by mutex
+		int                 version = 0;  // guarded by mutex; bumped per append
+		std::atomic<bool>   running{false};
+		std::atomic<int>    gen{0};
+	};
+	std::shared_ptr<ProjectSearch> fifSearch = std::make_shared<ProjectSearch>();
+	std::shared_ptr<ProjectSearch> refSearch = std::make_shared<ProjectSearch>();
+	int fifSearchSeen = -1;   // last ProjectSearch::version copied into findInFilesHits
+	int refSearchSeen = -1;   // last version copied into referencesHits
+	// Display list per panel: value ≥ 0 = hit index, value < 0 = file-header row
+	// for hit (-value - 1). Precomputed when results change so the render loop
+	// can run through an ImGuiListClipper (5000 rows drawn per frame froze the
+	// panels; the clipper touches only the visible ~40).
+	std::vector<int> findInFilesRows;
+	std::vector<int> referencesRows;
+	static void buildSearchRows(const std::vector<RefHit>& hits, std::vector<int>& rows);
+	void renderSearchHits(const std::vector<RefHit>& hits, const std::vector<int>& rows);
+	// Copy fresh results out of a ProjectSearch when its version moved on.
+	// Returns true if `hits` was refreshed (→ rebuild the display rows).
+	static bool pollProjectSearch(ProjectSearch& search, int& seenVersion,
+	                              std::vector<RefHit>& hits, int& fileCount, bool& truncated);
+	// Kick off an async search. The active doc's LIVE buffer is passed in as
+	// (activeLabel, activeText) and scanned first so unsaved edits count;
+	// activeCanon is skipped during the disk walk. skipDepsVendor mirrors the
+	// old Find-in-Files walker (References intentionally searches deps too).
+	void startProjectSearch(std::shared_ptr<ProjectSearch> search,
+	                        std::string needle, bool caseSensitive, bool wholeWord,
+	                        size_t maxHits, bool skipDepsVendor,
+	                        std::filesystem::path root, std::string activeCanon,
+	                        std::string activeLabel, std::string activeText);
 	bool                            referencesVisible = false;
 	std::string                     referencesWord;
 	std::vector<RefHit>             referencesHits;
 	int                             referencesFileCount = 0;
+	bool                            referencesTruncated = false;   // async search hit its cap
 	bool                            referencesAllFiles = false;   // false = active file only (default), true = whole project
 	TabDocument*                    referencesTab = nullptr;      // tab the last search ran against (for the All-files re-run)
 	void findReferencesOf(TabDocument& t, const std::string& word);
@@ -664,10 +713,16 @@ private:
 	std::string                     symbolsCacheFile;              // doc-mode cache key (filename)
 	size_t                          symbolsCacheUndo = (size_t) -1;// doc-mode cache key (edit count)
 	std::vector<ts::Symbol>         symbolsCacheSyms;              // parsed outline of the active doc
-	struct SymRow { std::string name; std::string file; int line; ts::Kind kind; };
+	struct SymRow { std::string name; std::string lower; std::string file; int line; ts::Kind kind; };
 	std::vector<SymRow>             symbolsProjectRows;            // flattened project index (filtered flat view)
 	std::vector<std::string>        symbolsFiles;                  // sorted file paths (project tree view)
 	int                             symbolsProjectGen = -1;        // index gen the two caches above are from
+	// Filter-result cache for the flat view: indices into symbolsProjectRows,
+	// rebuilt only when the filter text or index gen changes (re-matching every
+	// row every frame burned ms on big projects); rendered via list clipper.
+	std::vector<int>                symbolsFilteredRows;
+	std::string                     symbolsFilteredKey;
+	int                             symbolsFilteredGen = -1;
 
 	// Find in Files — project-wide text search with a query box + options.
 	bool                            findInFilesVisible = false;
@@ -681,6 +736,41 @@ private:
 	void runFindInFiles();
 	void renderFindInFilesPanel();
 	void openFindInFiles();        // show the panel, focus the query, seed from selection
+
+	// ── Unreal Engine integration ────────────────────────────────────────────
+	// When the open project root contains a .uproject, an "Unreal" menu appears
+	// with Blueprint-style code generation: a "New Unreal Class" wizard that
+	// writes a UE-idiomatic header/source pair (UCLASS/GENERATED_BODY, per-kind
+	// Tick/BeginPlay overrides), and a Blueprint stub tool that builds
+	// UFUNCTION / UPROPERTY declarations and inserts them at the cursor. The
+	// generation logic itself is pure (unreal.h) and selftest-covered.
+	std::string           unrealProjectName;    // .uproject stem ("" = not a UE project)
+	std::filesystem::path unrealProjectFile;
+	void detectUnrealProject();                 // called from setProjectRoot
+	bool ueWizardVisible = false;
+	int  ueWizardKind = 0;                      // index into unreal::ClassKind
+	char ueWizardName[128] = "";
+	char ueWizardModule[64] = "";
+	char ueWizardDir[512] = "";                 // target dir, relative to projectRoot
+	bool ueWizardBlueprintable = true;
+	bool ueWizardTick = false;
+	std::string ueWizardError;                  // last create error ("" = none)
+	void openUnrealClassWizard();               // seed fields from the project
+	void renderUnrealClassWizard();
+	bool ueStubVisible = false;
+	char ueFuncName[128] = "";
+	char ueFuncRet[64] = "void";
+	char ueFuncParams[256] = "";
+	char ueFuncCategory[64] = "Default";
+	char ueFuncClass[128] = "";               // qualifier for the copied definition
+	bool ueFuncPure = false;
+	char uePropType[64] = "float";
+	char uePropName[128] = "";
+	char uePropCategory[64] = "Default";
+	bool uePropReadOnly = false;
+	bool uePropEditAnywhere = true;
+	void renderBlueprintStubTool();
+	void insertSnippetAtCursor(const std::string& snippet);   // undo-safe paste into the active doc
 
 	// Developer tools — Dear ImGui's own inspectors + a "where is this feature's
 	// code" source map (click a row -> project go-to-def to that function), so the

@@ -9,8 +9,10 @@
 //
 //	Exit code 0 = all pass, 1 = a failure (printed to stderr).
 
+#include <atomic>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -18,6 +20,7 @@
 #include "tsindex.h"
 #include "lsp_protocol.h"
 #include "nav_history.h"
+#include "unreal.h"
 
 static int gFailures = 0;
 static int gChecks = 0;
@@ -877,6 +880,140 @@ int main()
 		h.record(NavLocation{});
 		CHECK(!h.canBack(), "NavHistory: ignores invalid origin");
 		CHECK(!h.back(NavLocation{}, out), "NavHistory: back on empty returns false");
+	}
+
+	// ── Parallel extractSymbols (the index build now fans parses out over a
+	// worker pool — the shared tags-query cache must be thread-safe) ──
+	if (ts::available()) {
+		const std::string cpp =
+			"class Widget {\n"
+			"public:\n"
+			"\tint count;\n"
+			"\tvoid tick();\n"
+			"};\n"
+			"void Widget::tick() {}\n";
+		const std::string py = "class Thing:\n\tdef poke(self):\n\t\tpass\n";
+		std::atomic<int> good{0};
+		std::vector<std::thread> pool;
+		for (int w = 0; w < 8; ++w)
+			pool.emplace_back([&, w]() {
+				for (int i = 0; i < 25; ++i)
+				{
+					// Alternate languages so the query-cache path is hit from
+					// several threads for several entries at once.
+					auto syms = (w + i) % 2 == 0
+						? ts::extractSymbols(ts::Lang::Cpp, cpp)
+						: ts::extractSymbols(ts::Lang::Python, py);
+					if (!syms.empty())
+						++good;
+				}
+			});
+		for (auto& th : pool)
+			th.join();
+		CHECK(good == 8 * 25, "parallel extractSymbols: every concurrent parse produced symbols");
+	}
+
+	// ── Unreal Blueprint code generation (pure string logic) ──
+	{
+		CHECK(unreal::moduleApiMacro("MyGame") == "MYGAME_API", "unreal: module macro uppercased");
+		CHECK(unreal::moduleApiMacro("my-game 2") == "MY_GAME_2_API", "unreal: macro sanitizes non-identifier chars");
+		CHECK(unreal::moduleApiMacro("").empty(), "unreal: empty module -> no macro");
+
+		unreal::ClassSpec actor;
+		actor.kind = unreal::ClassKind::Actor;
+		actor.name = "Health";
+		actor.moduleName = "MyGame";
+		actor.blueprintable = true;
+		actor.tick = true;
+		CHECK(unreal::prefixedClassName(actor) == "AHealth", "unreal: actor gets A prefix");
+		CHECK(unreal::headerFileName(actor) == "Health.h" && unreal::sourceFileName(actor) == "Health.cpp",
+			  "unreal: file names drop the prefix");
+		std::string h = unreal::generateHeader(actor);
+		CHECK(h.find("#include \"GameFramework/Actor.h\"") != std::string::npos, "unreal: actor header includes base");
+		CHECK(h.find("#include \"Health.generated.h\"") != std::string::npos, "unreal: generated.h included");
+		CHECK(h.find("UCLASS(Blueprintable, BlueprintType)") != std::string::npos, "unreal: blueprintable UCLASS specifiers");
+		CHECK(h.find("class MYGAME_API AHealth : public AActor") != std::string::npos, "unreal: class line with API macro");
+		CHECK(h.find("GENERATED_BODY()") != std::string::npos, "unreal: GENERATED_BODY present");
+		CHECK(h.find("virtual void Tick(float DeltaTime) override;") != std::string::npos, "unreal: tick override requested");
+		std::string cppSrc = unreal::generateSource(actor);
+		CHECK(cppSrc.find("#include \"Health.h\"") != std::string::npos, "unreal: source includes own header");
+		CHECK(cppSrc.find("PrimaryActorTick.bCanEverTick = true;") != std::string::npos, "unreal: tick enabled in ctor");
+		CHECK(cppSrc.find("Super::BeginPlay();") != std::string::npos, "unreal: BeginPlay chains Super");
+
+		unreal::ClassSpec comp;
+		comp.kind = unreal::ClassKind::ActorComponent;
+		comp.name = "Inventory";
+		comp.moduleName = "MyGame";
+		comp.tick = false;
+		std::string ch = unreal::generateHeader(comp);
+		CHECK(ch.find("meta=(BlueprintSpawnableComponent)") != std::string::npos, "unreal: component spawnable meta");
+		CHECK(ch.find("class MYGAME_API UInventory : public UActorComponent") != std::string::npos, "unreal: U prefix + component base");
+		std::string cs = unreal::generateSource(comp);
+		CHECK(cs.find("PrimaryComponentTick.bCanEverTick = false;") != std::string::npos, "unreal: component tick spelling + off");
+		CHECK(cs.find("::Tick(") == std::string::npos, "unreal: no Tick body when tick off");
+
+		unreal::ClassSpec iface;
+		iface.kind = unreal::ClassKind::Interface;
+		iface.name = "Interactable";
+		iface.moduleName = "MyGame";
+		std::string ih = unreal::generateHeader(iface);
+		CHECK(ih.find("UINTERFACE(MinimalAPI, Blueprintable)") != std::string::npos, "unreal: UINTERFACE shell");
+		CHECK(ih.find("class UInteractable : public UInterface") != std::string::npos, "unreal: U-shell class");
+		CHECK(ih.find("class MYGAME_API IInteractable") != std::string::npos, "unreal: I-class implementers inherit");
+
+		// Character carries the input-binding override.
+		unreal::ClassSpec chr;
+		chr.kind = unreal::ClassKind::Character;
+		chr.name = "Hero";
+		CHECK(unreal::generateHeader(chr).find("SetupPlayerInputComponent") != std::string::npos,
+			  "unreal: character declares input binding");
+		// No module -> no API macro, class line still well-formed.
+		CHECK(unreal::generateHeader(chr).find("class AHero : public ACharacter") != std::string::npos,
+			  "unreal: empty module omits the API macro");
+
+		// Param list parsing.
+		auto ps = unreal::parseParamList("float Amount, const FString& Who, TMap<FName, int32> Counts");
+		CHECK(ps.size() == 3, "unreal: three params parsed");
+		if (ps.size() == 3) {
+			CHECK(ps[0].first == "float" && ps[0].second == "Amount", "unreal: simple param split");
+			CHECK(ps[1].first == "const FString&" && ps[1].second == "Who", "unreal: ref param split");
+			CHECK(ps[2].first == "TMap<FName, int32>" && ps[2].second == "Counts",
+				  "unreal: template comma not treated as separator");
+		}
+		CHECK(unreal::parseParamList("").empty(), "unreal: empty param list");
+
+		unreal::FunctionSpec fn;
+		fn.name = "TakeDamage";
+		fn.returnType = "float";
+		fn.params = unreal::parseParamList("float Amount");
+		fn.category = "Combat";
+		std::string decl = unreal::generateFunctionDecl(fn);
+		CHECK(decl.find("UFUNCTION(BlueprintCallable, Category = \"Combat\")") != std::string::npos,
+			  "unreal: UFUNCTION callable + category");
+		CHECK(decl.find("float TakeDamage(float Amount);") != std::string::npos, "unreal: function signature");
+		fn.pure = true;
+		CHECK(unreal::generateFunctionDecl(fn).find("BlueprintPure") != std::string::npos, "unreal: pure flag");
+		std::string def = unreal::generateFunctionDef(fn, "AHealth");
+		CHECK(def.find("float AHealth::TakeDamage(float Amount)") != std::string::npos, "unreal: definition qualifier");
+		CHECK(def.find("return float{};") != std::string::npos, "unreal: non-void stub returns a value");
+		unreal::FunctionSpec vfn;
+		vfn.name = "Reset";
+		CHECK(unreal::generateFunctionDef(vfn, "AHealth").find("return") == std::string::npos,
+			  "unreal: void stub has no return");
+
+		unreal::PropertySpec prop;
+		prop.type = "float";
+		prop.name = "MaxHealth";
+		prop.category = "Stats";
+		std::string pd = unreal::generatePropertyDecl(prop);
+		CHECK(pd.find("UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = \"Stats\")") != std::string::npos,
+			  "unreal: UPROPERTY default flags");
+		CHECK(pd.find("float MaxHealth;") != std::string::npos, "unreal: property member line");
+		prop.readOnly = true;
+		prop.editAnywhere = false;
+		std::string pd2 = unreal::generatePropertyDecl(prop);
+		CHECK(pd2.find("VisibleAnywhere") != std::string::npos && pd2.find("BlueprintReadOnly") != std::string::npos,
+			  "unreal: read-only / visible-anywhere flags");
 	}
 
 	if (gFailures == 0) {

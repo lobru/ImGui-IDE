@@ -43,6 +43,38 @@ that is still genuinely outstanding.
 
 ## ✅ Shipped (changelog)
 
+### 2026-07-18 — performance + Unreal batch
+- **Multithreaded project indexing.** `rebuildProjectIndex` now runs in three
+  phases: serial candidate enumeration → parallel parse on a worker pool
+  (`hardware_concurrency - 1`, capped at 8; per-worker identifier/def
+  aggregates, per-candidate result slots, zero locks in the hot path) → serial
+  merge in enumeration order (deterministic per-symbol site caps). tree-sitter's
+  tags-query cache is mutex-guarded (`tsindex.cpp`) since compiled `TSQuery`s
+  are immutable and shared across workers. Symbols panel shows live
+  `indexing done/total` progress (`IndexState::filesTotal/filesDone`).
+- **Async multithreaded search.** New `startProjectSearch` engine (shared by
+  Find in Files + Find References): the walk + scan runs off the UI thread on
+  a worker pool, per-file hit batches publish under a mutex with a `version`
+  counter, panels stream results in live with a "(searching…)" tag. `gen`
+  cancels superseded searches; a late pass can't stomp its successor's flags.
+  Both features previously froze the UI for seconds on big projects.
+- **Rendering optimizations.** Find in Files / References panels render
+  through `ImGuiListClipper` over precomputed display rows (was: up to 5000
+  Selectables per frame). Symbols panel filter mode caches match indices per
+  (filter, gen) against pre-lowered names + clips. Nav flat view filters into
+  an index list then clips (was: 20k Selectables per frame worst case).
+- **Unreal Engine support with Blueprint-style code gen.** New pure-logic
+  `unrealgen` lib (`example/unreal.{h,cpp}`): `.uproject` detection, UE-style
+  class scaffolding for Actor / Character / Pawn / ActorComponent /
+  SceneComponent / Object / Interface / BlueprintFunctionLibrary
+  (UCLASS/GENERATED_BODY/BeginPlay/Tick per engine templates, module `*_API`
+  macro, `.generated.h` include), UFUNCTION (BlueprintCallable/Pure) +
+  UPROPERTY stub generation, param-list parsing (template-comma aware).
+  Editor side: an "Unreal" menu appears when the project root has a
+  `.uproject` — "New Unreal Class…" wizard writes + opens the pair,
+  "Blueprint Stubs…" inserts declarations at the cursor. 38 new selftest
+  checks incl. a parallel `extractSymbols` thread-safety exercise.
+
 ### 2026-06-11
 - Distinct `///` doc-comment fold preview (`FoldRange::docComment`, set in
   `flushLineCommentBlock`, branched in the render switch → `" ///..."`).

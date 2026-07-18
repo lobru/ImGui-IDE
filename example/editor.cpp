@@ -1396,6 +1396,8 @@ void Editor::setProjectRoot(const std::filesystem::path &p)
     navPanelVisible = true;
     rememberRecentProject(abs.string());
     restoreProjectSession(abs);
+    // Unreal project? (.uproject in the root) → enables the Unreal menu.
+    detectUnrealProject();
     // Load the cached symbol index so it's usable instantly, then kick off the
     // background rebuild (which reuses the cache to skip unchanged files).
     loadIndexCache();
@@ -1546,7 +1548,16 @@ bool Editor::navDirHasMatch(const std::filesystem::path &dir) const
     return navMatchDirs.count(navCanonKey(dir)) != 0;
 }
 
+// Free function (static data only) so the detached search workers can use it
+// without holding an Editor pointer — they may outlive the Editor itself.
+static bool pathIsCodeFile(const std::filesystem::path &p);
+
 bool Editor::navIsCodeFile(const std::filesystem::path &p) const
+{
+    return pathIsCodeFile(p);
+}
+
+static bool pathIsCodeFile(const std::filesystem::path &p)
 {
     // "Code-only" filter — same set as the project-wide grep walker, plus a
     // few project-file extensions so .sln / .csproj show up in the tree.
@@ -2103,34 +2114,46 @@ static void navRenderFlat(Editor *self, const std::filesystem::path &root,
                           bool showDot, std::string &contextPath)
 {
     // Cached whole-tree listing (built at most every 0.5s, not every frame). The
-    // name filter is applied here per-frame so typing in it doesn't re-walk.
+    // name filter is applied here per-frame so typing in it doesn't re-walk;
+    // matching is a cheap substring test, so filtering indices first and then
+    // clipping keeps a 20k-file tree at ~40 drawn rows instead of 20k Selectables.
     const auto &files = self->navCachedFlatList(root, showDot);
-    int id = 0;
-    for (const auto &item : files)
+    static std::vector<int> matches;   // scratch — render-thread only
+    matches.clear();
+    matches.reserve(files.size());
+    for (int i = 0; i < (int) files.size(); ++i)
+        if (self->navNameMatches(files[(size_t) i].name))
+            matches.push_back(i);
+
+    ImGuiListClipper clipper;
+    clipper.Begin((int) matches.size());
+    while (clipper.Step())
     {
-        if (!self->navNameMatches(item.name)) // name filter (cheap string compare)
-            continue;
-        ImGui::PushID(id++);
-        if (ImGui::Selectable(item.name.c_str()))
-            self->openFile(item.path.string());
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
+        for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r)
         {
-            std::error_code rec;
-            auto rel = std::filesystem::relative(item.path, root, rec);
-            auto ext = item.path.extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted((rec ? item.path : rel).string().c_str());
-            if (Editor::isImageExt(ext))
-                self->navShowImageThumbnail(item.path.string());
-            ImGui::EndTooltip();
+            const auto &item = files[(size_t) matches[(size_t) r]];
+            ImGui::PushID(r);
+            if (ImGui::Selectable(item.name.c_str()))
+                self->openFile(item.path.string());
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
+            {
+                std::error_code rec;
+                auto rel = std::filesystem::relative(item.path, root, rec);
+                auto ext = item.path.extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted((rec ? item.path : rel).string().c_str());
+                if (Editor::isImageExt(ext))
+                    self->navShowImageThumbnail(item.path.string());
+                ImGui::EndTooltip();
+            }
+            if (ImGui::BeginPopupContextItem())
+            {
+                contextPath = item.path.string();
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
         }
-        if (ImGui::BeginPopupContextItem())
-        {
-            contextPath = item.path.string();
-            ImGui::EndPopup();
-        }
-        ImGui::PopID();
     }
 }
 
@@ -3046,6 +3069,11 @@ void Editor::rebuildProjectIndex()
                 for (auto &mkv : tkv.second)
                     idx->memberTypes[tkv.first][mkv.first] = mkv.second;
         };
+        // ── Phase 1: enumerate candidates (serial — the walk is cheap, the
+        // parse dominates). Just paths + language; stat/read/parse happen on
+        // the worker pool below.
+        struct Cand { std::string path; ts::Lang lang; };
+        std::vector<Cand> cands;
         std::error_code ec;
         int budget = 30000;   // higher now that dependency source is indexed too
 
@@ -3078,151 +3106,247 @@ void Editor::rebuildProjectIndex()
             if (isExcluded(it->path()))
                 continue;   // user hid this file from the nav tree → keep it out of the index
 
-            std::string fileStr = it->path().string();
-            bool tsLang = ts::langForExtension(ext) != ts::Lang::None;
+            cands.push_back({it->path().string(), ts::langForExtension(ext)});
+        }
+        st->filesTotal = (int) cands.size();
+        st->filesDone = 0;
 
-            // mtime + size key the cache staleness check.
-            std::error_code mec, sec;
-            auto wtime = std::filesystem::last_write_time(it->path(), mec);
-            long long mtime = mec ? 0 : (long long) wtime.time_since_epoch().count();
-            std::uintmax_t fsz = std::filesystem::file_size(it->path(), sec);
-            unsigned long long fsize = sec ? 0 : (unsigned long long) fsz;
+        // ── Phase 2: parse candidates on a worker pool. Each worker owns its
+        // own identifier set + heuristic-def map (merged serially below) and
+        // writes tree-sitter output into its candidate's dedicated slot — no
+        // locks anywhere in the hot path. tree-sitter is safe to use this way:
+        // every worker builds its own TSParser/TSQueryCursor per file; the
+        // compiled TSQuery is immutable and shared (its cache is mutex-guarded
+        // inside tsindex.cpp).
+        struct PerFile {
+            bool         tsFile = false;   // slot holds tree-sitter output (fresh or cached)
+            ts::FileSyms fsyms;
+        };
+        std::vector<PerFile> out(cands.size());
+        struct WorkerAgg {
+            std::unordered_set<std::string>                       idset;
+            std::unordered_map<std::string, std::vector<DefSite>> defs;
+        };
+        // Leave one core for the UI thread; cap the pool — parse throughput
+        // flattens past a handful of workers because file I/O serializes.
+        unsigned hw = std::thread::hardware_concurrency();
+        int nWorkers = (int) std::min(cands.size(),
+                                      (size_t) std::clamp((int) hw - 1, 1, 8));
+        if (nWorkers < 1)
+            nWorkers = 1;
+        std::vector<WorkerAgg> agg((size_t) nWorkers);
+        std::atomic<size_t> nextCand{0};
+        std::atomic<bool>   superseded{false};
 
-            // Incremental: an unchanged ts file reuses cached symbols and skips the
-            // (expensive) read + parse entirely. Non-ts files always re-tokenize
-            // (their identifiers aren't cached).
-            if (tsLang && mtime != 0)
+        auto workerBody = [&](int w) {
+            WorkerAgg& a = agg[(size_t) w];
+            for (;;)
             {
-                auto cit = oldCache.find(fileStr);
-                if (cit != oldCache.end() && cit->second.mtime == mtime && cit->second.size == fsize)
+                size_t ci = nextCand.fetch_add(1);
+                if (ci >= cands.size() || superseded.load())
+                    return;
+                if ((ci & 15) == 0 && curGen != st->gen.load())
                 {
-                    aggregate(fileStr, cit->second.symbols);
-                    mergeMemberTypes(cit->second.memberTypes);
-                    newCache.emplace(fileStr, cit->second);
-                    continue;
+                    superseded = true;
+                    return;
                 }
-            }
-
-            std::ifstream f(it->path(), std::ios::binary);
-            if (!f.is_open())
-                continue;
-            std::string whole((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            f.close();
-
-            // Tree-sitter pass (C/C++/C#/…): accurate, kind-ranked definition sites +
-            // per-type member names. Skip very large files so a generated mega-header
-            // can't stall the background build.
-            bool tsFile = tsLang;
-            if (tsFile && whole.size() > 1500000)
-                tsFile = false;
-            if (tsFile)
-            {
-                ts::Lang flang = ts::langForExtension(ext);
-                auto syms = ts::extractSymbols(flang, whole);
-                auto mtypes = ts::extractMemberTypes(flang, whole);   // {} for non-C++/C#
-                aggregate(fileStr, syms);
-                mergeMemberTypes(mtypes);
-                newCache.emplace(fileStr, ts::FileSyms{mtime, fsize, std::move(syms), std::move(mtypes)});
-            }
-
-            // Identifier + heuristic-definition tokenization. Heuristic def sites are
-            // suppressed for ts files — tsDefs is authoritative there. Move the buffer
-            // in (the ts pass above was its last reader) to avoid a duplicate copy.
-            std::istringstream ss(std::move(whole));
-            std::string line;
-            int lineNo = 0;
-            while (std::getline(ss, line))
-            {
-                if (!line.empty() && line.back() == '\r')
-                    line.pop_back();
-                int curLine = lineNo++;
-                size_t n = line.size();
-                size_t lead = 0;
-                while (lead < n && (line[lead] == ' ' || line[lead] == '\t'))
-                    ++lead;
-                bool hashLine = lead < n && line[lead] == '#';
-                // A comment line still contributes its identifiers (autocomplete
-                // wants them) but must NOT register definition sites — otherwise a
-                // commented-out foreign snippet (C++ "-- struct FVector ..." in a
-                // Lua file) indexes as a real def and Go-to-Definition jumps to it.
-                bool commentLine = false;
-                if (lead < n)
+                try
                 {
-                    char c0 = line[lead];
-                    char c1 = (lead + 1 < n) ? line[lead + 1] : '\0';
-                    commentLine = (c0 == '/' && c1 == '/') || (c0 == '-' && c1 == '-') || c0 == ';' || c0 == '*';
-                }
+                    const Cand& c = cands[ci];
+                    PerFile&    pf = out[ci];
+                    const bool  tsLang = c.lang != ts::Lang::None;
+                    std::filesystem::path fp(c.path);
 
-                std::string prevTok;
-                size_t i = 0;
-                bool firstTok = true;
-                while (i < n)
-                {
-                    if (!isIdentStart(line[i]))
-                    {
-                        ++i;
-                        continue;
-                    }
-                    size_t s2 = i;
-                    while (i < n && isIdent(line[i]))
-                        ++i;
-                    std::string tok = line.substr(s2, i - s2);
-                    idset.insert(tok);
+                    // mtime + size key the cache staleness check.
+                    std::error_code mec, sec;
+                    auto wtime = std::filesystem::last_write_time(fp, mec);
+                    long long mtime = mec ? 0 : (long long) wtime.time_since_epoch().count();
+                    std::uintmax_t fsz = std::filesystem::file_size(fp, sec);
+                    unsigned long long fsize = sec ? 0 : (unsigned long long) fsz;
 
-                    int score = 0;
-                    if (commentLine)
-                        score = 0; // comment → never a def site
-                    else if (defKw.count(prevTok))
-                        score = 100; // class/def/... NAME
-                    else if (hashLine && prevTok == "define")
-                        score = 80; // #define NAME
-                    else
+                    // Incremental: an unchanged ts file reuses cached symbols and
+                    // skips the (expensive) read + parse entirely. Non-ts files
+                    // always re-tokenize (their identifiers aren't cached).
+                    if (tsLang && mtime != 0)
                     {
-                        size_t p = i;
-                        while (p < n && line[p] == ' ')
-                            ++p;
-                        // `type NAME(` — a signature, but ONLY when a real type token
-                        // precedes NAME. Without this, a constructor call / usage like
-                        // `return ImVec4(` or `= Foo(` indexes the USE site as a def.
-                        static const std::unordered_set<std::string> notType = {
-                            "return",
-                            "new",
-                            "delete",
-                            "sizeof",
-                            "throw",
-                            "case",
-                            "co_return",
-                            "co_await",
-                            "and",
-                            "or",
-                            "not",
-                            "if",
-                            "while",
-                            "for",
-                            "switch",
-                            "do",
-                            "else",
-                        };
-                        bool typeBefore = !prevTok.empty() && !notType.count(prevTok);
-                        if (p < n && line[p] == '(' && !firstTok && typeBefore)
-                            score = 50; // type NAME(
-                        else if (firstTok && s2 == lead)
-                        { // NAME = at col0
-                            size_t q = i;
-                            while (q < n && line[q] == ' ')
-                                ++q;
-                            if (q < n && line[q] == '=' && (q + 1 >= n || line[q + 1] != '='))
-                                score = 30;
+                        auto cit = oldCache.find(c.path);
+                        if (cit != oldCache.end() && cit->second.mtime == mtime && cit->second.size == fsize)
+                        {
+                            pf.fsyms = cit->second;
+                            pf.tsFile = true;
+                            ++st->filesDone;
+                            continue;
                         }
                     }
-                    if (score > 0 && !tsFile)
+
+                    std::ifstream f(fp, std::ios::binary);
+                    if (!f.is_open())
                     {
-                        auto &v = idx->defs[tok];
-                        if (v.size() < 32)
-                            v.push_back({fileStr, curLine, score}); // cap per symbol
+                        ++st->filesDone;
+                        continue;
                     }
-                    prevTok = tok;
-                    firstTok = false;
+                    std::string whole((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                    f.close();
+
+                    // Tree-sitter pass (C/C++/C#/…): accurate, kind-ranked definition
+                    // sites + per-type member names. Skip very large files so a
+                    // generated mega-header can't stall the background build.
+                    bool tsFile = tsLang && whole.size() <= 1500000;
+                    if (tsFile)
+                    {
+                        pf.fsyms.mtime = mtime;
+                        pf.fsyms.size = fsize;
+                        pf.fsyms.symbols = ts::extractSymbols(c.lang, whole);
+                        pf.fsyms.memberTypes = ts::extractMemberTypes(c.lang, whole);   // {} for non-C++/C#
+                        pf.tsFile = true;
+                    }
+
+                    // Identifier + heuristic-definition tokenization into the
+                    // worker's private aggregates. Heuristic def sites are suppressed
+                    // for ts files — tsDefs is authoritative there. Move the buffer in
+                    // (the ts pass above was its last reader) to avoid a copy.
+                    std::istringstream ss(std::move(whole));
+                    std::string line;
+                    int lineNo = 0;
+                    while (std::getline(ss, line))
+                    {
+                        if (!line.empty() && line.back() == '\r')
+                            line.pop_back();
+                        int curLine = lineNo++;
+                        size_t n = line.size();
+                        size_t lead = 0;
+                        while (lead < n && (line[lead] == ' ' || line[lead] == '\t'))
+                            ++lead;
+                        bool hashLine = lead < n && line[lead] == '#';
+                        // A comment line still contributes its identifiers (autocomplete
+                        // wants them) but must NOT register definition sites — otherwise a
+                        // commented-out foreign snippet (C++ "-- struct FVector ..." in a
+                        // Lua file) indexes as a real def and Go-to-Definition jumps to it.
+                        bool commentLine = false;
+                        if (lead < n)
+                        {
+                            char c0 = line[lead];
+                            char c1 = (lead + 1 < n) ? line[lead + 1] : '\0';
+                            commentLine = (c0 == '/' && c1 == '/') || (c0 == '-' && c1 == '-') || c0 == ';' || c0 == '*';
+                        }
+
+                        std::string prevTok;
+                        size_t i = 0;
+                        bool firstTok = true;
+                        while (i < n)
+                        {
+                            if (!isIdentStart(line[i]))
+                            {
+                                ++i;
+                                continue;
+                            }
+                            size_t s2 = i;
+                            while (i < n && isIdent(line[i]))
+                                ++i;
+                            std::string tok = line.substr(s2, i - s2);
+
+                            int score = 0;
+                            if (commentLine)
+                                score = 0; // comment → never a def site
+                            else if (defKw.count(prevTok))
+                                score = 100; // class/def/... NAME
+                            else if (hashLine && prevTok == "define")
+                                score = 80; // #define NAME
+                            else
+                            {
+                                size_t p = i;
+                                while (p < n && line[p] == ' ')
+                                    ++p;
+                                // `type NAME(` — a signature, but ONLY when a real type token
+                                // precedes NAME. Without this, a constructor call / usage like
+                                // `return ImVec4(` or `= Foo(` indexes the USE site as a def.
+                                static const std::unordered_set<std::string> notType = {
+                                    "return",
+                                    "new",
+                                    "delete",
+                                    "sizeof",
+                                    "throw",
+                                    "case",
+                                    "co_return",
+                                    "co_await",
+                                    "and",
+                                    "or",
+                                    "not",
+                                    "if",
+                                    "while",
+                                    "for",
+                                    "switch",
+                                    "do",
+                                    "else",
+                                };
+                                bool typeBefore = !prevTok.empty() && !notType.count(prevTok);
+                                if (p < n && line[p] == '(' && !firstTok && typeBefore)
+                                    score = 50; // type NAME(
+                                else if (firstTok && s2 == lead)
+                                { // NAME = at col0
+                                    size_t q = i;
+                                    while (q < n && line[q] == ' ')
+                                        ++q;
+                                    if (q < n && line[q] == '=' && (q + 1 >= n || line[q + 1] != '='))
+                                        score = 30;
+                                }
+                            }
+                            if (score > 0 && !tsFile)
+                            {
+                                auto &v = a.defs[tok];
+                                if (v.size() < 32)
+                                    v.push_back({c.path, curLine, score}); // cap per symbol
+                            }
+                            prevTok = std::move(tok);
+                            a.idset.insert(prevTok);
+                            firstTok = false;
+                        }
+                    }
+                    ++st->filesDone;
+                }
+                catch (...)
+                {
+                    // Skip a file that throws (bad_alloc on a pathological line, a
+                    // filesystem race, …) — one bad file must not kill the pass.
+                    ++st->filesDone;
+                }
+            }
+        };
+        std::vector<std::thread> pool;
+        pool.reserve((size_t) (nWorkers > 0 ? nWorkers - 1 : 0));
+        for (int w = 1; w < nWorkers; ++w)
+            pool.emplace_back(workerBody, w);
+        workerBody(0);
+        for (auto& th : pool)
+            th.join();
+        if (superseded.load() || curGen != st->gen.load())
+        {
+            st->building = false;
+            return;
+        }
+
+        // ── Phase 3: merge (serial, in enumeration order, so the per-symbol
+        // site caps keep their old deterministic front-runners).
+        for (size_t ci = 0; ci < cands.size(); ++ci)
+        {
+            PerFile& pf = out[ci];
+            if (!pf.tsFile)
+                continue;
+            aggregate(cands[ci].path, pf.fsyms.symbols);
+            mergeMemberTypes(pf.fsyms.memberTypes);
+            newCache.emplace(cands[ci].path, std::move(pf.fsyms));
+        }
+        for (auto& a : agg)
+        {
+            idset.merge(a.idset);   // node splice — no string copies
+            for (auto& kv : a.defs)
+            {
+                auto& v = idx->defs[kv.first];
+                for (auto& d : kv.second)
+                {
+                    if (v.size() >= 32)
+                        break;
+                    v.push_back(std::move(d));
                 }
             }
         }
@@ -4807,178 +4931,320 @@ void Editor::goToDefinitionProjectWide(const std::string &word, bool declaration
     }
 }
 
+// ── Async project-wide search engine ─────────────────────────────────────────
+// One coordinator thread scans the active buffer, enumerates candidate files
+// (serial — the walk is cheap), then fans the file scans out over a worker
+// pool. Workers batch hits per file and append under the state mutex (bumping
+// `version`), so the panels stream results in while the search runs. A newer
+// search bumps `gen` and the superseded pass unwinds without publishing.
+void Editor::startProjectSearch(std::shared_ptr<ProjectSearch> search,
+                                std::string needle, bool caseSensitive, bool wholeWord,
+                                size_t maxHits, bool skipDepsVendor,
+                                std::filesystem::path root, std::string activeCanon,
+                                std::string activeLabel, std::string activeText)
+{
+    int gen = ++search->gen;
+    {
+        std::lock_guard<std::mutex> lk(search->mutex);
+        search->hits.clear();
+        search->fileCount = 0;
+        search->truncated = false;
+        ++search->version;
+    }
+    if (needle.empty())
+        return;
+    search->running = true;
+
+    std::thread([search, gen, needle = std::move(needle), caseSensitive, wholeWord, maxHits,
+                 skipDepsVendor, root = std::move(root), activeCanon = std::move(activeCanon),
+                 activeLabel = std::move(activeLabel), activeText = std::move(activeText)]() {
+        // Only the pass that still OWNS the state may clear `running` — a
+        // superseded pass unwinding late must not stomp its successor's flag.
+        auto finish = [&]() {
+            if (gen == search->gen.load())
+                search->running = false;
+        };
+        auto lower = [](std::string s) {
+            for (auto &c : s)
+                c = (char) std::tolower((unsigned char) c);
+            return s;
+        };
+        const std::string fold = caseSensitive ? needle : lower(needle);
+        auto isBoundary = [](char c) { return !(std::isalnum((unsigned char) c) || c == '_'); };
+
+        // Scan one stream into a per-file batch (one lock per file, not per hit).
+        auto scanStream = [&](const std::string &file, std::istream &in, std::vector<RefHit> &batch) {
+            std::string line;
+            int ln = 0;
+            while (std::getline(in, line))
+            {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                const std::string hay = caseSensitive ? line : lower(line);
+                size_t pos = 0;
+                while ((pos = hay.find(fold, pos)) != std::string::npos)
+                {
+                    size_t end = pos + fold.size();
+                    bool ok = !wholeWord ||
+                              (((pos == 0) || isBoundary(line[pos - 1])) &&
+                               ((end >= line.size()) || isBoundary(line[end])));
+                    if (ok)
+                    {
+                        std::string trimmed = line;
+                        size_t s = trimmed.find_first_not_of(" \t");
+                        if (s != std::string::npos)
+                            trimmed = trimmed.substr(s);
+                        if (trimmed.size() > 400)
+                            trimmed.resize(400);
+                        batch.push_back({file, ln, std::move(trimmed)});
+                        break; // one hit per line
+                    }
+                    pos = end;
+                }
+                ++ln;
+            }
+        };
+        // Append a file's batch; false = stop (superseded or hit cap reached).
+        auto publish = [&](std::vector<RefHit> &batch) {
+            if (gen != search->gen.load())
+                return false;
+            if (batch.empty())
+                return true;
+            std::lock_guard<std::mutex> lk(search->mutex);
+            if (search->hits.size() >= maxHits)
+            {
+                search->truncated = true;
+                return false;
+            }
+            if (search->hits.size() + batch.size() > maxHits)
+            {
+                batch.resize(maxHits - search->hits.size());
+                search->truncated = true;
+            }
+            search->hits.insert(search->hits.end(),
+                                std::make_move_iterator(batch.begin()),
+                                std::make_move_iterator(batch.end()));
+            ++search->fileCount;
+            ++search->version;
+            return !search->truncated;
+        };
+
+        // Active doc's LIVE buffer first — unsaved edits count.
+        if (!activeLabel.empty())
+        {
+            std::vector<RefHit> batch;
+            std::istringstream ss(activeText);
+            scanStream(activeLabel, ss, batch);
+            if (!publish(batch))
+            {
+                finish();
+                return;
+            }
+        }
+
+        // Enumerate candidate files.
+        std::vector<std::string> files;
+        if (!root.empty())
+        {
+            std::error_code ec;
+            int budget = 8000;
+            for (auto it = std::filesystem::recursive_directory_iterator(
+                     root, std::filesystem::directory_options::skip_permission_denied, ec);
+                 it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+            {
+                if (gen != search->gen.load())
+                {
+                    finish();
+                    return;
+                }
+                if (ec)
+                {
+                    ec.clear();
+                    continue;
+                }
+                if (it->is_directory(ec))
+                {
+                    auto n = it->path().filename().string();
+                    bool skip = n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" ||
+                                n == "bin" || n == "obj" || n == "out" || n == "build" ||
+                                n == "target" || n == ".vs" || n == ".vscode" || n == ".idea" ||
+                                n == "__pycache__" ||
+                                n == "Backup" || n == "backup" || n == "Backups" || n == "backups";
+                    if (skipDepsVendor)
+                        skip = skip || n == "deps" || n == "vendor";
+                    if (skip)
+                        it.disable_recursion_pending();
+                    continue;
+                }
+                if (--budget < 0)
+                {
+                    std::lock_guard<std::mutex> lk(search->mutex);
+                    search->truncated = true;
+                    ++search->version;
+                    break;
+                }
+                if (!pathIsCodeFile(it->path()))
+                    continue;
+                auto canon = std::filesystem::weakly_canonical(it->path(), ec);
+                if (!activeCanon.empty() && canon.string() == activeCanon)
+                    continue; // already scanned from the live buffer
+                files.push_back(it->path().string());
+            }
+        }
+
+        // Fan the file scans out. Workers pull candidates via an atomic cursor;
+        // per-file batches keep each file's hits contiguous in the result list
+        // (the panels group rows by consecutive file).
+        unsigned hw = std::thread::hardware_concurrency();
+        int nWorkers = (int) std::min(files.size(), (size_t) std::clamp((int) hw - 1, 1, 8));
+        if (nWorkers < 1)
+            nWorkers = 1;
+        std::atomic<size_t> nextFile{0};
+        std::atomic<bool> stop{false};
+        auto workerBody = [&]() {
+            for (;;)
+            {
+                if (stop.load() || gen != search->gen.load())
+                    return;
+                size_t i = nextFile.fetch_add(1);
+                if (i >= files.size())
+                    return;
+                try
+                {
+                    std::ifstream f(files[i], std::ios::binary);
+                    if (!f.is_open())
+                        continue;
+                    std::vector<RefHit> batch;
+                    scanStream(files[i], f, batch);
+                    if (!publish(batch))
+                    {
+                        stop = true;
+                        return;
+                    }
+                }
+                catch (...)
+                {
+                    // Unreadable/pathological file — skip it, keep searching.
+                }
+            }
+        };
+        std::vector<std::thread> pool;
+        pool.reserve((size_t) (nWorkers - 1));
+        for (int w = 1; w < nWorkers; ++w)
+            pool.emplace_back(workerBody);
+        workerBody();
+        for (auto &th : pool)
+            th.join();
+        finish();
+    }).detach();
+}
+
 void Editor::findReferencesOf(TabDocument &t, const std::string &word)
 {
     referencesWord = word;
     referencesHits.clear();
     referencesFileCount = 0;
-    if (word.empty())
-    {
-        referencesVisible = true;
-        return;
-    }
-
-    auto isBoundary = [](char c) {
-        return !(std::isalnum(static_cast<unsigned char>(c)) || c == '_');
-    };
-    // Whole-word scan of one text blob → append every matching line.
-    auto scanText = [&](const std::string &file, std::istream &in) {
-        std::string line;
-        int ln = 0;
-        bool counted = false;
-        while (std::getline(in, line))
-        {
-            size_t pos = 0;
-            while ((pos = line.find(word, pos)) != std::string::npos)
-            {
-                bool leftOk = (pos == 0) || isBoundary(line[pos - 1]);
-                size_t end = pos + word.size();
-                bool rightOk = (end >= line.size()) || isBoundary(line[end]);
-                if (leftOk && rightOk)
-                {
-                    std::string trimmed = line;
-                    size_t s = trimmed.find_first_not_of(" \t");
-                    if (s != std::string::npos)
-                        trimmed = trimmed.substr(s);
-                    referencesHits.push_back({file, ln, trimmed});
-                    if (!counted)
-                    {
-                        ++referencesFileCount;
-                        counted = true;
-                    }
-                    break;
-                }
-                pos = end;
-            }
-            ++ln;
-        }
-    };
+    referencesVisible = true;
 
     // Remember which tab this search ran against so the panel's "Search all
     // files" checkbox can re-run the same query at a wider scope.
     referencesTab = &t;
 
-    // Default scope is the ACTIVE FILE only (its live buffer, so unsaved edits
-    // count). The user widens to the whole project via the panel checkbox, which
-    // sets referencesAllFiles and re-runs. Current-file scan is always cheap.
-    if (!referencesAllFiles)
+    if (word.empty())
     {
-        std::istringstream ss(t.editor.GetText());
-        scanText(t.filename == "untitled" ? "(untitled)" : t.filename, ss);
-        referencesVisible = true;
+        // Cancel any in-flight search so stale results don't stream in.
+        ++refSearch->gen;
+        std::lock_guard<std::mutex> lk(refSearch->mutex);
+        refSearch->hits.clear();
+        refSearch->fileCount = 0;
+        refSearch->truncated = false;
+        ++refSearch->version;
         return;
     }
 
-    // Project-wide when we have a root (or the active doc's dir); the active
-    // doc is scanned from its live buffer so unsaved edits are reflected.
-    std::filesystem::path root = projectRoot;
-    if (root.empty() && t.filename != "untitled")
-        root = std::filesystem::path(t.filename).parent_path();
-
+    std::string activeLabel = t.filename == "untitled" ? "(untitled)" : t.filename;
     std::string activeCanon;
+    if (t.filename != "untitled")
     {
         std::error_code ec;
-        if (t.filename != "untitled")
-            activeCanon = std::filesystem::weakly_canonical(t.filename, ec).string();
+        activeCanon = std::filesystem::weakly_canonical(t.filename, ec).string();
     }
 
-    if (root.empty())
+    // Default scope is the ACTIVE FILE only (its live buffer, so unsaved edits
+    // count) — an empty root skips the disk walk entirely. The user widens to
+    // the whole project via the panel checkbox (referencesAllFiles), which
+    // re-runs with the real root; deps/vendor are intentionally searched there.
+    std::filesystem::path root;
+    if (referencesAllFiles)
     {
-        // No project context — just scan the active buffer.
-        std::istringstream ss(t.editor.GetText());
-        scanText(t.filename == "untitled" ? "(untitled)" : t.filename, ss);
-        referencesVisible = true;
-        return;
+        root = projectRoot;
+        if (root.empty() && t.filename != "untitled")
+            root = std::filesystem::path(t.filename).parent_path();
     }
 
-    std::error_code ec;
-    int budget = 6000;
-    for (auto it = std::filesystem::recursive_directory_iterator(
-             root, std::filesystem::directory_options::skip_permission_denied, ec);
-         it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
-    {
-        if (ec)
-        {
-            ec.clear();
-            continue;
-        }
-        if (it->is_directory(ec))
-        {
-            auto n = it->path().filename().string();
-            if (n == ".git" || n == ".svn" || n == "node_modules" || n == "bin" ||
-                n == "obj" || n == "out" || n == "build" || n == "target" ||
-                n == ".vs" || n == ".vscode" || n == "__pycache__")
-                it.disable_recursion_pending();
-            continue;
-        }
-        if (--budget < 0)
-            break;
-        if (!navIsCodeFile(it->path()))
-            continue;
-        auto canon = std::filesystem::weakly_canonical(it->path(), ec);
-        // Skip the active doc here; we scan its live buffer separately below.
-        if (!activeCanon.empty() && canon.string() == activeCanon)
-            continue;
-        std::ifstream f(it->path());
-        if (!f.is_open())
-            continue;
-        scanText(it->path().string(), f);
-    }
-    // Active doc from its live buffer.
-    if (!activeCanon.empty())
-    {
-        std::istringstream ss(t.editor.GetText());
-        scanText(t.filename, ss);
-    }
-    referencesVisible = true;
+    startProjectSearch(refSearch, word, /*caseSensitive=*/true, /*wholeWord=*/true,
+                       /*maxHits=*/5000, /*skipDepsVendor=*/false,
+                       root, activeCanon, activeLabel, t.editor.GetText());
 }
 
-void Editor::renderReferencesPanel()
+// Build the display list for a grouped hit panel: one header row per run of
+// consecutive same-file hits, then the hits themselves.
+void Editor::buildSearchRows(const std::vector<RefHit> &hits, std::vector<int> &rows)
 {
-    if (!referencesVisible)
-        return;
-    ImGui::SetNextWindowSize(ImVec2(440.0f, 360.0f), ImGuiCond_FirstUseEver);
-    // Stable dock ID (### resets the hash seed) so the window can be pre-docked
-    // to the right by navInitDockLayout regardless of the symbol in the title.
-    std::string title = std::string("References: ") + referencesWord + "###refsPanel";
-    if (ImGui::Begin(title.c_str(), &referencesVisible))
+    rows.clear();
+    rows.reserve(hits.size() + hits.size() / 4 + 1);
+    const std::string *lastFile = nullptr;
+    for (size_t i = 0; i < hits.size(); ++i)
     {
-        ImGui::TextDisabled("%zu match%s across %d file%s",
-                            referencesHits.size(), referencesHits.size() == 1 ? "" : "es",
-                            referencesFileCount, referencesFileCount == 1 ? "" : "s");
-        // Scope toggle: default is the active file; tick to widen to the whole
-        // project and re-run the same query against the tab it came from.
-        if (ImGui::Checkbox("Search all files", &referencesAllFiles))
+        if (!lastFile || hits[i].file != *lastFile)
         {
-            // Guard the stored pointer: the source tab may have been closed since
-            // the search ran. Only re-run if it's still a live tab.
-            bool alive = false;
-            for (auto &up : tabs)
-                if (up.get() == referencesTab)
-                {
-                    alive = true;
-                    break;
-                }
-            if (alive)
-                findReferencesOf(*referencesTab, referencesWord);
+            lastFile = &hits[i].file;
+            rows.push_back(-(int) i - 1);   // header row for hit i's file
         }
-        ImGui::Separator();
+        rows.push_back((int) i);
+    }
+}
 
-        std::string lastFile;
-        for (size_t i = 0; i < referencesHits.size(); ++i)
+// Copy fresh results out of the async search state — only when `version`
+// moved, so an idle panel costs one mutex probe per frame, not a 5000-row copy.
+bool Editor::pollProjectSearch(ProjectSearch &search, int &seenVersion,
+                               std::vector<RefHit> &hits, int &fileCount, bool &truncated)
+{
+    std::lock_guard<std::mutex> lk(search.mutex);
+    if (search.version == seenVersion)
+        return false;
+    hits = search.hits;
+    fileCount = search.fileCount;
+    truncated = search.truncated;
+    seenVersion = search.version;
+    return true;
+}
+
+// Clipper-driven render of a grouped hit list. Every row is one text line
+// high (header rows are plain text, hit rows a Selectable + trailing text),
+// so the clipper's row-height probe holds for the whole list.
+void Editor::renderSearchHits(const std::vector<RefHit> &hits, const std::vector<int> &rows)
+{
+    ImGuiListClipper clipper;
+    clipper.Begin((int) rows.size());
+    while (clipper.Step())
+    {
+        for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r)
         {
-            auto &hit = referencesHits[i];
-            if (hit.file != lastFile)
+            int v = rows[(size_t) r];
+            if (v < 0)
             {
-                lastFile = hit.file;
+                const auto &hit = hits[(size_t) (-v - 1)];
                 auto leaf = std::filesystem::path(hit.file).filename().string();
                 ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
                 ImGui::TextUnformatted(leaf.empty() ? hit.file.c_str() : leaf.c_str());
                 ImGui::PopStyleColor();
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("%s", hit.file.c_str());
+                continue;
             }
-            ImGui::PushID((int)i);
+            const auto &hit = hits[(size_t) v];
+            ImGui::PushID(r);
             char buf[32];
             std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
             if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
@@ -4997,7 +5263,50 @@ void Editor::renderReferencesPanel()
             ImGui::TextDisabled("%s", hit.text.c_str());
             ImGui::PopID();
         }
+    }
+}
+
+void Editor::renderReferencesPanel()
+{
+    if (!referencesVisible)
+        return;
+    // Stream in fresh results from the async search.
+    if (pollProjectSearch(*refSearch, refSearchSeen, referencesHits, referencesFileCount,
+                          referencesTruncated))
+        buildSearchRows(referencesHits, referencesRows);
+    ImGui::SetNextWindowSize(ImVec2(440.0f, 360.0f), ImGuiCond_FirstUseEver);
+    // Stable dock ID (### resets the hash seed) so the window can be pre-docked
+    // to the right by navInitDockLayout regardless of the symbol in the title.
+    std::string title = std::string("References: ") + referencesWord + "###refsPanel";
+    if (ImGui::Begin(title.c_str(), &referencesVisible))
+    {
+        ImGui::TextDisabled("%zu match%s across %d file%s%s%s",
+                            referencesHits.size(), referencesHits.size() == 1 ? "" : "es",
+                            referencesFileCount, referencesFileCount == 1 ? "" : "s",
+                            referencesTruncated ? " (truncated)" : "",
+                            refSearch->running.load() ? "  (searching…)" : "");
+        // Scope toggle: default is the active file; tick to widen to the whole
+        // project and re-run the same query against the tab it came from.
+        if (ImGui::Checkbox("Search all files", &referencesAllFiles))
+        {
+            // Guard the stored pointer: the source tab may have been closed since
+            // the search ran. Only re-run if it's still a live tab.
+            bool alive = false;
+            for (auto &up : tabs)
+                if (up.get() == referencesTab)
+                {
+                    alive = true;
+                    break;
+                }
+            if (alive)
+                findReferencesOf(*referencesTab, referencesWord);
+        }
+        ImGui::Separator();
+
+        ImGui::BeginChild("##refResults");
+        renderSearchHits(referencesHits, referencesRows);
         middleMousePanScroll(4);   // references panel
+        ImGui::EndChild();
     }
     ImGui::End();
 }
@@ -5191,8 +5500,19 @@ void Editor::renderSymbolsPanel()
     bool building = indexState->building.load();
     int gen = indexState->gen.load();
     if (idx)
-        ImGui::Text("gen %d%s · %zu files · %zu types", gen, building ? "  (building…)" : "",
-                    idx->fileSymbols.size(), idx->members.size());
+    {
+        if (building)
+        {
+            // Live progress from the parallel parse workers.
+            int total = indexState->filesTotal.load();
+            int done = indexState->filesDone.load();
+            ImGui::Text("gen %d  (indexing %d/%d…) · %zu files · %zu types", gen, done, total,
+                        idx->fileSymbols.size(), idx->members.size());
+        }
+        else
+            ImGui::Text("gen %d · %zu files · %zu types", gen,
+                        idx->fileSymbols.size(), idx->members.size());
+    }
     else
         ImGui::TextDisabled("(no index — open a project)");
     ImGui::SameLine();
@@ -5215,7 +5535,11 @@ void Editor::renderSymbolsPanel()
         std::sort(symbolsFiles.begin(), symbolsFiles.end());
         for (auto &kv : idx->tsDefs)
             for (auto &d : kv.second)
-                symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind});
+            {
+                std::string low = kv.first;
+                std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+                symbolsProjectRows.push_back({kv.first, std::move(low), d.file, d.line, d.kind});
+            }
         std::sort(symbolsProjectRows.begin(), symbolsProjectRows.end(),
                   [](const SymRow &a, const SymRow &b) { return a.name < b.name; });
         symbolsProjectGen = gen;
@@ -5237,26 +5561,37 @@ void Editor::renderSymbolsPanel()
     {
         if (!filter.empty())
         {
-            // Flat filtered list across the whole project (clipped, capped).
-            auto match = [&](const std::string &n) {
-                std::string l = n;
-                std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char) std::tolower(c); });
-                return l.find(filter) != std::string::npos;
-            };
-            int shown = 0;
-            for (auto &row : symbolsProjectRows)
+            // Flat filtered list across the whole project. Matches are computed
+            // once per (filter, gen) — against the pre-lowered names — and the
+            // rows render through a clipper, so an open panel costs only the
+            // ~40 visible rows per frame instead of a full re-match + re-draw.
+            if (symbolsFilteredKey != filter || symbolsFilteredGen != gen)
             {
-                if (!match(row.name)) continue;
-                if (shown >= 2000) break;
-                ImGui::PushID(shown++);
-                std::string lbl = std::string(symKindTag(row.kind)) + "  " + row.name;
-                if (ImGui::Selectable(lbl.c_str()))
-                    projectJump(row.file, row.line);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s:%d", row.file.c_str(), row.line + 1);
-                ImGui::PopID();
+                symbolsFilteredRows.clear();
+                for (int i = 0; i < (int) symbolsProjectRows.size(); ++i)
+                    if (symbolsProjectRows[(size_t) i].lower.find(filter) != std::string::npos)
+                        symbolsFilteredRows.push_back(i);
+                symbolsFilteredKey = filter;
+                symbolsFilteredGen = gen;
             }
-            ImGui::TextDisabled("%d shown%s", shown, shown >= 2000 ? " (capped — refine filter)" : "");
+            ImGuiListClipper clipper;
+            clipper.Begin((int) symbolsFilteredRows.size());
+            while (clipper.Step())
+            {
+                for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; ++r)
+                {
+                    auto &row = symbolsProjectRows[(size_t) symbolsFilteredRows[(size_t) r]];
+                    ImGui::PushID(r);
+                    std::string lbl = std::string(symKindTag(row.kind)) + "  " + row.name;
+                    if (ImGui::Selectable(lbl.c_str()))
+                        projectJump(row.file, row.line);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s:%d", row.file.c_str(), row.line + 1);
+                    ImGui::PopID();
+                }
+            }
+            ImGui::TextDisabled("%zu match%s", symbolsFilteredRows.size(),
+                                symbolsFilteredRows.size() == 1 ? "" : "es");
         }
         else
         {
@@ -5306,59 +5641,12 @@ void Editor::openFindInFiles()
 
 void Editor::runFindInFiles()
 {
+    // The scan itself runs on the async worker-pool engine — this just
+    // gathers the query + scope and kicks it off. Results stream into the
+    // panel via fifSearch as the workers publish them.
     findInFilesHits.clear();
     findInFilesFileCount = 0;
     findInFilesTruncated = false;
-    std::string needle = findInFilesQuery;
-    if (needle.empty())
-        return;
-
-    const bool cs = findInFilesCase;
-    const bool ww = findInFilesWholeWord;
-    auto lower = [](std::string s) { for (auto& c : s) c = (char) std::tolower((unsigned char) c); return s; };
-    if (!cs)
-        needle = lower(needle);
-    auto isBoundary = [](char c) { return !(std::isalnum((unsigned char)c) || c == '_'); };
-
-    static constexpr size_t kMaxHits = 5000;
-    auto scanText = [&](const std::string &file, std::istream &in) {
-        std::string line;
-        int ln = 0;
-        bool counted = false;
-        while (std::getline(in, line))
-        {
-            const std::string hay = cs ? line : lower(line);
-            size_t pos = 0;
-            while ((pos = hay.find(needle, pos)) != std::string::npos)
-            {
-                size_t end = pos + needle.size();
-                bool ok = !ww || (((pos == 0) || isBoundary(line[pos - 1])) && ((end >= line.size()) || isBoundary(line[end])));
-                if (ok)
-                {
-                    std::string trimmed = line;
-                    size_t s = trimmed.find_first_not_of(" \t");
-                    if (s != std::string::npos)
-                        trimmed = trimmed.substr(s);
-                    if (trimmed.size() > 400)
-                        trimmed.resize(400);
-                    findInFilesHits.push_back({file, ln, trimmed});
-                    if (!counted)
-                    {
-                        ++findInFilesFileCount;
-                        counted = true;
-                    }
-                    break; // one hit per line
-                }
-                pos = end;
-            }
-            ++ln;
-            if (findInFilesHits.size() >= kMaxHits)
-            {
-                findInFilesTruncated = true;
-                return;
-            }
-        }
-    };
 
     std::filesystem::path root = projectRoot;
     if (root.empty() && !tabs.empty() && doc().filename != "untitled")
@@ -5366,58 +5654,18 @@ void Editor::runFindInFiles()
     if (root.empty())
         root = std::filesystem::current_path();
 
-    std::error_code ec;
-    std::string activeCanon;
+    std::string activeCanon, activeLabel, activeText;
     if (!tabs.empty() && doc().filename != "untitled")
+    {
+        std::error_code ec;
         activeCanon = std::filesystem::weakly_canonical(doc().filename, ec).string();
-
-    // Active doc first (live buffer — unsaved edits count), then the rest.
-    if (!tabs.empty() && doc().filename != "untitled")
-    {
-        std::istringstream ss(doc().editor.GetText());
-        scanText(doc().filename, ss);
+        activeLabel = doc().filename;
+        activeText = doc().editor.GetText();
     }
 
-    int budget = 8000;
-    for (auto it = std::filesystem::recursive_directory_iterator(
-             root, std::filesystem::directory_options::skip_permission_denied, ec);
-         it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
-    {
-        if (findInFilesHits.size() >= kMaxHits)
-        {
-            findInFilesTruncated = true;
-            break;
-        }
-        if (ec)
-        {
-            ec.clear();
-            continue;
-        }
-        if (it->is_directory(ec))
-        {
-            auto n = it->path().filename().string();
-            if (n == ".git" || n == ".svn" || n == ".hg" || n == "node_modules" || n == "bin" ||
-                n == "obj" || n == "out" || n == "build" || n == "target" || n == ".vs" ||
-                n == ".vscode" || n == ".idea" || n == "__pycache__" || n == "deps" || n == "vendor" ||
-                n == "Backup" || n == "backup" || n == "Backups" || n == "backups")
-                it.disable_recursion_pending();
-            continue;
-        }
-        if (--budget < 0)
-        {
-            findInFilesTruncated = true;
-            break;
-        }
-        if (!navIsCodeFile(it->path()))
-            continue;
-        auto canon = std::filesystem::weakly_canonical(it->path(), ec);
-        if (!activeCanon.empty() && canon.string() == activeCanon)
-            continue; // already did live buffer
-        std::ifstream f(it->path());
-        if (!f.is_open())
-            continue;
-        scanText(it->path().string(), f);
-    }
+    startProjectSearch(fifSearch, findInFilesQuery, findInFilesCase, findInFilesWholeWord,
+                       /*maxHits=*/5000, /*skipDepsVendor=*/true,
+                       root, std::move(activeCanon), std::move(activeLabel), std::move(activeText));
 }
 
 void Editor::renderFindInFilesPanel()
@@ -5444,48 +5692,217 @@ void Editor::renderFindInFilesPanel()
         if (go)
             runFindInFiles();
 
-        ImGui::TextDisabled("%zu match%s across %d file%s%s",
+        // Stream in fresh results from the async search.
+        if (pollProjectSearch(*fifSearch, fifSearchSeen, findInFilesHits, findInFilesFileCount,
+                              findInFilesTruncated))
+            buildSearchRows(findInFilesHits, findInFilesRows);
+
+        ImGui::TextDisabled("%zu match%s across %d file%s%s%s",
                             findInFilesHits.size(), findInFilesHits.size() == 1 ? "" : "es",
                             findInFilesFileCount, findInFilesFileCount == 1 ? "" : "s",
-                            findInFilesTruncated ? " (truncated)" : "");
+                            findInFilesTruncated ? " (truncated)" : "",
+                            fifSearch->running.load() ? "  (searching…)" : "");
         ImGui::Separator();
 
         ImGui::BeginChild("##fifResults");
-        std::string lastFile;
-        for (size_t i = 0; i < findInFilesHits.size(); ++i)
-        {
-            auto &hit = findInFilesHits[i];
-            if (hit.file != lastFile)
-            {
-                lastFile = hit.file;
-                auto leaf = std::filesystem::path(hit.file).filename().string();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
-                ImGui::TextUnformatted(leaf.empty() ? hit.file.c_str() : leaf.c_str());
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", hit.file.c_str());
-            }
-            ImGui::PushID((int)i);
-            char buf[32];
-            std::snprintf(buf, sizeof(buf), "%5d", hit.line + 1);
-            if (ImGui::Selectable(buf, false, 0, ImVec2(48.0f, 0.0f)))
-            {
-                navHistory.record(currentNavLocation());   // so Back returns here
-                openFile(hit.file);
-                if (!tabs.empty())
-                {
-                    auto &ed = doc().editor;
-                    ed.SetCursor(hit.line, 0);
-                    ed.SelectLine(hit.line);
-                    ed.ScrollToLine(hit.line, TextEditor::Scroll::alignMiddle);
-                }
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", hit.text.c_str());
-            ImGui::PopID();
-        }
+        renderSearchHits(findInFilesHits, findInFilesRows);
         middleMousePanScroll(7);   // find-in-files results
         ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
+// ── Unreal Engine integration — class wizard + Blueprint stub tool ─────
+//
+// All string generation lives in unreal.{h,cpp} (pure, selftest-covered);
+// this section is only the UI shell + file writing.
+
+void Editor::detectUnrealProject()
+{
+    unrealProjectName.clear();
+    unrealProjectFile.clear();
+    std::filesystem::path up;
+    if (unreal::findUProject(projectRoot, up))
+    {
+        unrealProjectFile = up;
+        unrealProjectName = up.stem().string();
+    }
+}
+
+void Editor::openUnrealClassWizard()
+{
+    ueWizardVisible = true;
+    ueWizardError.clear();
+    ueWizardName[0] = 0;
+    // Seed module + folder from the detected project ("MyGame" → Source/MyGame).
+    std::snprintf(ueWizardModule, sizeof(ueWizardModule), "%s", unrealProjectName.c_str());
+    auto dir = unreal::defaultClassDir(projectRoot, unrealProjectName);
+    std::snprintf(ueWizardDir, sizeof(ueWizardDir), "%s", dir.string().c_str());
+}
+
+void Editor::renderUnrealClassWizard()
+{
+    if (!ueWizardVisible)
+        return;
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::Begin("New Unreal Class###ueWizard", &ueWizardVisible,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking))
+    {
+        // Class kind picker — same lineup as UE's own wizard.
+        static const unreal::ClassKind kinds[] = {
+            unreal::ClassKind::Actor, unreal::ClassKind::Character, unreal::ClassKind::Pawn,
+            unreal::ClassKind::ActorComponent, unreal::ClassKind::SceneComponent,
+            unreal::ClassKind::Object, unreal::ClassKind::Interface,
+            unreal::ClassKind::BlueprintFunctionLibrary,
+        };
+        const int kindCount = (int) (sizeof(kinds) / sizeof(kinds[0]));
+        if (ImGui::BeginCombo("Class type", unreal::kindLabel(kinds[ueWizardKind])))
+        {
+            for (int i = 0; i < kindCount; ++i)
+                if (ImGui::Selectable(unreal::kindLabel(kinds[i]), i == ueWizardKind))
+                    ueWizardKind = i;
+            ImGui::EndCombo();
+        }
+        ImGui::InputTextWithHint("Class name", "Health (no A/U/I prefix)", ueWizardName, sizeof(ueWizardName));
+        ImGui::InputTextWithHint("Module", "MyGame (for the *_API macro)", ueWizardModule, sizeof(ueWizardModule));
+        ImGui::InputTextWithHint("Folder", "Source/MyGame (relative to project)", ueWizardDir, sizeof(ueWizardDir));
+        unreal::ClassKind kind = kinds[ueWizardKind];
+        bool isComponent = kind == unreal::ClassKind::ActorComponent || kind == unreal::ClassKind::SceneComponent;
+        if (!isComponent && kind != unreal::ClassKind::Interface)
+            ImGui::Checkbox("Blueprintable (UCLASS(Blueprintable, BlueprintType))", &ueWizardBlueprintable);
+        bool canTick = kind != unreal::ClassKind::Object && kind != unreal::ClassKind::Interface &&
+                       kind != unreal::ClassKind::BlueprintFunctionLibrary;
+        if (canTick)
+            ImGui::Checkbox("Can tick (override Tick / TickComponent)", &ueWizardTick);
+
+        // Live filename preview.
+        unreal::ClassSpec spec;
+        spec.kind = kind;
+        spec.name = ueWizardName;
+        spec.moduleName = ueWizardModule;
+        spec.blueprintable = ueWizardBlueprintable;
+        spec.tick = ueWizardTick && canTick;
+        if (spec.name.empty())
+            ImGui::TextDisabled("(enter a class name)");
+        else
+            ImGui::TextDisabled("Creates %s + %s   (class %s : public %s)",
+                                unreal::headerFileName(spec).c_str(), unreal::sourceFileName(spec).c_str(),
+                                unreal::prefixedClassName(spec).c_str(), unreal::baseClassFor(kind).c_str());
+        if (!ueWizardError.empty())
+            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s", ueWizardError.c_str());
+
+        ImGui::Separator();
+        bool nameOk = !spec.name.empty() &&
+                      (std::isalpha((unsigned char) spec.name[0]) || spec.name[0] == '_');
+        for (char c : spec.name)
+            nameOk = nameOk && (std::isalnum((unsigned char) c) || c == '_');
+        ImGui::BeginDisabled(!nameOk);
+        if (ImGui::Button("Create class"))
+        {
+            std::error_code ec;
+            std::filesystem::path dir = projectRoot / std::filesystem::path(ueWizardDir);
+            std::filesystem::create_directories(dir, ec);
+            auto hPath = dir / unreal::headerFileName(spec);
+            auto cppPath = dir / unreal::sourceFileName(spec);
+            if (std::filesystem::exists(hPath, ec) || std::filesystem::exists(cppPath, ec))
+            {
+                ueWizardError = unreal::headerFileName(spec) + " already exists there";
+            }
+            else
+            {
+                std::ofstream h(hPath, std::ios::binary), cpp(cppPath, std::ios::binary);
+                if (!h.is_open() || !cpp.is_open())
+                {
+                    ueWizardError = "can't write to " + dir.string();
+                }
+                else
+                {
+                    h << unreal::generateHeader(spec);
+                    cpp << unreal::generateSource(spec);
+                    h.close();
+                    cpp.close();
+                    navMarkListDirty();       // show the new files in the tree now
+                    rebuildProjectIndex();    // and get their symbols indexed
+                    openFile(hPath.string());
+                    openFile(cppPath.string());
+                    ueWizardVisible = false;
+                }
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ueWizardVisible = false;
+    }
+    ImGui::End();
+}
+
+void Editor::insertSnippetAtCursor(const std::string &snippet)
+{
+    if (tabs.empty())
+        return;
+    doc().editor.ReplaceTextInCurrentCursor(snippet);
+}
+
+void Editor::renderBlueprintStubTool()
+{
+    if (!ueStubVisible)
+        return;
+    ImGui::SetNextWindowSize(ImVec2(520.0f, 0.0f), ImGuiCond_Appearing);
+    if (ImGui::Begin("Blueprint Stubs###ueStubs", &ueStubVisible, ImGuiWindowFlags_NoCollapse))
+    {
+        // ── UFUNCTION ────────────────────────────────────────────────────
+        ImGui::SeparatorText("Blueprint function (UFUNCTION)");
+        ImGui::InputTextWithHint("Name##uefn", "TakeDamage", ueFuncName, sizeof(ueFuncName));
+        ImGui::InputTextWithHint("Returns##uefr", "void / float / FVector…", ueFuncRet, sizeof(ueFuncRet));
+        ImGui::InputTextWithHint("Params##uefp", "float Amount, AActor* Instigator", ueFuncParams, sizeof(ueFuncParams));
+        ImGui::InputTextWithHint("Category##uefc", "Gameplay", ueFuncCategory, sizeof(ueFuncCategory));
+        ImGui::Checkbox("BlueprintPure (no exec pins, const-style getter)", &ueFuncPure);
+
+        unreal::FunctionSpec fn;
+        fn.name = ueFuncName;
+        fn.returnType = ueFuncRet[0] ? ueFuncRet : "void";
+        fn.params = unreal::parseParamList(ueFuncParams);
+        fn.pure = ueFuncPure;
+        fn.category = ueFuncCategory;
+        if (!fn.name.empty())
+        {
+            std::string decl = unreal::generateFunctionDecl(fn);
+            ImGui::TextDisabled("%s", decl.c_str());
+            if (ImGui::Button("Insert declaration at cursor"))
+                insertSnippetAtCursor(decl);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(140.0f);
+            ImGui::InputTextWithHint("##uefcls", "AHealth", ueFuncClass, sizeof(ueFuncClass));
+            ImGui::SameLine();
+            if (ImGui::Button("Copy definition"))
+                ImGui::SetClipboardText(unreal::generateFunctionDef(fn, ueFuncClass).c_str());
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Copies the .cpp body (Class::%s) to the clipboard", fn.name.c_str());
+        }
+
+        // ── UPROPERTY ────────────────────────────────────────────────────
+        ImGui::SeparatorText("Blueprint property (UPROPERTY)");
+        ImGui::InputTextWithHint("Type##uept", "float / int32 / TObjectPtr<AActor>", uePropType, sizeof(uePropType));
+        ImGui::InputTextWithHint("Name##uepn", "MaxHealth", uePropName, sizeof(uePropName));
+        ImGui::InputTextWithHint("Category##uepc", "Gameplay", uePropCategory, sizeof(uePropCategory));
+        ImGui::Checkbox("Edit anywhere (vs VisibleAnywhere)", &uePropEditAnywhere);
+        ImGui::SameLine();
+        ImGui::Checkbox("Read-only in Blueprint", &uePropReadOnly);
+
+        unreal::PropertySpec prop;
+        prop.type = uePropType[0] ? uePropType : "float";
+        prop.name = uePropName;
+        prop.category = uePropCategory;
+        prop.readOnly = uePropReadOnly;
+        prop.editAnywhere = uePropEditAnywhere;
+        if (!prop.name.empty())
+        {
+            std::string decl = unreal::generatePropertyDecl(prop);
+            ImGui::TextDisabled("%s", decl.c_str());
+            if (ImGui::Button("Insert property at cursor"))
+                insertSnippetAtCursor(decl);
+        }
     }
     ImGui::End();
 }
@@ -8380,6 +8797,8 @@ void Editor::render()
     renderReferencesPanel();
     renderSymbolsPanel();
     renderFindInFilesPanel();
+    renderUnrealClassWizard();
+    renderBlueprintStubTool();
     renderDevTools();
     renderMarkdownPreview();
     renderGitDialogs();
@@ -9993,6 +10412,18 @@ void Editor::renderMenuBar()
                 openProjectFolderPicker();
             }
        ImGui::EndMenu();
+        }
+
+        // Unreal menu — only for projects with a .uproject in the root.
+        if (!unrealProjectName.empty() && ImGui::BeginMenu("Unreal"))
+        {
+            ImGui::TextDisabled("%s.uproject", unrealProjectName.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("New Unreal Class..."))
+                openUnrealClassWizard();
+            if (ImGui::MenuItem("Blueprint Stubs (UFUNCTION / UPROPERTY)..."))
+                ueStubVisible = true;
+            ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Help"))

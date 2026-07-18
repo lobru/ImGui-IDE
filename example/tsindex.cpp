@@ -420,23 +420,29 @@ std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
 
 	// Compile the tags query ONCE per language and reuse it — it's immutable and
 	// built from invariant inputs, so recompiling per file was pure waste on the
-	// background reindex. extractSymbols is only called from the serialized index
-	// build thread + the startup selftest, so the static cache needs no extra lock.
-	static std::unordered_map<int, TSQuery*> queryCache;
+	// background reindex. extractSymbols now runs CONCURRENTLY on the parallel
+	// index workers, so the cache map is guarded by a mutex. The compiled TSQuery
+	// itself is immutable and safe to share across threads — each caller executes
+	// it through its own TSQueryCursor.
 	TSQuery* query = nullptr;
-	if (auto cit = queryCache.find((int) lang); cit != queryCache.end())
 	{
-		query = cit->second;
-	}
-	else
-	{
-		uint32_t errOffset = 0;
-		TSQueryError errType = TSQueryErrorNone;
-		query = ts_query_new(language, queryStr.c_str(), (uint32_t) queryStr.size(), &errOffset, &errType);
-		queryCache[(int) lang] = query;   // cache even nullptr so a broken query isn't retried
-		if (!query)
-			std::fprintf(stderr, "[ts] tags query compile failed: lang=%d errType=%d at byte %u\n",
-			             (int) lang, (int) errType, errOffset);
+		static std::mutex queryCacheMutex;
+		static std::unordered_map<int, TSQuery*> queryCache;
+		std::lock_guard<std::mutex> lk(queryCacheMutex);
+		if (auto cit = queryCache.find((int) lang); cit != queryCache.end())
+		{
+			query = cit->second;
+		}
+		else
+		{
+			uint32_t errOffset = 0;
+			TSQueryError errType = TSQueryErrorNone;
+			query = ts_query_new(language, queryStr.c_str(), (uint32_t) queryStr.size(), &errOffset, &errType);
+			queryCache[(int) lang] = query;   // cache even nullptr so a broken query isn't retried
+			if (!query)
+				std::fprintf(stderr, "[ts] tags query compile failed: lang=%d errType=%d at byte %u\n",
+				             (int) lang, (int) errType, errOffset);
+		}
 	}
 	if (!query)
 	{
