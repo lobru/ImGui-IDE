@@ -40,6 +40,20 @@ struct PluginDocInfo
     std::string languageName; // TextEditor language name, e.g. "Lua", "C++" (may be empty)
 };
 
+// Where a document context menu (right-click in the editor) was opened. The
+// version/lineCount pair lets a plugin memoize expensive whole-text work (the
+// menu hook runs every frame the popup is open) and only re-pull the text via
+// PluginHost::hostActiveText() when the document actually changed.
+struct PluginDocContext
+{
+    PluginDocInfo doc;
+    int         line = 0;      // 0-based cursor line the menu was opened on
+    std::string word;          // identifier under the cursor (may be empty)
+    std::string lineText;      // full text of that line
+    int         lineCount = 0; // document line count (memo key part)
+    int         docVersion = 0;// undo index (memo key part)
+};
+
 // A build/run command a project-type provider returns. Mirrors the editor's
 // internal build-command pair: `path` is either a script FILE (run
 // `command "path"` in its parent dir) or a DIRECTORY (run `command` cd'd into
@@ -156,6 +170,11 @@ public:
     // contribute autocomplete words for a document (add() inserts one word)
     virtual void contributeAutocomplete(PluginHost &, const PluginDocInfo &,
                                         const std::function<void(const std::string &)> &) {}
+
+    // Contribute items into the editor's right-click context menu (called inside
+    // the popup's scope, every frame it is open — draw ImGui::MenuItem yourself
+    // and memoize anything expensive on ctx.line/lineCount/docVersion).
+    virtual void onDocumentContextMenu(PluginHost &, const PluginDocContext &) {}
 
     // Contribute command-palette entries (Ctrl+Shift+P). Called every frame the
     // palette is open; add(label, run) inserts one command. `doc` describes the

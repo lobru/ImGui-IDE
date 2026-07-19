@@ -81,7 +81,6 @@
 #endif
 
 #include "editor.h"
-#include "cppgen.h"
 #include "plugin_loader.h"
 #include "pdfview.h"
 #include "tsindex.h"
@@ -10939,71 +10938,24 @@ void Editor::renderDocumentWindow(TabDocument &t)
             }
         }
 
-        // C++ member definition/declaration generation. Memoized on
-        // (doc|line|lineCount|undoIndex) — the class scan reads whole-file text
-        // and this callback re-runs every frame the popup is open.
+        // Plugin context-menu contributions (e.g. the cppgen plugin's Generate
+        // Definition/Declaration). Runs inside the popup scope every frame it's
+        // open — the context carries lineCount/undoIndex so plugins can memoize
+        // whole-document work instead of re-pulling the text.
         {
-            const auto *glang = t.editor.GetLanguage();
-            bool cpp = glang && (glang->name == "C++" || glang->name == "C");
-            if (cpp)
-            {
-                std::string genKey = t.filename + "|" + std::to_string(line) + "|" +
-                                     std::to_string(t.editor.GetLineCount()) + "|" +
-                                     std::to_string(t.editor.GetUndoIndex());
-                if (genKey != ctxGenKey)
-                {
-                    ctxGenKey = genKey;
-                    std::string full = t.editor.GetText();
-                    std::string cls;
-                    ctxGenOneDef = cppgen::generateOneDefinition(full, line, &cls);
-                    ctxGenClass = cls;
-                    ctxGenAllDefs = cppgen::generateClassDefinitions(full, line, &cls);
-                    if (ctxGenClass.empty())
-                        ctxGenClass = cls;
-                    // Reverse (decl from def) only makes sense on an out-of-line
-                    // definition line — i.e. one containing "::" and not inside a
-                    // class body. Parse just the current (joined) line's text.
-                    ctxGenDecl.clear();
-                    if (cls.empty())
-                    {
-                        std::string lt = t.editor.GetLineText(line);
-                        if (lt.find("::") != std::string::npos && lt.find('(') != std::string::npos)
-                            ctxGenDecl = cppgen::declarationFromDefinition(lt);
-                    }
-                }
-
-                if (!ctxGenOneDef.empty() || !ctxGenAllDefs.empty() || !ctxGenDecl.empty())
-                    ImGui::Separator();
-                if (!ctxGenOneDef.empty())
-                {
-                    if (ImGui::MenuItem("Generate Definition"))
-                    {
-                        ImGui::SetClipboardText(ctxGenOneDef.c_str());
-                        pushToast("\xe2\x9c\x8e Definition copied \xe2\x80\x94 paste into the .cpp",
-                                  IM_COL32(120, 200, 120, 255), 0);
-                    }
-                }
-                if (!ctxGenAllDefs.empty())
-                {
-                    std::string lbl = "Generate Definitions for " +
-                                      (ctxGenClass.empty() ? std::string("class") : ctxGenClass);
-                    if (ImGui::MenuItem(lbl.c_str()))
-                    {
-                        ImGui::SetClipboardText(ctxGenAllDefs.c_str());
-                        pushToast("\xe2\x9c\x8e Definitions copied \xe2\x80\x94 paste into the .cpp",
-                                  IM_COL32(120, 200, 120, 255), 0);
-                    }
-                }
-                if (!ctxGenDecl.empty())
-                {
-                    if (ImGui::MenuItem("Generate Declaration"))
-                    {
-                        ImGui::SetClipboardText(ctxGenDecl.c_str());
-                        pushToast("\xe2\x9c\x8e Declaration copied \xe2\x80\x94 paste into the header",
-                                  IM_COL32(120, 200, 120, 255), 0);
-                    }
-                }
-            }
+            PluginDocContext pctx;
+            pctx.doc.filename = t.filename;
+            pctx.doc.extLower = std::filesystem::path(t.filename).extension().string();
+            std::transform(pctx.doc.extLower.begin(), pctx.doc.extLower.end(), pctx.doc.extLower.begin(),
+                           [](unsigned char c) { return (char) std::tolower(c); });
+            if (const auto *glang = t.editor.GetLanguage())
+                pctx.doc.languageName = glang->name;
+            pctx.line = line;
+            pctx.word = word;
+            pctx.lineText = t.editor.GetLineText(line);
+            pctx.lineCount = t.editor.GetLineCount();
+            pctx.docVersion = (int) t.editor.GetUndoIndex();
+            pluginRegistry.documentContextMenu(*this, pctx);
         }
 
         ImGui::Separator();

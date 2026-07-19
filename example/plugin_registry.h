@@ -110,6 +110,14 @@ public:
                 p->contributeAutocomplete(host, doc, addWord);
     }
 
+    // contribute into the editor's right-click context menu (call inside the popup)
+    void documentContextMenu(PluginHost &host, const PluginDocContext &ctx)
+    {
+        for (auto &p : plugins)
+            if (p->enabled())
+                p->onDocumentContextMenu(host, ctx);
+    }
+
     // gather command-palette entries
     void paletteCommands(PluginHost &host, const PluginDocInfo &doc,
                          const std::function<void(const std::string &, std::function<void()>)> &add)

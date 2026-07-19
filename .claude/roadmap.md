@@ -124,8 +124,10 @@ that is still genuinely outstanding.
       inside UE projects; terminal adds Terminal: Toggle. Selftest-covered.
 - [ ] **Plugin splits — the loose files next to editor.cpp** (user: "many could
       be plugins, e.g. entire debugger"). Order by API-gap size:
-  1. **cppgen → plugin** (small gap: needs a "contribute context-menu action" +
-     text-insertion host API).
+  1. [x] **cppgen → plugin** (2026-07-19) — new `onDocumentContextMenu` hook +
+     `PluginDocContext` (line/word/lineText + lineCount/docVersion memo keys);
+     cppgen.{h,cpp} moved to plugins/cppgen, 4th DLL `imguiide_cppgen`; editor
+     core carries zero cppgen code; selftest still covers the pure helpers.
   2. **pdfview → plugin** (openFile claim hook already exists — same pattern as
      the uasset inspector).
   3. **notes → plugin** (needs marker + gutter-click host APIs — blocked on the

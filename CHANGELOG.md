@@ -23,6 +23,10 @@ read `tag-commits-gsha`.
   commands** through the plugin API, gated by file type and/or project type: the
   Unreal plugin's entries (build, clangd DB, launch editor, class wizard, ...)
   appear only in Unreal projects; the terminal plugin adds Terminal: Toggle.
+- **C++ code generation is now a plugin** (`imguiide_cppgen`, 4th DLL): Generate
+  Definition / Definitions-for-class / Declaration in the editor context menu,
+  contributed through the new plugin `onDocumentContextMenu` hook — the core
+  editor carries no cppgen code, and the plugin toggles in Settings ▸ Plugins.
 - **Async project search**: Find in Files and Find References scan on worker
   threads (active buffer first) and stream results into clipper-rendered panels —
   no UI stalls on big trees.

@@ -111,7 +111,6 @@ add_executable(example
 	search_async.cpp
 	updater.cpp
 	pdfview.cpp
-	cppgen.cpp
 	notes.cpp
 	screenshot.cpp
 	plugin_registry.cpp
@@ -131,10 +130,11 @@ target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imgu
 option(IMGUIIDE_PLUGIN_UNREAL "Build the Unreal Engine integration plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_TERMINAL "Build the integrated terminal plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_CPPGEN "Build the C++ code generation plugin (DLL)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
@@ -208,6 +208,16 @@ if(IMGUIIDE_PLUGIN_TERMINAL)
 		plugins/terminal/terminal_plugin.cpp)
 	target_include_directories(imguiide_terminal PRIVATE plugins/terminal)
 	target_compile_definitions(imguiide_terminal PRIVATE IMGUIIDE_PLUGIN_TERMINAL=1)
+endif()
+
+if(IMGUIIDE_PLUGIN_CPPGEN)
+	# C++ definition/declaration generation (context menu). Pure logic lives in
+	# plugins/cppgen/cppgen.cpp (also compiled into selftest for headless tests).
+	imguiide_add_plugin(imguiide_cppgen createCppGenPlugin
+		plugins/cppgen/cppgen_plugin.cpp
+		plugins/cppgen/cppgen.cpp)
+	target_include_directories(imguiide_cppgen PRIVATE plugins/cppgen)
+	target_compile_definitions(imguiide_cppgen PRIVATE IMGUIIDE_PLUGIN_CPPGEN=1)
 endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP; the PDF viewer uses the
@@ -306,7 +316,8 @@ add_custom_command(TARGET example POST_BUILD
 # colorizer, fold detection — with no SDL/GPU/ImGui context. It links the same
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
-add_executable(selftest selftest.cpp cppgen.cpp notes.cpp screenshot.cpp)
+add_executable(selftest selftest.cpp plugins/cppgen/cppgen.cpp notes.cpp screenshot.cpp)
+target_include_directories(selftest PRIVATE plugins/cppgen)
 target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto dbgbridge)
 # The UE + Blueprint tests are gated on their plugin flags; compile the (now
 # plugin-owned) sources into selftest when the flag is on so they still run.
