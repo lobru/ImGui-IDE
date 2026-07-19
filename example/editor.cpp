@@ -8558,7 +8558,7 @@ void Editor::openFile(const std::string &path)
         {
             buildAutocompleteTrie(*target);
             reanchorNotesFor(*target);   // follow notes whose lines moved on disk
-            applyNoteMarkers(*target);
+            refreshMarkers(*target);     // notes + any existing breakpoints
         }
     }
     catch (std::exception &e)
@@ -8585,7 +8585,7 @@ void Editor::finishPendingLoads()
         tab->version = tab->editor.GetUndoIndex(); // loaded content is the clean baseline
         buildAutocompleteTrie(*tab);
         reanchorNotesFor(*tab);
-        applyNoteMarkers(*tab);
+        refreshMarkers(*tab);
     }
 
     if (notesDirty)
@@ -8795,10 +8795,43 @@ void Editor::checkExternalChanges()
 // started editing).
 void Editor::clearChangeMarks(TabDocument &t)
 {
-    t.editor.ClearMarkers();
     t.editor.ClearLineDecorator();
     t.changedRanges.clear();
     t.externalMarkers = false;
+    // Rebuild the shared marker list WITHOUT the change layer — sticky notes and
+    // debug breakpoints must survive an external-change clear (they used to be
+    // blanket-wiped here and only reappear when their own event re-fired).
+    refreshMarkers(t);
+}
+
+// Re-add the external-change gutter markers from the tracked ranges (same
+// colors/tooltips the widget's MarkChangedLines uses) — the composer's lowest
+// layer, so notes and debug markers win a shared line.
+void Editor::addChangeMarkers(TabDocument &t)
+{
+    if (t.changedRanges.empty())
+        return;
+    const ImU32 gutter = IM_COL32(170, 130, 250, 255);
+    const ImU32 bg = IM_COL32(120, 90, 200, 38);
+    int lineCount = t.editor.GetLineCount();
+    for (auto &r : t.changedRanges)
+        for (int ln = (std::max)(0, r.first); ln <= r.second && ln < lineCount; ++ln)
+            t.editor.AddMarker(ln, gutter, bg, "Changed externally",
+                               "Changed on disk by an external tool");
+}
+
+// THE marker composer. The widget has ONE marker slot per line and only a
+// whole-list clear, and three features share it (external-change, sticky notes,
+// debug breakpoints/stop-line) — each used to clear+redraw independently and
+// clobber the others. Every rebuild now goes through here: one clear, then the
+// layers lowest-priority-first (a later AddMarker on the same line wins the
+// slot), so all three stay live no matter which feature triggered the refresh.
+void Editor::refreshMarkers(TabDocument &t)
+{
+    t.editor.ClearMarkers();
+    addChangeMarkers(t);   // lowest: broad "this file changed" wash
+    applyNoteMarkers(t);   // middle: sticky-note diamonds
+    applyDebugMarkers(t);  // highest: breakpoints / stopped-here must stay visible
 }
 
 void Editor::markChangedLines(TabDocument &t, const std::string &oldText)
@@ -8807,9 +8840,12 @@ void Editor::markChangedLines(TabDocument &t, const std::string &oldText)
     // which is headless-testable); it diffs oldText against its own current text. We
     // keep the app-side pieces here: the tracked ranges (Dev Tools list / gutter
     // hit-test) and the clickable reply-dot decorator.
-    clearChangeMarks(t);
-    t.changedRanges = t.editor.MarkChangedLines(oldText);
+    t.editor.ClearLineDecorator();
+    t.changedRanges = t.editor.MarkChangedLines(oldText); // clears + adds change markers
     t.externalMarkers = !t.changedRanges.empty();
+    // The widget's clear wiped the other layers — put notes + debug back on top.
+    applyNoteMarkers(t);
+    applyDebugMarkers(t);
     if (t.changedRanges.empty())
         return;
     t.editor.SetLineDecorator(-1.6f, [this](TextEditor::Decorator &d) {
@@ -15202,8 +15238,7 @@ void Editor::renderNotesPanel()
     {
         for (auto &tab : tabs)
         {
-            tab->editor.ClearMarkers();
-            applyNoteMarkers(*tab);
+            refreshMarkers(*tab);
         }
     }
     ImGui::SameLine();
@@ -15294,8 +15329,7 @@ void Editor::renderNotesPanel()
                 saveNotes();
                 for (auto &tab : tabs)
                 {
-                    tab->editor.ClearMarkers();
-                    applyNoteMarkers(*tab);
+                    refreshMarkers(*tab);
                 }
             }
             if (ImGui::IsItemHovered())
@@ -15317,8 +15351,7 @@ void Editor::renderNotesPanel()
             saveNotes();
             for (auto &tab : tabs)
             {
-                tab->editor.ClearMarkers();
-                applyNoteMarkers(*tab);
+                refreshMarkers(*tab);
             }
         }
     }

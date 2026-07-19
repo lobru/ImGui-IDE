@@ -89,9 +89,11 @@ that is still genuinely outstanding.
       single-thread background (already non-blocking). Porting must preserve my
       extraSourceLocations indexing. Deferred.
 - [ ] daptest live debugpy round-trip fails (breakpoint stop not observed on 1.8.5).
-- NOTE: debug markers vs sticky-note markers share the editor's one marker list —
-  they can clobber each other in a file with both. Coexistence pass needed
-  (task chip pending: refreshMarkers composer, change→notes→debug layering).
+- [x] **Marker clobbering fixed** (2026-07-19) — `Editor::refreshMarkers`
+  composer: one clear, then change→notes→debug layers (later add wins the
+  per-line slot). applyNote/applyDebug are pure adders; every rebuild
+  (breakpoint toggle, note edit, external change, file open) recomposes all
+  three, so none wipes the others anymore.
 
 ### Debugger usability (user feedback 2026-07-19)
 - [x] **Settings actually persisted** — `[debug_adapters]` / `[debug_bridge]` were
@@ -132,8 +134,8 @@ that is still genuinely outstanding.
      .pdf via the openFile hook (isBinaryExt path), windows render in onFrame,
      pan via hostMiddleMousePanScroll(111). C++/WinRT (windowsapp) moved off
      the core exe into the plugin DLL.
-  3. **notes → plugin** (needs marker + gutter-click host APIs — blocked on the
-     refreshMarkers composer above).
+  3. **notes → plugin** (marker composer DONE — remaining gap: marker + gutter
+     hit-test + git-blame host APIs; notes also feed reanchor-on-load).
   4. **debugger → plugin** (BIGGEST: needs host APIs for markers, F-key keybind
      registration, palette [done], panel docking, per-project settings store,
      openFile-jump [exists]. Files already isolated: dap_protocol/dap_client/

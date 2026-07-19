@@ -35,10 +35,10 @@ std::string Editor::dbgProjectKey() const
 }
 
 
-// Rebuild the debug markers for one tab: red dots on breakpoint lines, a
-// yellow line where execution is stopped. Shares the editor's single marker
-// list with the external-change feature — debug markers only clear/redraw a
-// tab they own (t.debugMarkers), so external-edit markers survive elsewhere.
+// Add the debug markers for one tab: red dots on breakpoint lines, a yellow
+// line where execution is stopped. PURE ADDER — no clearing; it is the top
+// layer of Editor::refreshMarkers (the single composer for the shared marker
+// list), so notes and external-change markers survive debug events.
 void Editor::applyDebugMarkers(TabDocument &t)
 {
     std::string canon = t.filename == "untitled" ? std::string() : dbgCanonPath(t.filename);
@@ -51,19 +51,10 @@ void Editor::applyDebugMarkers(TabDocument &t)
     }
     bool stopHere = dbgStopped && !dbgStopFile.empty() && canon == dbgStopFile && dbgStopLine >= 0;
 
-    if (!bps && !stopHere)
-    {
-        if (t.debugMarkers)
-        {
-            t.editor.ClearMarkers();
-            t.debugMarkers = false;
-        }
+    t.debugMarkers = bps != nullptr || stopHere;
+    if (!t.debugMarkers)
         return;
-    }
 
-    t.editor.ClearMarkers();
-    t.externalMarkers = false;   // shared marker list — ours now
-    t.debugMarkers = true;
     int lineCount = t.editor.GetLineCount();
     if (bps)
         for (int line : *bps)
@@ -78,7 +69,7 @@ void Editor::applyDebugMarkers(TabDocument &t)
 void Editor::refreshAllDebugMarkers()
 {
     for (auto &up : tabs)
-        applyDebugMarkers(*up);
+        refreshMarkers(*up);   // full composition — change + notes + debug
 }
 
 void Editor::toggleBreakpointAtCursor()
@@ -93,7 +84,7 @@ void Editor::toggleBreakpointAtCursor()
         set.insert(line);
     if (set.empty())
         dbgBreakpoints.erase(canon);
-    applyDebugMarkers(doc());
+    refreshMarkers(doc());
     if (dbgSessionActive)
         sendBreakpointsFor(canon);
 }

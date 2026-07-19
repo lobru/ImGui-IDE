@@ -188,7 +188,12 @@ class Editor : public PluginHost {
 	static bool isCodeExtension(const std::string& extLower); // source code vs log/data/text
 	void checkExternalChanges();
 	void markChangedLines(TabDocument& t, const std::string& oldText); // diff oldText vs the doc's current text
-	void clearChangeMarks(TabDocument& t);   // drop gutter markers + reply-dot decorator + ranges together
+	void clearChangeMarks(TabDocument& t);   // drop change decorations, keep notes+debug (recomposes)
+	// The shared marker list has ONE slot per line and only a whole-list clear;
+	// three features layer into it. refreshMarkers is the single composer: one
+	// clear, then change -> notes -> debug (later add wins a shared line).
+	void addChangeMarkers(TabDocument& t);   // re-add change gutter from changedRanges (pure adder)
+	void refreshMarkers(TabDocument& t);
 	double extWatchTime = 0.0;   // last poll time (throttle)
 
 	// Frame-time watchdog — flags potential perf issues. Measures the wall-clock
