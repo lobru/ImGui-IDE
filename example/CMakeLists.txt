@@ -307,7 +307,7 @@ add_custom_command(TARGET example POST_BUILD
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
 add_executable(selftest selftest.cpp cppgen.cpp notes.cpp screenshot.cpp)
-target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto)
+target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto dbgbridge)
 # The UE + Blueprint tests are gated on their plugin flags; compile the (now
 # plugin-owned) sources into selftest when the flag is on so they still run.
 if(IMGUIIDE_PLUGIN_UNREAL)

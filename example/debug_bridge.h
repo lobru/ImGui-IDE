@@ -35,6 +35,12 @@ std::vector<std::string> splitCommandLine(const std::string& cmd);
 // Expand {file} and {line} placeholders in a template string.
 std::string expandTemplate(std::string tmpl, const std::string& file, int line1Based);
 
+// Infer the DAP launch "type" from an adapter command line, so a user-entered
+// adapter needs no separate type field. Scans every token — adapters can hide
+// behind interpreters ("python -m debugpy.adapter"). Empty means "send no
+// type" (lldb-dap and gdb's DAP interpreter don't want one).
+std::string inferAdapterType(const std::vector<std::string>& argv);
+
 // ── raddbg ───────────────────────────────────────────────────────────────
 // Launch: `raddbg <exe> [args…]`. raddbg attaches its own UI to the target.
 std::vector<std::string> raddbgLaunch(const std::string& raddbgPath,

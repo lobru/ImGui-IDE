@@ -9,6 +9,7 @@
 #include "debug_bridge.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <sstream>
 
@@ -35,6 +36,23 @@ std::string expandTemplate(std::string tmpl, const std::string& file, int line1B
 	replaceAll("{file}", file);
 	replaceAll("{line}", std::to_string(line1Based));
 	return tmpl;
+}
+
+std::string inferAdapterType(const std::vector<std::string>& argv)
+{
+	for (const auto& a : argv)
+	{
+		std::string t = a;
+		for (auto& c : t)
+			c = (char) std::tolower((unsigned char) c);
+		if (t.find("vsdbg") != std::string::npos)
+			return "cppvsdbg";
+		if (t.find("opendebugad7") != std::string::npos)
+			return "cppdbg";
+		if (t.find("debugpy") != std::string::npos)
+			return "python";
+	}
+	return {};
 }
 
 std::vector<std::string> raddbgLaunch(const std::string& raddbgPath,

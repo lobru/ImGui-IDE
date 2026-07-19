@@ -25,6 +25,7 @@
 #include "lsp_protocol.h"
 #include "nav_history.h"
 #include "cppgen.h"
+#include "debug_bridge.h"
 #include "plugin_registry.h"
 #ifdef IMGUIIDE_PLUGIN_UNREAL
 #include "unreal.h"
@@ -2003,6 +2004,59 @@ int main(int argc, char** argv)
 			reg.setEnabled(host, *raw, true);
 			CHECK(raw->registers == 1, "plugin: onRegister not repeated on re-enable");
 		}
+
+		// ── Command-palette contributions: fan-out, doc gating, enable gating ──
+		{
+			struct PalPlugin : EditorPlugin {
+				const char* id() const override { return "selftest.pal"; }
+				const char* displayName() const override { return "Selftest palette"; }
+				void contributePaletteCommands(PluginHost&, const PluginDocInfo& doc,
+				                               const std::function<void(const std::string&,
+				                                                        std::function<void()>)>& add) override
+				{
+					add("Pal: Always", [] {});
+					if (doc.extLower == ".lua")   // file-type-gated entry
+						add("Pal: Lua Only", [] {});
+				}
+			};
+			FlagHost host;
+			PluginRegistry reg;
+			auto up = std::make_unique<PalPlugin>();
+			PalPlugin* raw = up.get();
+			reg.add(std::move(up));
+			reg.registerAll(host);
+
+			auto collect = [&](const char* ext) {
+				PluginDocInfo info;
+				info.extLower = ext;
+				std::vector<std::string> got;
+				reg.paletteCommands(host, info,
+				                    [&](const std::string& label, std::function<void()>) { got.push_back(label); });
+				return got;
+			};
+			auto plain = collect(".py");
+			CHECK(plain.size() == 1 && plain[0] == "Pal: Always",
+				"palette: plugin contributes; file-type-gated entry absent for other types");
+			auto lua = collect(".lua");
+			CHECK(lua.size() == 2, "palette: file-type-gated entry present for its type");
+			reg.setEnabled(host, *raw, false);
+			CHECK(collect(".lua").empty(), "palette: disabled plugin contributes nothing");
+		}
+	}
+
+	// ── Debug adapter type inference (project-adapter command lines) ─────────
+	{
+		using dbgbridge::inferAdapterType;
+		CHECK(inferAdapterType({"C:/ext/vsdbg.exe", "--interpreter=vscode"}) == "cppvsdbg",
+			"dbg: vsdbg command infers cppvsdbg");
+		CHECK(inferAdapterType({"C:/ext/OpenDebugAD7.exe"}) == "cppdbg",
+			"dbg: OpenDebugAD7 infers cppdbg (MIEngine)");
+		CHECK(inferAdapterType({"python", "-m", "debugpy.adapter"}) == "python",
+			"dbg: debugpy behind an interpreter infers python");
+		CHECK(inferAdapterType({"lldb-dap"}).empty(),
+			"dbg: lldb-dap sends no launch type");
+		CHECK(inferAdapterType({"gdb", "-i", "dap"}).empty(),
+			"dbg: gdb -i dap sends no launch type");
 	}
 
 	// ── C++ definition / declaration generation ───────────────────────────

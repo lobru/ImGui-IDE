@@ -163,6 +163,7 @@ void Editor::renderCommandPalette()
     }
     if (hasDoc)
         add("Debug: Toggle Breakpoint", "F9", [this] { toggleBreakpointAtCursor(); });
+    add("Debug: Configure Adapters / Target...", "", [this] { dbgPanelVisible = true; });
     add("Debug: Launch in raddbg", "", [this] { debugInRadDbg(); });
     add("Debug: Launch in Visual Studio", "", [this] { debugInVisualStudio(); });
 
@@ -176,7 +177,25 @@ void Editor::renderCommandPalette()
     add("View: Notes", "", [this] { notesVisible = !notesVisible; });
     add("View: Save Screenshot", "Ctrl+Alt+S", [this] { requestScreenshot(); });
     add("Help: Take the Tour", "", [this] { startTour(); });
-    // (Unreal commands live in the Unreal top-level menu — the plugin owns them.)
+
+    // Plugin contributions — each enabled plugin adds its own entries, gated on
+    // the active document's file type and/or the current project type.
+    {
+        PluginDocInfo info;
+        if (hasDoc)
+        {
+            info.filename = doc().filename;
+            info.extLower = std::filesystem::path(doc().filename).extension().string();
+            std::transform(info.extLower.begin(), info.extLower.end(), info.extLower.begin(),
+                           [](unsigned char c) { return (char) std::tolower(c); });
+            if (auto *lang = doc().editor.GetLanguage())
+                info.languageName = lang->name;
+        }
+        pluginRegistry.paletteCommands(*this, info,
+                                       [&](const std::string &label, std::function<void()> fn) {
+                                           add(label, "", std::move(fn));
+                                       });
+    }
 
     // Recents
     {

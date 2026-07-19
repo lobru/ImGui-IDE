@@ -28,6 +28,13 @@ public:
     const char *displayName() const override { return "Integrated terminal"; }
 
     void onMenu(PluginHost &host, PluginMenu which) override;
+    void contributePaletteCommands(PluginHost &host, const PluginDocInfo &doc,
+                                   const std::function<void(const std::string &,
+                                                            std::function<void()>)> &add) override
+    {
+        (void) host; (void) doc;
+        add("Terminal: Toggle", [this] { visible = !visible; });
+    }
     void onFrame(PluginHost &host) override;
 
 private:

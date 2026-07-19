@@ -157,6 +157,15 @@ public:
     virtual void contributeAutocomplete(PluginHost &, const PluginDocInfo &,
                                         const std::function<void(const std::string &)> &) {}
 
+    // Contribute command-palette entries (Ctrl+Shift+P). Called every frame the
+    // palette is open; add(label, run) inserts one command. `doc` describes the
+    // ACTIVE document (empty fields when none), so a plugin can gate commands on
+    // file type; gate on project type by probing hostProjectRoot() (e.g. the
+    // Unreal plugin only contributes when the project has a .uproject/.uplugin).
+    virtual void contributePaletteCommands(PluginHost &, const PluginDocInfo &,
+                                           const std::function<void(const std::string &,
+                                                                    std::function<void()>)> &) {}
+
     // project-type provider: how to build/run a project rooted at startDir
     virtual std::optional<PluginBuildCommand> projectBuildCommand(const std::filesystem::path &) { return std::nullopt; }
 

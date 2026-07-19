@@ -52,7 +52,8 @@ std::string buildInitialize(int seq)
 std::string buildLaunch(int seq, const std::string& adapterType,
                         const std::string& program, const std::string& cwd,
                         bool stopOnEntry,
-                        const std::vector<std::pair<std::string, std::string>>& extraStrings)
+                        const std::vector<std::pair<std::string, std::string>>& extraStrings,
+                        const std::vector<std::string>& programArgs)
 {
 	json args = {
 		{"name", "ImGui-IDE launch"},
@@ -67,6 +68,8 @@ std::string buildLaunch(int seq, const std::string& adapterType,
 		args["type"] = adapterType;
 	if (!cwd.empty())
 		args["cwd"] = cwd;
+	if (!programArgs.empty())
+		args["args"] = programArgs;
 	for (auto& [k, v] : extraStrings)
 		args[k] = v;
 	return frameRequest(seq, "launch", std::move(args));

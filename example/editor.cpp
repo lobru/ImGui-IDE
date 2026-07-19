@@ -7182,6 +7182,14 @@ void Editor::loadSettings()
             extLanguageOverrides()[k] = v;
         else if (section == "build")
             projectBuildOverrides[k] = v;
+        else if (section == "debug_adapters")        // ".ext" -> adapter cmdline
+            debugAdapterOverrides[k] = v;
+        else if (section == "debug_bridge")          // raddbg/devenv paths + verb templates
+            debugBridgeSettings[k] = v;
+        else if (section == "debug_project_adapter") // <project root> -> adapter cmdline
+            dbgProjectAdapter[k] = v;
+        else if (section == "debug_project_target")  // <project root> -> "program|args"
+            dbgProjectTarget[k] = v;
         else if (section == "keybinds")
         {
             if (!v.empty())
@@ -7429,6 +7437,18 @@ void Editor::saveSettings()
         f << k << "=" << v << "\n";
     f << "\n[build]\n";
     for (auto &[k, v] : projectBuildOverrides)
+        f << k << "=" << v << "\n";
+    f << "\n[debug_adapters]\n";
+    for (auto &[k, v] : debugAdapterOverrides)
+        f << k << "=" << v << "\n";
+    f << "\n[debug_bridge]\n";
+    for (auto &[k, v] : debugBridgeSettings)
+        f << k << "=" << v << "\n";
+    f << "\n[debug_project_adapter]\n";
+    for (auto &[k, v] : dbgProjectAdapter)
+        f << k << "=" << v << "\n";
+    f << "\n[debug_project_target]\n";
+    for (auto &[k, v] : dbgProjectTarget)
         f << k << "=" << v << "\n";
     f << "\n[keybinds]\n";
     for (auto &[k, v] : keybindOverrides)

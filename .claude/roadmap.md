@@ -90,7 +90,26 @@ that is still genuinely outstanding.
       extraSourceLocations indexing. Deferred.
 - [ ] daptest live debugpy round-trip fails (breakpoint stop not observed on 1.8.5).
 - NOTE: debug markers vs sticky-note markers share the editor's one marker list —
-  they can clobber each other in a file with both. Coexistence pass needed.
+  they can clobber each other in a file with both. Coexistence pass needed
+  (task chip pending: refreshMarkers composer, change→notes→debug layering).
+
+### Debugger usability (user feedback 2026-07-19)
+- [x] **Settings actually persisted** — `[debug_adapters]` / `[debug_bridge]` were
+      referenced by toasts but NEVER loaded/saved (dead config, the "doesn't do
+      anything" complaint). Wired into loadSettings/saveSettings, plus new
+      `[debug_project_adapter]` / `[debug_project_target]`.
+- [x] **Per-PROJECT associations** — the project binds an adapter command and a
+      debug target (program + args); wins over the per-extension mapping.
+      `dbgbridge::inferAdapterType` derives the DAP launch type from the command
+      (vsdbg→cppvsdbg, OpenDebugAD7→cppdbg, debugpy→python); DAP launch now
+      carries debuggee argv ("args").
+- [x] **GUI configuration** — Debug panel ▸ Configuration: project adapter/target
+      editors ("built exe"/"active file" fillers), per-file-type adapter override,
+      Save (persists), Detect Adapters + detection readout. Palette:
+      "Debug: Configure Adapters / Target...".
+- [ ] Verify a real end-to-end stop (native vsdbg on this machine) — daptest covers
+      the protocol; live confirm still owed.
+- [ ] Launch-config presets (multiple named targets per project, VS-style dropdown).
 
 ### Plugins
 - [x] **Top-level plugin menus** (409e817) — `EditorPlugin::topLevelMenu()` gives a
@@ -99,8 +118,25 @@ that is still genuinely outstanding.
 - [x] **NEW: integrated terminal plugin** (71a92b4) — Tools ▸ Terminal, a persistent
       project-local shell (cmd/$SHELL) with piped I/O, worker-thread output,
       Ctrl-C/Restart/Clear. Third DLL plugin.
-- [ ] Plugin-ize existing file-classes (cppgen, pdfview, notes, lsp_protocol) — only
-      if no features lost.
+- [x] **Palette contributions API** (2026-07-19) — `contributePaletteCommands`
+      hook + registry fan-out; entries gate on file type (PluginDocInfo) and/or
+      project type (hostProjectRoot probe). Unreal contributes its commands only
+      inside UE projects; terminal adds Terminal: Toggle. Selftest-covered.
+- [ ] **Plugin splits — the loose files next to editor.cpp** (user: "many could
+      be plugins, e.g. entire debugger"). Order by API-gap size:
+  1. **cppgen → plugin** (small gap: needs a "contribute context-menu action" +
+     text-insertion host API).
+  2. **pdfview → plugin** (openFile claim hook already exists — same pattern as
+     the uasset inspector).
+  3. **notes → plugin** (needs marker + gutter-click host APIs — blocked on the
+     refreshMarkers composer above).
+  4. **debugger → plugin** (BIGGEST: needs host APIs for markers, F-key keybind
+     registration, palette [done], panel docking, per-project settings store,
+     openFile-jump [exists]. Files already isolated: dap_protocol/dap_client/
+     debug_bridge/debugger_ui + dbg* state block in editor.h. Do AFTER the
+     marker composer + a keybind-contribution hook land.)
+- [ ] Keybind-contribution hook (`contributeKeybinds`) — prerequisite for the
+      debugger split; also lets terminal/unreal own their shortcuts.
 
 ### UE tooling
 - [x] **.uplugin repos recognized as UE projects** (3728573) — engine-source nav +

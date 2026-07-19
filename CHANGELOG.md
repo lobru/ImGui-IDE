@@ -7,6 +7,28 @@ read `tag-commits-gsha`.
 ## Unreleased
 
 ### Added
+- **Debugger (DAP)**: in-app debugging with breakpoints (F9, gutter dots), a Debug
+  panel (controls / call stack / expandable variables / console + REPL), stepping
+  (F10/F11/Shift+F11, F5 continue), Python via debugpy out of the box, and native
+  C/C++ via auto-detected vsdbg / OpenDebugAD7+gdb / lldb-dap / gdb 14+. External
+  **raddbg** and **Visual Studio** launch bridges (raddbg seeded with your
+  breakpoints). **Per-project debugger associations**: the Debug panel's
+  Configuration section binds an adapter command and a debug target (program +
+  arguments) to the *project* — overriding the per-file-type mapping — with
+  file-type overrides and adapter re-detection in the same GUI; everything
+  persists in settings (`[debug_adapters]`, `[debug_project_adapter]`,
+  `[debug_project_target]`, `[debug_bridge]`).
+- **Command palette** (Ctrl+Shift+P): fuzzy-searchable list of every app action —
+  files, panels, git, debug, themes, recents. **Plugins contribute palette
+  commands** through the plugin API, gated by file type and/or project type: the
+  Unreal plugin's entries (build, clangd DB, launch editor, class wizard, ...)
+  appear only in Unreal projects; the terminal plugin adds Terminal: Toggle.
+- **Async project search**: Find in Files and Find References scan on worker
+  threads (active buffer first) and stream results into clipper-rendered panels —
+  no UI stalls on big trees.
+- **Go to File hardening**: nested vendored SDK headers resolve (depth cap now
+  prunes instead of skipping), and engine headers opened outside any project
+  resolve their engine-relative includes via the owning engine tree.
 - **Unreal Engine C++ + descriptor support**: UE types (`int32`, `FString`, `TArray`,
   smart pointers, math types) and macros (`UCLASS`, `UPROPERTY`, `UE_LOG`, ...) are
   syntax-highlighted; **Go to File** resolves module-relative engine includes

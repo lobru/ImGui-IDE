@@ -41,6 +41,10 @@ public:
     bool openFile(PluginHost &host, const std::filesystem::path &path) override;
     void contributeAutocomplete(PluginHost &host, const PluginDocInfo &doc,
                                 const std::function<void(const std::string &)> &addWord) override;
+    // Palette entries only when the open project IS an Unreal project/plugin.
+    void contributePaletteCommands(PluginHost &host, const PluginDocInfo &doc,
+                                   const std::function<void(const std::string &,
+                                                            std::function<void()>)> &add) override;
     std::optional<PluginBuildCommand> projectBuildCommand(const std::filesystem::path &startDir) override;
     std::optional<std::filesystem::path> resolveInclude(const std::filesystem::path &docDir,
                                                         const std::string &include) override;

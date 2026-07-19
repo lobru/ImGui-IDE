@@ -440,6 +440,53 @@ void UnrealPlugin::inspectActiveUAsset(PluginHost &host)
     inspectUAssetPath(host, host.hostActiveFilename());
 }
 
+// Palette entries, gated on the PROJECT being an Unreal project/plugin (and one
+// on the active FILE being a .uasset) — non-UE sessions see none of these.
+void UnrealPlugin::contributePaletteCommands(PluginHost &host, const PluginDocInfo &doc,
+                                             const std::function<void(const std::string &,
+                                                                      std::function<void()>)> &add)
+{
+    std::filesystem::path projectRoot = host.hostProjectRoot();
+    if (projectRoot.empty())
+        return;
+    auto proj = unreal::findUProjectOrPlugin(projectRoot);
+    if (proj.empty())
+        return;   // not an Unreal project — contribute nothing
+    const bool isPlugin = unreal::isPluginDescriptor(proj);
+    std::string assoc;
+    auto engine = unreal::findEngineRoot(proj, assoc);
+    bool cpp = unreal::hasCppSource(proj);
+
+    if (!isPlugin && !engine.empty() && cpp)
+    {
+        add("Unreal: Build Editor Target", [&host] { host.hostRunProjectBuild(); });
+        add("Unreal: Generate IntelliSense DB (clangd)", [&host, engine, proj] {
+            host.hostRunInDir(unreal::generateClangDbCommand(engine, proj), proj.parent_path());
+            host.hostToast("Generating UE compile database \xe2\x80\x94 toggle C/C++ IntelliSense off/on when it finishes");
+        });
+    }
+    if (!isPlugin && !engine.empty() && !unreal::editorBinary(engine).empty())
+        add("Unreal: Launch Unreal Editor", [&host, engine, proj] {
+            host.hostRunInDir("\"" + unreal::editorBinary(engine).string() + "\" \"" + proj.string() + "\"",
+                              proj.parent_path());
+        });
+    add("Unreal: Open " + proj.filename().string(), [&host, proj] { host.hostOpenFile(proj.string()); });
+    if (cpp)
+        add("Unreal: New C++ Class...", [this, proj] {
+            classModules = unreal::codegen::moduleDirs(proj);
+            classModuleIdx = 0;
+            requestClassWizard = true;
+        });
+    add("Unreal: New Verse Device...", [this] { requestVerseWizard = true; });
+    add("Unreal: Add Module / Plugin to descriptor...", [this, proj] {
+        descriptorTarget = proj;
+        descriptorNameBuf[0] = '\0';
+        requestDescriptorEditor = true;
+    });
+    if (doc.extLower == ".uasset" || doc.extLower == ".umap")
+        add("Unreal: Inspect Package / Blueprint", [this, &host] { inspectActiveUAsset(host); });
+}
+
 bool UnrealPlugin::openFile(PluginHost &host, const std::filesystem::path &path)
 {
     std::string ext = path.extension().string();

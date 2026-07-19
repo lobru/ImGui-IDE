@@ -23,10 +23,12 @@ std::string buildInitialize(int seq);
 // empty omits it (lldb-dap and friends don't need one). `extraStrings` are
 // additional string fields merged into the launch config — MIEngine
 // (OpenDebugAD7) needs e.g. {"MIMode","gdb"} + {"miDebuggerPath","gdb"}.
+// `programArgs` become the launch config's "args" array (debuggee argv).
 std::string buildLaunch(int seq, const std::string& adapterType,
                         const std::string& program, const std::string& cwd,
                         bool stopOnEntry,
-                        const std::vector<std::pair<std::string, std::string>>& extraStrings = {});
+                        const std::vector<std::pair<std::string, std::string>>& extraStrings = {},
+                        const std::vector<std::string>& programArgs = {});
 std::string buildSetBreakpoints(int seq, const std::string& sourcePath, const std::vector<int>& lines);
 std::string buildConfigurationDone(int seq);
 std::string buildContinue(int seq, int threadId);

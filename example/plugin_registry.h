@@ -110,6 +110,15 @@ public:
                 p->contributeAutocomplete(host, doc, addWord);
     }
 
+    // gather command-palette entries
+    void paletteCommands(PluginHost &host, const PluginDocInfo &doc,
+                         const std::function<void(const std::string &, std::function<void()>)> &add)
+    {
+        for (auto &p : plugins)
+            if (p->enabled())
+                p->contributePaletteCommands(host, doc, add);
+    }
+
     // first plugin that claims the project wins
     std::optional<PluginBuildCommand> buildCommand(const std::filesystem::path &startDir)
     {

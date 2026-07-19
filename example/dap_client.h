@@ -74,7 +74,8 @@ public:
 	// the caller can tag e.g. which variablesReference a Variables reply is for.
 	int launch(const std::string& adapterType, const std::string& program,
 	           const std::string& cwd, bool stopOnEntry,
-	           const std::vector<std::pair<std::string, std::string>>& extraStrings = {});
+	           const std::vector<std::pair<std::string, std::string>>& extraStrings = {},
+	           const std::vector<std::string>& programArgs = {});
 	int setBreakpoints(const std::string& sourcePath, const std::vector<int>& lines1Based);
 	int configurationDone();
 	int continueExec(int threadId);

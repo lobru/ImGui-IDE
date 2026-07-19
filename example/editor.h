@@ -1063,6 +1063,13 @@ private:
 	// Breakpoints per canonical file path, 0-based editor lines (session-only).
 	std::unordered_map<std::string, std::set<int>> dbgBreakpoints;
 	std::unordered_map<std::string, std::string> debugAdapterOverrides;  // ".ext" -> adapter cmdline
+	// Per-PROJECT debug configuration (canonical project root -> value). A project
+	// association WINS over the per-extension mapping: the adapter is what debugs
+	// this project, regardless of which file happens to be focused. Both edited in
+	// the Debug panel's Configuration section; persisted in settings.
+	std::unordered_map<std::string, std::string> dbgProjectAdapter;  // root -> adapter cmdline
+	std::unordered_map<std::string, std::string> dbgProjectTarget;   // root -> "program|args"
+	std::string dbgProjectKey() const;             // canonical projectRoot ("" when none)
 	std::string dbgCanonPath(const std::string& file) const;
 	void  toggleBreakpointAtCursor();
 	void  applyDebugMarkers(TabDocument& t);        // rebuild bp + stop-line markers for one tab
@@ -1081,6 +1088,7 @@ private:
 	mutable std::string nativeAdapterType;
 	mutable std::vector<std::pair<std::string, std::string>> nativeAdapterExtras;
 	std::vector<std::pair<std::string, std::string>> dbgLaunchExtras;   // for the active session
+	std::vector<std::string> dbgProgramArgs;   // debuggee argv (from the project target)
 	void  startDebugSession();        // debug the active doc (or built exe for C/C++)
 	void  stopDebugSession();         // disconnect + kill + clear state
 	void  pollDap();                  // per-frame: drain adapter results

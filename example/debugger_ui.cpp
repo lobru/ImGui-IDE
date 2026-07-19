@@ -24,6 +24,17 @@ std::string Editor::dbgCanonPath(const std::string &file) const
     return ec ? file : c.string();
 }
 
+// Key the per-project debug config on the canonical project root.
+std::string Editor::dbgProjectKey() const
+{
+    if (projectRoot.empty())
+        return {};
+    std::error_code ec;
+    auto c = std::filesystem::weakly_canonical(projectRoot, ec);
+    return ec ? projectRoot.string() : c.string();
+}
+
+
 // Rebuild the debug markers for one tab: red dots on breakpoint lines, a
 // yellow line where execution is stopped. Shares the editor's single marker
 // list with the external-change feature — debug markers only clear/redraw a
@@ -171,28 +182,62 @@ std::vector<std::string> Editor::debugAdapterFor(const std::string &ext,
 
 void Editor::startDebugSession()
 {
-    if (tabs.empty() || doc().filename == "untitled")
+    // ── Resolve what to debug + which adapter. The per-PROJECT association
+    // (Debug panel > Configuration) wins over the per-extension mapping; with a
+    // project target configured, no document even needs to be focused.
+    std::string projKey = dbgProjectKey();
+    std::string projAdapter;
+    std::string projProgram;
+    std::vector<std::string> projArgs;
+    if (!projKey.empty())
     {
-        pushToast("Debug: save the file first", IM_COL32(240, 200, 90, 255));
+        if (auto it = dbgProjectAdapter.find(projKey); it != dbgProjectAdapter.end())
+            projAdapter = it->second;
+        if (auto it = dbgProjectTarget.find(projKey); it != dbgProjectTarget.end() && !it->second.empty())
+        {
+            auto bar = it->second.find('|');
+            projProgram = it->second.substr(0, bar);
+            if (bar != std::string::npos)
+                projArgs = dbgbridge::splitCommandLine(it->second.substr(bar + 1));
+        }
+    }
+
+    bool haveDoc = !tabs.empty() && doc().filename != "untitled";
+    if (!haveDoc && projProgram.empty())
+    {
+        pushToast("Debug: open a file, or set a project target in Debug panel > Configuration",
+                  IM_COL32(240, 200, 90, 255));
         return;
     }
-    if (isSavable())
+    if (haveDoc && isSavable())
         saveFile();   // debug what's on screen, not a stale disk copy
 
-    std::filesystem::path prog(doc().filename);
+    std::filesystem::path prog = !projProgram.empty() ? std::filesystem::path(projProgram)
+                                                      : std::filesystem::path(doc().filename);
     auto ext = prog.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
     std::string type;
     std::vector<std::pair<std::string, std::string>> extras;
-    auto argv = debugAdapterFor(ext, prog, type, extras);
+    std::vector<std::string> argv;
+    if (!projAdapter.empty())
+    {
+        argv = dbgbridge::splitCommandLine(projAdapter);
+        type = dbgbridge::inferAdapterType(argv);
+        if (type == "cppdbg")   // MIEngine wants its MI backend named
+            extras = {{"MIMode", "gdb"}, {"miDebuggerPath", "gdb"}};
+    }
+    else
+        argv = debugAdapterFor(ext, prog, type, extras);
     if (argv.empty())
     {
-        pushToast("No debug adapter for " + ext + " — map one in settings [debug_adapters]",
+        pushToast("No debug adapter for " + ext + " — configure one in Debug panel > Configuration",
                   IM_COL32(240, 110, 90, 255));
+        dbgPanelVisible = true;   // put the fix next to the failure
         return;
     }
-    // C-family sources aren't the debuggee — the built executable is.
-    if (isNativeDebugExt(ext) && ext != ".exe")
+    // C-family sources aren't the debuggee — the built executable is (unless an
+    // explicit project target already names the program to run).
+    if (projProgram.empty() && isNativeDebugExt(ext) && ext != ".exe")
     {
         auto exe = findBuiltExe();
         if (exe.empty())
@@ -224,6 +269,7 @@ void Editor::startDebugSession()
         return;
     }
     dbgProgram = prog.string();
+    dbgProgramArgs = std::move(projArgs);
     dbgAdapterType = type;
     dbgLaunchExtras = std::move(extras);
     dbgSessionActive = true;
@@ -277,7 +323,7 @@ void Editor::pollDap()
                 {
                     std::filesystem::path prog(dbgProgram);
                     dapClient.launch(dbgAdapterType, dbgProgram, prog.parent_path().string(),
-                                     /*stopOnEntry*/ false, dbgLaunchExtras);
+                                     /*stopOnEntry*/ false, dbgLaunchExtras, dbgProgramArgs);
                     dbgLaunchSent = true;
                 }
                 break;
@@ -396,21 +442,30 @@ void Editor::renderDebugPanel()
     {
         if (!dbgSessionActive)
         {
+            std::string projKey = dbgProjectKey();
+            std::string ext;
+            if (!tabs.empty() && doc().filename != "untitled")
+            {
+                ext = std::filesystem::path(doc().filename).extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
+            }
+
             if (ImGui::Button("Start Debugging"))
                 startDebugSession();
             ImGui::SameLine();
-            // Preview which adapter the active doc would get.
-            std::string hint = "(no active document)";
-            if (!tabs.empty() && doc().filename != "untitled")
+            // Preview the SAME resolution startDebugSession will do: project
+            // association first, then the per-extension mapping.
+            std::string hint;
+            if (auto it = dbgProjectAdapter.find(projKey); !projKey.empty() && it != dbgProjectAdapter.end())
+                hint = "project adapter: " + it->second;
+            else if (!ext.empty())
             {
                 std::filesystem::path p(doc().filename);
-                auto ext = p.extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char) std::tolower(c); });
                 std::string type;
                 std::vector<std::pair<std::string, std::string>> extras;
                 auto argv = debugAdapterFor(ext, p, type, extras);
                 if (argv.empty())
-                    hint = "no adapter for " + ext + " — settings [debug_adapters]";
+                    hint = "no adapter for " + ext + " — configure below";
                 else
                 {
                     hint = "adapter: ";
@@ -418,8 +473,117 @@ void Editor::renderDebugPanel()
                         hint += (i ? " " : "") + argv[i];
                 }
             }
+            else
+                hint = "(no active document — set a project target below)";
             ImGui::TextDisabled("%s", hint.c_str());
             ImGui::TextDisabled("F9 toggles a breakpoint on the cursor line.");
+
+            // ── Configuration: per-project adapter + target, per-type adapter. ──
+            if (ImGui::CollapsingHeader("Configuration"))
+            {
+                static std::string cfgShownFor = "\x01";   // refill buffers on project/ext change
+                static char cfgAdapter[512] = "";
+                static char cfgTarget[512] = "";
+                static char cfgArgs[512] = "";
+                static char cfgExtAdapter[512] = "";
+                std::string wantShown = projKey + "\x1f" + ext;
+                if (cfgShownFor != wantShown)
+                {
+                    cfgShownFor = wantShown;
+                    cfgAdapter[0] = cfgTarget[0] = cfgArgs[0] = cfgExtAdapter[0] = 0;
+                    if (auto it = dbgProjectAdapter.find(projKey); it != dbgProjectAdapter.end())
+                        std::snprintf(cfgAdapter, sizeof(cfgAdapter), "%s", it->second.c_str());
+                    if (auto it = dbgProjectTarget.find(projKey); it != dbgProjectTarget.end())
+                    {
+                        auto bar = it->second.find('|');
+                        std::snprintf(cfgTarget, sizeof(cfgTarget), "%s", it->second.substr(0, bar).c_str());
+                        if (bar != std::string::npos)
+                            std::snprintf(cfgArgs, sizeof(cfgArgs), "%s", it->second.substr(bar + 1).c_str());
+                    }
+                    if (auto it = debugAdapterOverrides.find(ext); !ext.empty() && it != debugAdapterOverrides.end())
+                        std::snprintf(cfgExtAdapter, sizeof(cfgExtAdapter), "%s", it->second.c_str());
+                }
+
+                if (projKey.empty())
+                    ImGui::TextDisabled("No project open — open one to set a project association.");
+                else
+                {
+                    ImGui::Text("Project: %s", std::filesystem::path(projKey).filename().string().c_str());
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", projKey.c_str());
+                    ImGui::SetNextItemWidth(-140.0f);
+                    ImGui::InputTextWithHint("Adapter##proj", "empty = auto by file type (e.g. vsdbg --interpreter=vscode)",
+                                             cfgAdapter, sizeof(cfgAdapter));
+                    ImGui::SetNextItemWidth(-140.0f);
+                    ImGui::InputTextWithHint("Target##proj", "program to debug (empty = built exe / active file)",
+                                             cfgTarget, sizeof(cfgTarget));
+                    ImGui::SameLine(0.0f, 4.0f);
+                    if (ImGui::SmallButton("built exe"))
+                    {
+                        auto exe = findBuiltExe();
+                        if (!exe.empty())
+                            std::snprintf(cfgTarget, sizeof(cfgTarget), "%s", exe.string().c_str());
+                        else
+                            pushToast("No built executable found — build first (F6)", IM_COL32(240, 200, 90, 255));
+                    }
+                    ImGui::SameLine(0.0f, 4.0f);
+                    if (ImGui::SmallButton("active file"))
+                    {
+                        if (!tabs.empty() && doc().filename != "untitled")
+                            std::snprintf(cfgTarget, sizeof(cfgTarget), "%s", doc().filename.c_str());
+                    }
+                    ImGui::SetNextItemWidth(-140.0f);
+                    ImGui::InputTextWithHint("Arguments##proj", "debuggee argv (space separated)",
+                                             cfgArgs, sizeof(cfgArgs));
+                }
+                if (!ext.empty())
+                {
+                    ImGui::SetNextItemWidth(-140.0f);
+                    ImGui::InputTextWithHint((std::string("Adapter for ") + ext + "##ext").c_str(),
+                                             "empty = built-in default", cfgExtAdapter, sizeof(cfgExtAdapter));
+                }
+
+                if (ImGui::Button("Save Configuration"))
+                {
+                    if (!projKey.empty())
+                    {
+                        if (cfgAdapter[0]) dbgProjectAdapter[projKey] = cfgAdapter;
+                        else               dbgProjectAdapter.erase(projKey);
+                        std::string tgt = cfgTarget;
+                        if (!tgt.empty() && cfgArgs[0])
+                            tgt += std::string("|") + cfgArgs;
+                        if (!tgt.empty()) dbgProjectTarget[projKey] = tgt;
+                        else              dbgProjectTarget.erase(projKey);
+                    }
+                    if (!ext.empty())
+                    {
+                        if (cfgExtAdapter[0]) debugAdapterOverrides[ext] = cfgExtAdapter;
+                        else                  debugAdapterOverrides.erase(ext);
+                    }
+                    saveSettings();
+                    pushToast("Debug configuration saved", IM_COL32(120, 200, 120, 255));
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Detect Adapters"))
+                    nativeAdapterDetected = false;   // re-probe on next resolution
+
+                // Detection readout — what the native (C/C++) fallback found.
+                {
+                    std::string type;
+                    std::vector<std::pair<std::string, std::string>> extras;
+                    auto nat = debugAdapterFor(".cpp", {}, type, extras);
+                    if (nat.empty())
+                        ImGui::TextDisabled("native (C/C++): none found — install VS Code C++ tools, lldb-dap, or gdb 14+");
+                    else
+                    {
+                        std::string s;
+                        for (size_t i = 0; i < nat.size(); ++i)
+                            s += (i ? " " : "") + nat[i];
+                        ImGui::TextDisabled("native (C/C++): %s", s.c_str());
+                    }
+                    ImGui::TextDisabled("python: debugpy via the project interpreter (pip install debugpy)");
+                }
+            }
         }
         else
         {
