@@ -23,6 +23,9 @@ read `tag-commits-gsha`.
   commands** through the plugin API, gated by file type and/or project type: the
   Unreal plugin's entries (build, clangd DB, launch editor, class wizard, ...)
   appear only in Unreal projects; the terminal plugin adds Terminal: Toggle.
+- **PDF viewer is now a plugin** (`imguiide_pdfview`, 5th DLL): .pdf claims go
+  through the plugin openFile hook, the C++/WinRT dependency moved off the core
+  exe, and the viewer toggles in Settings ▸ Plugins.
 - **C++ code generation is now a plugin** (`imguiide_cppgen`, 4th DLL): Generate
   Definition / Definitions-for-class / Declaration in the editor context menu,
   contributed through the new plugin `onDocumentContextMenu` hook — the core

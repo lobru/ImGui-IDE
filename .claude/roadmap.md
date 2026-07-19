@@ -128,8 +128,10 @@ that is still genuinely outstanding.
      `PluginDocContext` (line/word/lineText + lineCount/docVersion memo keys);
      cppgen.{h,cpp} moved to plugins/cppgen, 4th DLL `imguiide_cppgen`; editor
      core carries zero cppgen code; selftest still covers the pure helpers.
-  2. **pdfview → plugin** (openFile claim hook already exists — same pattern as
-     the uasset inspector).
+  2. [x] **pdfview → plugin** (2026-07-19) — 5th DLL `imguiide_pdfview`; claims
+     .pdf via the openFile hook (isBinaryExt path), windows render in onFrame,
+     pan via hostMiddleMousePanScroll(111). C++/WinRT (windowsapp) moved off
+     the core exe into the plugin DLL.
   3. **notes → plugin** (needs marker + gutter-click host APIs — blocked on the
      refreshMarkers composer above).
   4. **debugger → plugin** (BIGGEST: needs host APIs for markers, F-key keybind

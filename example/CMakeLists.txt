@@ -110,7 +110,6 @@ add_executable(example
 	command_palette.cpp
 	search_async.cpp
 	updater.cpp
-	pdfview.cpp
 	notes.cpp
 	screenshot.cpp
 	plugin_registry.cpp
@@ -131,10 +130,11 @@ option(IMGUIIDE_PLUGIN_UNREAL "Build the Unreal Engine integration plugin (DLL)"
 option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_TERMINAL "Build the integrated terminal plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_CPPGEN "Build the C++ code generation plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_PDF "Build the in-app PDF viewer plugin (DLL, Windows)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
@@ -220,10 +220,25 @@ if(IMGUIIDE_PLUGIN_CPPGEN)
 	target_compile_definitions(imguiide_cppgen PRIVATE IMGUIIDE_PLUGIN_CPPGEN=1)
 endif()
 
-# In-app updater talks to GitHub over HTTPS via WinHTTP; the PDF viewer uses the
-# OS PDF engine via C++/WinRT (windowsapp). Both Windows only.
+if(IMGUIIDE_PLUGIN_PDF)
+	# In-app PDF viewer: claims .pdf via the plugin openFile hook; pages rendered
+	# by the OS PDF engine (Windows.Data.Pdf via C++/WinRT — POSIX builds get the
+	# clear-error stub from pdfview.cpp).
+	imguiide_add_plugin(imguiide_pdfview createPdfViewPlugin
+		plugins/pdfview/pdf_plugin.cpp
+		plugins/pdfview/pdfview.cpp)
+	target_include_directories(imguiide_pdfview PRIVATE plugins/pdfview)
+	target_compile_definitions(imguiide_pdfview PRIVATE IMGUIIDE_PLUGIN_PDF=1)
+	if(WIN32)
+		target_link_libraries(imguiide_pdfview PRIVATE windowsapp)
+	endif()
+endif()
+
+# In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only). The PDF
+# viewer's C++/WinRT dependency moved into the pdfview plugin DLL; windowsapp
+# stays off the core exe.
 if(WIN32)
-	target_link_libraries(example PRIVATE winhttp windowsapp)
+	target_link_libraries(example PRIVATE winhttp)
 endif()
 
 # Brand the output binary ImGui-IDE(.exe). The CMake target stays `example` (so
