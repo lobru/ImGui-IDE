@@ -638,14 +638,22 @@ std::optional<std::filesystem::path> UnrealPlugin::resolveInclude(const std::fil
                                                                   const std::string &include)
 {
     auto uproj = unreal::findUProject(docDir);
-    if (uproj.empty())
-        return std::nullopt;
-    std::string assoc;
-    auto engine = unreal::findEngineRoot(uproj, assoc);
-    auto hit = unreal::resolveInclude(engine, uproj, include);
-    if (hit.empty())
-        return std::nullopt;
-    return hit;
+    if (!uproj.empty())
+    {
+        std::string assoc;
+        auto engine = unreal::findEngineRoot(uproj, assoc);
+        if (auto hit = unreal::resolveInclude(engine, uproj, include); !hit.empty())
+            return hit;
+    }
+    // No .uproject above the doc — but if the doc lives in an engine tree (an
+    // engine header browsed via "Open Elsewhere"), resolve engine-relative
+    // includes against that engine directly (empty uproject skips project steps).
+    if (auto engine = unreal::findEngineRootFromPath(docDir); !engine.empty())
+    {
+        if (auto hit = unreal::resolveInclude(engine, {}, include); !hit.empty())
+            return hit;
+    }
+    return std::nullopt;
 }
 
 std::optional<PluginSourceRoot> UnrealPlugin::extraSourceRoot(const std::filesystem::path &projectRoot)

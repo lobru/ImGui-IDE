@@ -74,6 +74,11 @@ std::filesystem::path editorBinary(const std::filesystem::path& engineRoot);
 const std::vector<std::string>& descriptorWords(const std::filesystem::path& engineRoot,
 												const std::filesystem::path& projectDir);
 
+// Walk up from a path to the engine root that owns it (the ancestor whose
+// Engine/Source subtree exists), or empty. Lets engine headers opened outside
+// any .uproject still resolve their engine-relative includes.
+std::filesystem::path findEngineRootFromPath(const std::filesystem::path& searchStart);
+
 // Resolve a UE-style module-relative include ("GameFramework/Actor.h",
 // "CoreMinimal.h", "Actor.generated.h") against the project's and engine's module
 // include roots (<Module>/Public, <Module>/Classes, module root), project plugins,

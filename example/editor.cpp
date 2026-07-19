@@ -10538,9 +10538,24 @@ void Editor::renderDocumentWindow(TabDocument &t)
                                      projectRoot, std::filesystem::directory_options::skip_permission_denied, ec);
                                  !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
                             {
-                                if (it.depth() > 4)
-                                {
+                                // Prune below a generous cap — but only stop
+                                // RECURSING; still test the current entry. The old
+                                // `>4 → continue` skipped files sitting AT the cap,
+                                // so nested layouts like a submodule SDK
+                                // (deps/submodules/UESDK/src/sdk/Foo.hpp, depth 5)
+                                // never matched. Deep enough for vendored trees,
+                                // shallow enough to stay bounded with the budget.
+                                if (it.depth() > 9)
                                     it.disable_recursion_pending();
+                                if (it->is_directory(ec))
+                                {
+                                    // Skip heavy non-source trees so the file budget
+                                    // reaches real dependency headers.
+                                    auto dn = it->path().filename().string();
+                                    if (dn == ".git" || dn == "node_modules" || dn == "Binaries" ||
+                                        dn == "Intermediate" || dn == "DerivedDataCache" ||
+                                        dn == "build" || dn == "out" || dn == ".vs")
+                                        it.disable_recursion_pending();
                                     continue;
                                 }
                                 if (++depth > 50000)

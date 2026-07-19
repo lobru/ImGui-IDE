@@ -130,6 +130,25 @@ std::filesystem::path findUProject(const std::filesystem::path& searchStart)
 	return {};
 }
 
+std::filesystem::path findEngineRootFromPath(const std::filesystem::path& searchStart)
+{
+	// When a header is opened straight out of the engine tree (no .uproject to
+	// walk up to), the engine root is the ancestor whose "Engine" subdir holds
+	// "Source" — i.e. <Root>/Engine/Source/... The engine's own "Engine" MODULE
+	// (Source/Runtime/Engine) has no Source child, so this can't false-match it.
+	std::error_code ec;
+	auto cur = searchStart;
+	for (int depth = 0; depth < 16 && !cur.empty(); ++depth)
+	{
+		if (std::filesystem::is_directory(cur / "Engine" / "Source", ec))
+			return cur;
+		if (!cur.has_parent_path() || cur.parent_path() == cur)
+			break;
+		cur = cur.parent_path();
+	}
+	return {};
+}
+
 bool isPluginDescriptor(const std::filesystem::path& descriptor)
 {
 	auto ext = descriptor.extension().string();

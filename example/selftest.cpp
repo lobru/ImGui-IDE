@@ -1635,6 +1635,17 @@ int main(int argc, char** argv)
 		CHECK(unreal::resolveInclude(engine, uproj, "NoSuch/Header.h").empty(),
 			"UE: unknown include stays empty");
 
+		// ── Engine header browsed with NO .uproject above it (Open Elsewhere):
+		//    engine root recovered from the header's own path, so engine-relative
+		//    includes still resolve. This is the "Go to File does nothing on an
+		//    engine header" bug. ──
+		CHECK(unreal::findEngineRootFromPath(engHdr.parent_path()) == engine,
+			"UE: engine root recovered from an engine header path");
+		CHECK(unreal::findEngineRootFromPath(gameHdr.parent_path()).empty(),
+			"UE: a project header path has no engine root above it");
+		CHECK(unreal::resolveInclude(engine, {}, "GameFramework/Actor.h") == engHdr,
+			"UE: engine include resolves with an empty uproject (engine-only root)");
+
 		// Descriptor autocomplete: schema words + discovered module/plugin names.
 		mk(root / "FakeProj" / "Plugins" / "MyPlug" / "MyPlug.uplugin");
 		mk(engine / "Engine" / "Plugins" / "Runtime" / "FakePlug" / "FakePlug.uplugin");
