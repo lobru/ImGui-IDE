@@ -39,8 +39,18 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Name: "filecontext";  Description: "Add ""Open with ImGui-IDE"" to the file right-click menu";   GroupDescription: "Explorer integration:"
 Name: "dircontext";   Description: "Add ""Open with ImGui-IDE"" to the folder right-click menu"; GroupDescription: "Explorer integration:"
 
+[InstallDelete]
+; Purge stale plugin DLLs from earlier installs/manual copies BEFORE laying down
+; the fresh set — a plugin built against an older EditorPlugin vtable under a
+; newer exe dispatches into the wrong virtuals and crashes the app (the ABI
+; version now also guards this at load, but dead DLLs shouldn't linger at all).
+Type: files; Name: "{app}\plugins\*.dll"
+
 [Files]
 Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Feature plugin DLLs (terminal, cppgen, pdfview, unreal, uevr, ...) — built next
+; to the exe; the app loads every plugins/*.dll at startup.
+Source: "{#BuildDir}\plugins\*.dll"; DestDir: "{app}\plugins"; Flags: ignoreversion
 ; Source the runtime languages from the canonical example/languages/ folder so a
 ; clean checkout always packages them (independent of the build's POST_BUILD copy).
 Source: "..\example\languages\*"; DestDir: "{app}\languages"; Flags: ignoreversion recursesubdirs createallsubdirs

@@ -30,7 +30,11 @@
 class EditorPlugin;
 
 // Bump whenever PluginHost / EditorPlugin's layout or the exports below change.
-#define IMGUIIDE_PLUGIN_ABI_VERSION 1u
+//  2: EditorPlugin gained contributeKeybinds / onDocumentContextMenu /
+//     contributePaletteCommands virtuals (2026-07-19) — vtable slots shifted,
+//     so a v1 DLL under a v2 host dispatches into the WRONG functions (this
+//     exact mismatch crashed the installed build with stale plugin DLLs).
+#define IMGUIIDE_PLUGIN_ABI_VERSION 2u
 
 // Exact export names the loader resolves. Keep in sync with plugin_dll_main.cpp.
 #define IMGUIIDE_PLUGIN_ABI_VERSION_SYMBOL "imguiide_plugin_abi_version"
