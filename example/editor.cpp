@@ -7870,6 +7870,17 @@ void Editor::renderSettings()
                     {"view.palette", "Command palette", "Ctrl+Shift+P", "View", true, nullptr},
                 };
 
+                // Plugin-contributed binds join the catalogue under each plugin's
+                // own group (rebindable + persisted like the built-ins). The
+                // string storage lives in pluginKeybinds; the Bind rows only view
+                // it, so refresh the member first.
+                pluginKeybinds.clear();
+                pluginRegistry.keybinds(*this, pluginKeybinds);
+                std::vector<Bind> allBinds(std::begin(binds), std::end(binds));
+                for (auto &pk : pluginKeybinds)
+                    allBinds.push_back({pk.id.c_str(), pk.action.c_str(), pk.defaultChord.c_str(),
+                                        pk.group.c_str(), true, nullptr});
+
                 static std::string capturingId; // id of the row currently waiting for a chord
                 static int capturingFrame = 0;  // frame we started — avoid catching the click that opened us
                 static int curFrame = 0;
@@ -7881,7 +7892,7 @@ void Editor::renderSettings()
 
                 // Build the list of distinct groups in declaration order.
                 std::vector<const char *> groupOrder;
-                for (auto &b : binds)
+                for (auto &b : allBinds)
                 {
                     bool present = false;
                     for (auto g : groupOrder)
@@ -8019,7 +8030,7 @@ void Editor::renderSettings()
                         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch, 0.55f);
                         ImGui::TableSetupColumn("Shortcut", ImGuiTableColumnFlags_WidthStretch, 0.35f);
                         ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 0.10f);
-                        for (auto &b : binds)
+                        for (auto &b : allBinds)
                         {
                             if (std::strcmp(b.group, group) != 0)
                                 continue;
@@ -11930,6 +11941,20 @@ void Editor::renderMenuBar()
         else if (keybindPressed("proj.build", "F6"))
         {
             runProjectBuild();
+        }
+        else
+        {
+            // Plugin-contributed keybinds — same matcher, same override store
+            // ([keybinds] in settings), rebindable in Settings > Keybinds under
+            // each plugin's group. Collected fresh so enable/disable applies.
+            pluginKeybinds.clear();
+            pluginRegistry.keybinds(*this, pluginKeybinds);
+            for (auto &pk : pluginKeybinds)
+                if (pk.run && keybindPressed(pk.id.c_str(), pk.defaultChord.c_str()))
+                {
+                    pk.run();
+                    break;
+                }
         }
 
         // Mouse thumb buttons: X1 = back, X2 = forward (browser convention).

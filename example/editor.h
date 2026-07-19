@@ -669,6 +669,9 @@ private:
 	// Resolve a bind id to its active chord string (override or default), then
 	// test it this frame. defaultChord is used when no override exists.
 	bool keybindPressed(const char* id, const char* defaultChord) const;
+	// Plugin-contributed rebindable shortcuts, recollected each dispatch (so
+	// enable/disable applies immediately). Also read by Settings > Keybinds.
+	std::vector<PluginKeybind> pluginKeybinds;
 	// Push the editor-internal keybind overrides (edit.*/code.* with a widget
 	// action id) into every open tab's TextEditor via SetKeyChordOverride, so a
 	// rebind of e.g. "to UPPERCASE" actually takes effect inside the widget.

@@ -35,6 +35,12 @@ public:
         (void) host; (void) doc;
         add("Terminal: Toggle", [this] { visible = !visible; });
     }
+    void contributeKeybinds(PluginHost &, std::vector<PluginKeybind> &out) override
+    {
+        // VS Code's terminal chord; rebindable in Settings > Keybinds.
+        out.push_back({"terminal.toggle", "Toggle terminal", "Ctrl+`",
+                       [this] { visible = !visible; }, {}});
+    }
     void onFrame(PluginHost &host) override;
 
 private:

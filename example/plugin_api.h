@@ -54,6 +54,19 @@ struct PluginDocContext
     int         docVersion = 0;// undo index (memo key part)
 };
 
+// One rebindable app-level shortcut a plugin contributes. Shows up in
+// Settings > Keybinds under the plugin's own group, participates in the same
+// override persistence ([keybinds] in settings), and dispatches through the
+// host's chord matcher every frame the app shortcuts run.
+struct PluginKeybind
+{
+    std::string id;           // stable bind id — prefix with the plugin id ("terminal.toggle")
+    std::string action;       // human label for the Settings row
+    std::string defaultChord; // e.g. "Ctrl+`" or "Ctrl+K Ctrl+T" (two-stroke supported)
+    std::function<void()> run;
+    std::string group;        // left empty by the plugin; the registry fills the display name
+};
+
 // A build/run command a project-type provider returns. Mirrors the editor's
 // internal build-command pair: `path` is either a script FILE (run
 // `command "path"` in its parent dir) or a DIRECTORY (run `command` cd'd into
@@ -170,6 +183,10 @@ public:
     // contribute autocomplete words for a document (add() inserts one word)
     virtual void contributeAutocomplete(PluginHost &, const PluginDocInfo &,
                                         const std::function<void(const std::string &)> &) {}
+
+    // Contribute rebindable app-level keybinds (append to `out`). Collected each
+    // frame from enabled plugins; the registry stamps `group` with displayName().
+    virtual void contributeKeybinds(PluginHost &, std::vector<PluginKeybind> &) {}
 
     // Contribute items into the editor's right-click context menu (called inside
     // the popup's scope, every frame it is open — draw ImGui::MenuItem yourself

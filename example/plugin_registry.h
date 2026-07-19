@@ -110,6 +110,21 @@ public:
                 p->contributeAutocomplete(host, doc, addWord);
     }
 
+    // gather rebindable keybinds; stamps each new entry's group with the plugin name
+    void keybinds(PluginHost &host, std::vector<PluginKeybind> &out)
+    {
+        for (auto &p : plugins)
+        {
+            if (!p->enabled())
+                continue;
+            size_t start = out.size();
+            p->contributeKeybinds(host, out);
+            for (size_t i = start; i < out.size(); ++i)
+                if (out[i].group.empty())
+                    out[i].group = p->displayName();
+        }
+    }
+
     // contribute into the editor's right-click context menu (call inside the popup)
     void documentContextMenu(PluginHost &host, const PluginDocContext &ctx)
     {

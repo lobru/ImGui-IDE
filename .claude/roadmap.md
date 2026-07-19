@@ -141,8 +141,11 @@ that is still genuinely outstanding.
      openFile-jump [exists]. Files already isolated: dap_protocol/dap_client/
      debug_bridge/debugger_ui + dbg* state block in editor.h. Do AFTER the
      marker composer + a keybind-contribution hook land.)
-- [ ] Keybind-contribution hook (`contributeKeybinds`) — prerequisite for the
-      debugger split; also lets terminal/unreal own their shortcuts.
+- [x] **Keybind-contribution hook** (2026-07-19) — `PluginKeybind` +
+      `contributeKeybinds`; registry stamps the plugin display name as the
+      Settings group; binds dispatch through the same chord matcher/override
+      store and are rebindable in Settings ▸ Keybinds. Terminal contributes
+      "Ctrl+`" toggle. Unblocks the debugger split.
 
 ### UE tooling
 - [x] **.uplugin repos recognized as UE projects** (3728573) — engine-source nav +

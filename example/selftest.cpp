@@ -2042,6 +2042,35 @@ int main(int argc, char** argv)
 			reg.setEnabled(host, *raw, false);
 			CHECK(collect(".lua").empty(), "palette: disabled plugin contributes nothing");
 		}
+
+		// ── Keybind contributions: fan-out, group stamping, enable gating ──
+		{
+			struct KbPlugin : EditorPlugin {
+				const char* id() const override { return "selftest.kb"; }
+				const char* displayName() const override { return "Selftest keybinds"; }
+				void contributeKeybinds(PluginHost&, std::vector<PluginKeybind>& out) override
+				{
+					out.push_back({"selftest.kb.act", "Do the thing", "Ctrl+F12", [] {}, {}});
+				}
+			};
+			FlagHost host;
+			PluginRegistry reg;
+			auto up = std::make_unique<KbPlugin>();
+			KbPlugin* raw = up.get();
+			reg.add(std::move(up));
+			reg.registerAll(host);
+
+			std::vector<PluginKeybind> kbs;
+			reg.keybinds(host, kbs);
+			CHECK(kbs.size() == 1 && kbs[0].id == "selftest.kb.act" && kbs[0].defaultChord == "Ctrl+F12",
+				"keybinds: plugin bind collected with id + default chord");
+			CHECK(kbs[0].group == "Selftest keybinds",
+				"keybinds: registry stamps the plugin display name as the group");
+			kbs.clear();
+			reg.setEnabled(host, *raw, false);
+			reg.keybinds(host, kbs);
+			CHECK(kbs.empty(), "keybinds: disabled plugin contributes nothing");
+		}
 	}
 
 	// ── Debug adapter type inference (project-adapter command lines) ─────────

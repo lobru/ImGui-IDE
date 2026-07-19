@@ -23,6 +23,9 @@ read `tag-commits-gsha`.
   commands** through the plugin API, gated by file type and/or project type: the
   Unreal plugin's entries (build, clangd DB, launch editor, class wizard, ...)
   appear only in Unreal projects; the terminal plugin adds Terminal: Toggle.
+- **Plugins can contribute keyboard shortcuts**: rebindable app-level binds
+  that appear in Settings ▸ Keybinds under the plugin's own group and persist
+  overrides like the built-ins — the terminal plugin ships Ctrl+` to toggle.
 - **PDF viewer is now a plugin** (`imguiide_pdfview`, 5th DLL): .pdf claims go
   through the plugin openFile hook, the C++/WinRT dependency moved off the core
   exe, and the viewer toggles in Settings ▸ Plugins.
