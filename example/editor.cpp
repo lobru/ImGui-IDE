@@ -1734,10 +1734,21 @@ void Editor::addSourceLocation(const std::string &path)
         return;
     auto canon = std::filesystem::weakly_canonical(path, ec);
     std::string key = ec ? path : canon.string();
-    // De-dupe (and don't re-add the project root itself).
+    while (key.size() > 1 && (key.back() == '\\' || key.back() == '/'))
+        key.pop_back(); // trailing-separator spellings must not create a second entry
+    // De-dupe, case-insensitively on Windows (the same dir reached via a
+    // different case/spelling must not become a second entry) — and don't
+    // re-add the project root itself.
     for (auto &e : extraSourceLocations)
+    {
+#ifdef _WIN32
+        if (_stricmp(e.c_str(), key.c_str()) == 0)
+            return;
+#else
         if (e == key)
             return;
+#endif
+    }
     if (!projectRoot.empty())
     {
         auto pc = std::filesystem::weakly_canonical(projectRoot, ec);
@@ -7085,8 +7096,29 @@ void Editor::loadSettings()
             }
             else if (k == "extra_src")
             {
+                // Canonicalize + case-insensitive de-dupe. Earlier builds could
+                // persist the same root repeatedly (different case/slashes beat
+                // the exact-string check), and every duplicate rendered another
+                // identical "(source)" tree in the nav panel — with clashing
+                // ImGui IDs on their context menus.
                 if (!v.empty())
-                    extraSourceLocations.push_back(v);
+                {
+                    std::error_code cec;
+                    auto canon = std::filesystem::weakly_canonical(v, cec);
+                    std::string key = cec ? v : canon.string();
+                    while (key.size() > 1 && (key.back() == '\\' || key.back() == '/'))
+                        key.pop_back();
+                    bool dup = std::any_of(extraSourceLocations.begin(), extraSourceLocations.end(),
+                                           [&](const std::string &e) {
+#ifdef _WIN32
+                                               return _stricmp(e.c_str(), key.c_str()) == 0;
+#else
+                                               return e == key;
+#endif
+                                           });
+                    if (!dup)
+                        extraSourceLocations.push_back(key);
+                }
             }
             else if (k == "nav_path_wrap")
                 navPathWrap = (v == "1" || v == "true");
