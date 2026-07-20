@@ -42,24 +42,37 @@ TerminalPlugin::~TerminalPlugin()
 
 void TerminalPlugin::readerLoop(std::shared_ptr<Session> s)
 {
+    // Capture the read handle ONCE. stopSession closes the session's copy to
+    // unblock our ReadFile; we must not re-read s->hStdoutRead afterward (it may
+    // have been nulled/reused), so a local captured value is the safe contract.
     char buf[4096];
+#ifdef _WIN32
+    void *readHandle = s->hStdoutRead;
+#else
+    int readFd = s->stdoutRead;
+#endif
     for (;;)
     {
 #ifdef _WIN32
         DWORD read = 0;
-        BOOL ok = ReadFile(s->hStdoutRead, buf, sizeof(buf), &read, nullptr);
+        BOOL ok = ReadFile(readHandle, buf, sizeof(buf), &read, nullptr);
         if (!ok || read == 0)
             break;
 #else
-        ssize_t read = ::read(s->stdoutRead, buf, sizeof(buf));
+        ssize_t read = ::read(readFd, buf, sizeof(buf));
         if (read <= 0)
             break;
 #endif
         std::lock_guard<std::mutex> lk(s->mutex);
-        appendCapped(s->output, buf, (size_t)read);
+        appendCapped(s->output, buf, (size_t) read);
     }
     s->readerDone.store(true);
     s->alive.store(false);
+    // The shared_ptr `s` (this thread's own reference) drops here as the thread
+    // exits. Because the reader is DETACHED and no std::thread lives inside
+    // Session, this can safely be the last reference — ~Session runs with no
+    // joinable thread to destroy (the old design self-terminated: a std::thread
+    // member destroyed from within its own thread aborts()).
 }
 
 void TerminalPlugin::startSession(PluginHost &host)
@@ -160,7 +173,11 @@ void TerminalPlugin::startSession(PluginHost &host)
 #endif
 
     s->alive.store(true);
-    s->reader = std::thread(&TerminalPlugin::readerLoop, s);
+    // DETACHED: the reader owns a shared_ptr copy of `s`, so the Session (and its
+    // pipe handles) outlive this call and stay valid until the reader drains and
+    // drops its reference. No std::thread lives in Session — that let a joinable
+    // thread be destroyed from within itself and abort()ed the process.
+    std::thread(&TerminalPlugin::readerLoop, s).detach();
     session = s;
     startedForRoot = s->cwd;
 }
@@ -170,39 +187,38 @@ void TerminalPlugin::stopSession()
     if (!session)
         return;
 
+    // Drop the plugin's reference; the detached reader still holds one, so the
+    // Session lives until the reader exits. We only kill the child and close the
+    // handles here — closing the read end unblocks the reader's ReadFile, it
+    // sees the failure, exits, and releases the last reference (frees Session).
     auto s = session;
     session.reset();
+    s->alive.store(false);
 
 #ifdef _WIN32
     if (s->hProcess)
     {
-        TerminateProcess((HANDLE)s->hProcess, 0);
-        // closing the read end unblocks the reader thread's ReadFile
+        TerminateProcess((HANDLE) s->hProcess, 0);
+        CloseHandle((HANDLE) s->hProcess);
     }
     if (s->hStdinWrite)
-        CloseHandle((HANDLE)s->hStdinWrite);
+        CloseHandle((HANDLE) s->hStdinWrite);
     if (s->hStdoutRead)
-        CloseHandle((HANDLE)s->hStdoutRead);
-    if (s->reader.joinable())
-        s->reader.join();
-    if (s->hProcess)
-        CloseHandle((HANDLE)s->hProcess);
+        CloseHandle((HANDLE) s->hStdoutRead); // unblocks the reader's ReadFile
     s->hProcess = s->hStdinWrite = s->hStdoutRead = nullptr;
 #else
     if (s->pid > 0)
+    {
         kill(s->pid, SIGKILL);
+        waitpid(s->pid, nullptr, WNOHANG);   // reap without blocking the UI thread
+    }
     if (s->stdinWrite >= 0)
         close(s->stdinWrite);
     if (s->stdoutRead >= 0)
-        close(s->stdoutRead);
-    if (s->reader.joinable())
-        s->reader.join();
-    if (s->pid > 0)
-        waitpid(s->pid, nullptr, 0);
+        close(s->stdoutRead); // unblocks the reader's read()
     s->pid = -1;
     s->stdinWrite = s->stdoutRead = -1;
 #endif
-    s->alive.store(false);
 }
 
 void TerminalPlugin::sendLine(const std::string &line)

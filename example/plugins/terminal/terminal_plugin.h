@@ -65,7 +65,10 @@ private:
         int stdinWrite = -1;
         int stdoutRead = -1;
 #endif
-        std::thread reader;
+        // NO std::thread member: the reader is DETACHED and holds a shared_ptr to
+        // this Session, so Session must be destroyable from the reader thread
+        // itself (last ref). A joinable std::thread destroyed from within its own
+        // thread calls std::terminate() — the crash this design avoids.
     };
 
     std::shared_ptr<Session> session;
