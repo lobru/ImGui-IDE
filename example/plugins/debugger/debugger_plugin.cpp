@@ -176,6 +176,16 @@ std::vector<std::string> DebuggerPlugin::adapterFor(PluginHost &host, const std:
             python = "python";
         return {python, "-m", "debugpy.adapter"};
     }
+    // .NET (C#): the MANAGED vsdbg (coreclr engine). netcoredbg is the fallback.
+    if (ext == ".cs" || ext == ".fs" || ext == ".vb")
+    {
+        typeOut = "coreclr";
+        if (auto vsdbg = dbgbridge::findVsdbgManaged(); !vsdbg.empty())
+            return {vsdbg, "--interpreter=vscode"};
+        if (auto nc = dbgbridge::findNetcoredbg(); !nc.empty())
+            return {nc, "--interpreter=vscode"};
+        return {};
+    }
     if (isNativeDebugExt(ext))
     {
         if (!nativeAdapterDetected)
@@ -308,14 +318,16 @@ void DebuggerPlugin::startSession(PluginHost &host)
         panelVisible = true;   // put the fix next to the failure
         return;
     }
-    // C-family sources aren't the debuggee — the built executable is (unless an
-    // explicit project target already names the program).
-    if (projProgram.empty() && isNativeDebugExt(ext) && ext != ".exe")
+    // C-family sources AND .NET (coreclr) sources aren't the debuggee — the
+    // built executable is (unless an explicit project target names the program).
+    bool needsBuiltExe = (isNativeDebugExt(ext) && ext != ".exe") || type == "coreclr";
+    if (projProgram.empty() && needsBuiltExe)
     {
         auto exe = host.hostFindBuiltExe();
         if (exe.empty())
         {
             host.hostToast("Debug: no built executable found — build first (F6)");
+            host.hostRunProjectBuild();   // kick a build; user can hit Start again
             return;
         }
         prog = exe;

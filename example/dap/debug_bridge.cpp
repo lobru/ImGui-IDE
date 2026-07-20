@@ -101,28 +101,112 @@ std::string envPath(const char* var)
 	return (v && *v && fileExists(v)) ? std::string(v) : std::string();
 }
 
-// Newest ms-vscode.cpptools extension dir under ~/.vscode/extensions (the
-// version is embedded in the dir name; lexicographic max is close enough).
-std::filesystem::path newestCppToolsDir()
+std::filesystem::path vscodeExtensionsDir()
 {
 	const char* home = std::getenv("USERPROFILE");
 	if (!home || !*home)
 		home = std::getenv("HOME");
 	if (!home || !*home)
 		return {};
-	std::filesystem::path ext = std::filesystem::path(home) / ".vscode" / "extensions";
+	return std::filesystem::path(home) / ".vscode" / "extensions";
+}
+
+// Newest ms-vscode.cpptools-<version> extension dir that ACTUALLY CONTAINS the
+// requested relative file. The bare `ms-vscode.cpptools-` prefix also matches
+// `-themes` and `-extension-pack` (neither ships a debugger), and those sort
+// AFTER a `-1.33.4` version string lexicographically — so a plain "newest by
+// name" pick silently returned a debugger-less dir and vsdbg was never found
+// (C++ debugging did nothing). Validating the payload avoids that entirely.
+std::filesystem::path newestCppToolsWith(const std::filesystem::path& relFile)
+{
+	auto ext = vscodeExtensionsDir();
+	if (ext.empty())
+		return {};
 	std::error_code ec;
 	std::filesystem::path best;
+	std::string bestName;
 	for (auto& e : std::filesystem::directory_iterator(ext, ec))
 	{
 		if (ec)
 			break;
 		auto name = e.path().filename().string();
-		if (name.rfind("ms-vscode.cpptools-", 0) == 0 &&
-			(best.empty() || e.path().filename().string() > best.filename().string()))
+		if (name.rfind("ms-vscode.cpptools-", 0) != 0)
+			continue;
+		// Must be a versioned build (next char is a digit), not -themes / -pack.
+		if (name.size() <= 19 || !std::isdigit((unsigned char) name[19]))
+			continue;
+		if (!fileExists(e.path() / relFile))
+			continue;
+		if (bestName.empty() || name > bestName)
+		{
+			bestName = name;
 			best = e.path();
+		}
 	}
 	return best;
+}
+
+// vsdbg from the C# extension (ms-dotnettools.csharp) — this is the managed
+// (.NET / coreclr) debugger. Newest that contains vsdbg.exe wins.
+std::filesystem::path csharpVsdbg()
+{
+	auto ext = vscodeExtensionsDir();
+	if (ext.empty())
+		return {};
+	std::error_code ec;
+	std::filesystem::path best;
+	std::string bestName;
+	for (auto& e : std::filesystem::directory_iterator(ext, ec))
+	{
+		if (ec)
+			break;
+		auto name = e.path().filename().string();
+		if (name.rfind("ms-dotnettools.csharp-", 0) != 0)
+			continue;
+		std::filesystem::path candidates[] = {
+			e.path() / ".debugger" / "x86_64" / "vsdbg.exe",
+			e.path() / ".debugger" / "vsdbg.exe",
+			e.path() / ".debugger" / "vsdbg",
+		};
+		for (auto& c : candidates)
+			if (fileExists(c) && (bestName.empty() || name > bestName))
+			{
+				bestName = name;
+				best = c;
+			}
+	}
+	return best;
+}
+
+// vsdbg bundled with a Visual Studio install (Common7/IDE/vsdbg/vsdbg.exe).
+std::filesystem::path vsInstallVsdbg()
+{
+	const char* pf = std::getenv("ProgramFiles");
+	const char* pf86 = std::getenv("ProgramFiles(x86)");
+	for (const char* base : {pf, pf86})
+	{
+		if (!base || !*base)
+			continue;
+		auto vsRoot = std::filesystem::path(base) / "Microsoft Visual Studio";
+		std::error_code ec;
+		if (!std::filesystem::is_directory(vsRoot, ec))
+			continue;
+		// Walk year/edition dirs (2022/Community, 18/Insiders, …), depth 2.
+		for (auto it = std::filesystem::recursive_directory_iterator(
+				 vsRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+			 !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+		{
+			if (it.depth() > 2)
+			{
+				it.disable_recursion_pending();
+				continue;
+			}
+			auto p = it->path() / "Common7" / "IDE" / "vsdbg" / "vsdbg.exe";
+			if (fileExists(p))
+				return p;
+		}
+	}
+	return {};
 }
 
 } // namespace
@@ -162,18 +246,48 @@ std::string findVsdbg()
 {
 	if (auto p = envPath("VSDBG_PATH"); !p.empty())
 		return p;
-	auto dir = newestCppToolsDir();
-	if (dir.empty())
-		return {};
-	auto p = dir / "debugAdapters" / "vsdbg" / "bin" / "vsdbg.exe";
-	return fileExists(p) ? p.string() : std::string();
+	// VS Code C++ tools first (the cppvsdbg engine ships here)…
+	if (auto dir = newestCppToolsWith(std::filesystem::path("debugAdapters") / "vsdbg" / "bin" / "vsdbg.exe");
+		!dir.empty())
+		return (dir / "debugAdapters" / "vsdbg" / "bin" / "vsdbg.exe").string();
+	// …then the C# extension's copy, then a full Visual Studio install.
+	if (auto p = csharpVsdbg(); !p.empty())
+		return p.string();
+	if (auto p = vsInstallVsdbg(); !p.empty())
+		return p.string();
+	return {};
+}
+
+std::string findVsdbgManaged()
+{
+	if (auto p = envPath("VSDBG_PATH"); !p.empty())
+		return p;
+	// For .NET the C# extension's vsdbg is the canonical one; any vsdbg speaks
+	// coreclr though, so fall back to the C++ / VS copies.
+	if (auto p = csharpVsdbg(); !p.empty())
+		return p.string();
+	if (auto dir = newestCppToolsWith(std::filesystem::path("debugAdapters") / "vsdbg" / "bin" / "vsdbg.exe");
+		!dir.empty())
+		return (dir / "debugAdapters" / "vsdbg" / "bin" / "vsdbg.exe").string();
+	if (auto p = vsInstallVsdbg(); !p.empty())
+		return p.string();
+	return {};
+}
+
+std::string findNetcoredbg()
+{
+	if (auto p = envPath("NETCOREDBG_PATH"); !p.empty())
+		return p;
+	return commandOnPath("netcoredbg") ? std::string("netcoredbg") : std::string();
 }
 
 std::string findOpenDebugAD7()
 {
 	if (auto p = envPath("OPENDEBUGAD7_PATH"); !p.empty())
 		return p;
-	auto dir = newestCppToolsDir();
+	auto dir = newestCppToolsWith(std::filesystem::path("debugAdapters") / "bin" / "OpenDebugAD7.exe");
+	if (dir.empty())
+		dir = newestCppToolsWith(std::filesystem::path("debugAdapters") / "bin" / "OpenDebugAD7");
 	if (dir.empty())
 		return {};
 	for (const char* leaf : {"OpenDebugAD7.exe", "OpenDebugAD7"})

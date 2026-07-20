@@ -62,7 +62,10 @@ std::vector<std::string> devenvDebugExe(const std::string& devenvPath,
 // RADDBG_PATH / DEVENV_PATH / VSDBG_PATH / OPENDEBUGAD7_PATH.
 std::string findRadDbg();
 std::string findDevenv();        // vswhere-known VS install dirs
-std::string findVsdbg();         // VS Code ms-vscode.cpptools ext (cppvsdbg engine)
+std::string findVsdbg();         // NATIVE C/C++ vsdbg (cppvsdbg engine): VS Code
+                                 // C++ tools, else C# ext, else a VS install
+std::string findVsdbgManaged();  // MANAGED .NET vsdbg (coreclr engine): C# ext first
+std::string findNetcoredbg();    // Samsung netcoredbg on PATH (.NET fallback)
 std::string findOpenDebugAD7();  // VS Code ms-vscode.cpptools ext (MIEngine)
 
 // True if `name` resolves to an executable on PATH (checks name and name.exe).

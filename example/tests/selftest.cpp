@@ -2127,6 +2127,17 @@ int main(int argc, char** argv)
 			"dbg: lldb-dap sends no launch type");
 		CHECK(inferAdapterType({"gdb", "-i", "dap"}).empty(),
 			"dbg: gdb -i dap sends no launch type");
+
+		// Detection is environment-dependent (CI has no adapters installed) — the
+		// contract we CAN assert everywhere is that every finder is total: it
+		// returns a path or "", never crashes / throws on the directory walks.
+		(void) dbgbridge::findVsdbg();
+		(void) dbgbridge::findVsdbgManaged();
+		(void) dbgbridge::findNetcoredbg();
+		(void) dbgbridge::findOpenDebugAD7();
+		(void) dbgbridge::findRadDbg();
+		(void) dbgbridge::findDevenv();
+		CHECK(true, "dbg: adapter finders are total (no crash on the discovery walks)");
 	}
 
 	// ── C++ definition / declaration generation ───────────────────────────
