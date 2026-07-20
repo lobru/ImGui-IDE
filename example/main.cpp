@@ -534,7 +534,14 @@ int main(int argc, char** argv) {
 		// (Why an offscreen copy instead of downloading the swapchain texture: a
 		// swapchain image is not a valid copy source on every backend.)
 		std::string shotPath;
-		if (editor.consumeScreenshotRequest(shotPath) && swapchain_texture != nullptr && !is_minimized) {
+		if (editor.consumeScreenshotRequest(shotPath)) {
+			// Every failure below reports through onScreenshotWritten(false) so a
+			// broken capture gives the user a toast instead of silently doing
+			// nothing (the "screenshot doesn't work" report had no error at all).
+			bool shotOk = false;
+			if (swapchain_texture == nullptr || is_minimized) {
+				editor.onScreenshotWritten(false, shotPath);
+			} else {
 			const Uint32 w = (Uint32)(draw_data->DisplaySize.x * draw_data->FramebufferScale.x);
 			const Uint32 h = (Uint32)(draw_data->DisplaySize.y * draw_data->FramebufferScale.y);
 			const SDL_GPUTextureFormat fmt = SDL_GetGPUSwapchainTextureFormat(gpu_device, window);
@@ -594,16 +601,21 @@ int main(int argc, char** argv) {
 						    fmt == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM_SRGB)
 							screenshot::bgraToRgba(pixels.data(), pixels.size());
 
-						const bool ok = screenshot::writePng(shotPath, pixels.data(), (int)w, (int)h, (int)(w * 4));
-						editor.onScreenshotWritten(ok, shotPath);
+						shotOk = screenshot::writePng(shotPath, pixels.data(), (int)w, (int)h, (int)(w * 4));
+					} else {
+						SDL_Log("screenshot: MapGPUTransferBuffer failed: %s", SDL_GetError());
 					}
+				} else {
+					SDL_Log("screenshot: SubmitAndAcquireFence failed: %s", SDL_GetError());
 				}
 			} else {
-				editor.onScreenshotWritten(false, shotPath);
+				SDL_Log("screenshot: could not create GPU texture/transfer buffer: %s", SDL_GetError());
 			}
+			editor.onScreenshotWritten(shotOk, shotPath);   // always report (toast on failure)
 
 			if (shot) SDL_ReleaseGPUTexture(gpu_device, shot);
 			if (xfer) SDL_ReleaseGPUTransferBuffer(gpu_device, xfer);
+			} // end swapchain-valid branch
 		}
 
 		// submit the command buffer (unless the screenshot path already did, to fence)

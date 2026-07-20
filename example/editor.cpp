@@ -9439,6 +9439,8 @@ void Editor::pollOpenInbox()
                 openFile(arg);
             else if (verb == "raise")
                 wantRaiseWindow = true;
+            else if (verb == "screenshot")
+                requestScreenshot();   // headless-triggerable capture (for testing)
         }
     }
 }
