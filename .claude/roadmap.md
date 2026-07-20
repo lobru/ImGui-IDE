@@ -30,13 +30,13 @@ that is still genuinely outstanding.
 - [x] **Text-tools plugin** (a0ec237, 6th DLL; hostReplaceSelection added, ABI 3): json<->xml, json minify/pretty, sort
       lines/selection (numeric/alpha, asc/desc), case convert selection
       (camel/snake/upper/lower/title). Needs hostReplaceSelection host API.
-- [ ] **Markdown preview: fenced code blocks** syntax-highlighted (we own a
+- [x] **Markdown preview: fenced code blocks** (50f7381) syntax-highlighted (we own a
       highlighting editor — use its colorizer, or render mono + per-token colors).
-- [ ] **File-structure reorg**: features into folders; only editor.{h,cpp} +
+- [x] **File-structure reorg** (5bfb701): features into folders; only editor.{h,cpp} +
       main.cpp stay top-level in example/.
-- [ ] **Appearance settings**: line spacing, fold-preview style/spacing, more
+- [x] **Appearance settings** (3248abc): line spacing, fold-preview gap/rounding/opacity, more
       functional visual knobs.
-- [ ] **Symbols viewer**: more language/project aware (group by construct per
+- [x] **Symbols viewer** (027648c): Types view grouped by construct, external-source section (group by construct per
       language, project-type sections).
 
 ## 🔧 Open
