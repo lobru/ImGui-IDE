@@ -6597,6 +6597,52 @@ void Editor::renderMarkdownPreview()
         std::istringstream ss(mdCacheText);
         std::string line;
         bool inCode = false;
+        std::string codeTag, codeBuf;
+        int codeBlockIdx = 0;
+        size_t mdCodeUsed = 0;
+
+        // Emit one fenced block as an embedded read-only TextEditor — the same
+        // widget/colorizer the editor itself uses, so ```cpp / ```lua / ```json
+        // render fully syntax-highlighted. Widgets are cached per block and only
+        // re-set when the block's content or tag changes.
+        auto emitCodeBlock = [&]() {
+            std::string cacheKey = codeTag + "\x1f" + codeBuf;
+            if (mdCodeUsed >= mdCodeEditors.size())
+                mdCodeEditors.push_back(std::make_unique<MdCodeBlock>());
+            auto &blk = *mdCodeEditors[mdCodeUsed];
+            if (blk.key != cacheKey)
+            {
+                blk.key = cacheKey;
+                blk.ed.SetText(codeBuf);
+                blk.ed.SetReadOnlyEnabled(true);
+                blk.ed.SetShowLineNumbersEnabled(false);
+                blk.ed.SetShowScrollbarMiniMapEnabled(false);
+                // Fence tag -> language: try it as an extension, then aliases.
+                std::string tag = codeTag;
+                std::transform(tag.begin(), tag.end(), tag.begin(),
+                               [](unsigned char c) { return (char) std::tolower(c); });
+                if (tag == "c++" || tag == "cplusplus") tag = "cpp";
+                else if (tag == "python") tag = "py";
+                else if (tag == "csharp") tag = "cs";
+                else if (tag == "javascript") tag = "js";
+                else if (tag == "typescript") tag = "ts";
+                else if (tag == "shell" || tag == "bash" || tag == "zsh") tag = "sh";
+                else if (tag == "powershell") tag = "ps1";
+                else if (tag == "markdown") tag = "md";
+                blk.ed.SetLanguage(tag.empty() ? nullptr : languageForPath("fence." + tag));
+            }
+            int lines = (std::max)(1, blk.ed.GetLineCount());
+            float h = (std::min)(lines, 24) * ImGui::GetTextLineHeightWithSpacing() +
+                      ImGui::GetStyle().FramePadding.y * 4.0f;
+            ImGui::PushID(codeBlockIdx);
+            blk.ed.Render("##mdcode", ImVec2(avail, h), /*border*/ true);
+            ImGui::PopID();
+            ++mdCodeUsed;
+            ++codeBlockIdx;
+            codeBuf.clear();
+            codeTag.clear();
+        };
+
         while (std::getline(ss, line))
         {
             if (!line.empty() && line.back() == '\r')
@@ -6604,17 +6650,31 @@ void Editor::renderMarkdownPreview()
             std::string trimmed = line;
             size_t a = trimmed.find_first_not_of(" \t");
 
-            // fenced code block toggle
+            // fenced code block toggle (info string after the fence names the language)
             if (line.rfind("```", 0) == 0 || line.rfind("~~~", 0) == 0)
             {
-                inCode = !inCode;
+                if (!inCode)
+                {
+                    codeTag = line.substr(3);
+                    size_t ts = codeTag.find_first_not_of(" \t");
+                    codeTag = ts == std::string::npos ? std::string() : codeTag.substr(ts);
+                    size_t te = codeTag.find_first_of(" \t");
+                    if (te != std::string::npos)
+                        codeTag.resize(te);
+                    codeBuf.clear();
+                    inCode = true;
+                }
+                else
+                {
+                    inCode = false;
+                    emitCodeBlock();
+                }
                 continue;
             }
             if (inCode)
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 150, 255));
-                ImGui::TextUnformatted(line.empty() ? " " : line.c_str());
-                ImGui::PopStyleColor();
+                codeBuf += line;
+                codeBuf += '\n';
                 continue;
             }
             if (a == std::string::npos)
@@ -6669,6 +6729,8 @@ void Editor::renderMarkdownPreview()
             }
             renderMarkdownInline(body, avail);
         }
+        if (inCode)
+            emitCodeBlock(); // unterminated fence at EOF still renders
         middleMousePanScroll(9); // markdown preview
     }
     ImGui::End();

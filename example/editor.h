@@ -1153,6 +1153,10 @@ private:
 	// Markdown preview — renders the active .md document (headings, lists, code
 	// fences, blockquotes, rules, and inline bold/italic/code/links).
 	bool mdPreviewVisible = false;
+	// Fenced code blocks render as embedded read-only TextEditors (real syntax
+	// highlighting). Cached per block position; re-set only when content changes.
+	struct MdCodeBlock { std::string key; TextEditor ed; };
+	std::vector<std::unique_ptr<MdCodeBlock>> mdCodeEditors;
 	void renderMarkdownPreview();
 	std::string mdCacheText;            // cached GetText() for the preview (perf)
 	std::string mdCacheKey;            // filename + undo index the cache was built for
