@@ -126,7 +126,6 @@ void Editor::buildPaletteActions()
     add("View: References Panel", "", "Core", [this] { referencesVisible = !referencesVisible; });
     add("View: Markdown Preview", "", "Core", [this] { mdPreviewVisible = !mdPreviewVisible; });
     add("View: External Changes", "", "Core", [this] { externalChangesVisible = !externalChangesVisible; });
-    add("View: Debug Panel", "", "Debugger", [this] { dbgPanelVisible = !dbgPanelVisible; });
     add("View: Developer Tools", "", "Core", [this] { devToolsVisible = !devToolsVisible; });
     add("View: Style Editor", "", "Core", [this] { showStyleEditor = !showStyleEditor; });
     add("View: Settings", "", "Core", [this] { settingsVisible = true; settingsFocusRequest = true; });
@@ -171,25 +170,7 @@ void Editor::buildPaletteActions()
     if (hasDoc)
         add("Project: Run Active Document", "", docSrc, [this] { runScriptForDoc(); });
 
-    // Debug
-    if (!dbgSessionActive)
-        add("Debug: Start Debugging", "", "Debugger", [this] { startDebugSession(); });
-    else
-    {
-        add("Debug: Stop", "Shift+F5", "Debugger", [this] { stopDebugSession(); });
-        if (dbgStopped)
-        {
-            add("Debug: Continue", "F5", "Debugger", [this] { dapClient.continueExec(dbgThreadId); });
-            add("Debug: Step Over", "F10", "Debugger", [this] { dapClient.next(dbgThreadId); });
-            add("Debug: Step Into", "F11", "Debugger", [this] { dapClient.stepIn(dbgThreadId); });
-            add("Debug: Step Out", "Shift+F11", "Debugger", [this] { dapClient.stepOut(dbgThreadId); });
-        }
-    }
-    if (hasDoc)
-        add("Debug: Toggle Breakpoint", "F9", docSrc, [this] { toggleBreakpointAtCursor(); });
-    add("Debug: Configure Adapters / Target...", "", "Debugger", [this] { dbgPanelVisible = true; });
-    add("Debug: Launch in raddbg", "", "Debugger", [this] { debugInRadDbg(); });
-    add("Debug: Launch in Visual Studio", "", "Debugger", [this] { debugInVisualStudio(); });
+    // (Debugger actions come from the debugger plugin.)
 
     // Git
     add("Git: Commit...", "", "Git", [this] { gitCommitRequest = true; });

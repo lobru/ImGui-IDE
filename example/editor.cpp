@@ -1030,6 +1030,16 @@ std::filesystem::path Editor::findBuiltExe() const
     return best;
 }
 
+// Key per-project config (build/run pins etc.) on the canonical project root.
+std::string Editor::dbgProjectKey() const
+{
+    if (projectRoot.empty())
+        return {};
+    std::error_code ec;
+    auto c = std::filesystem::weakly_canonical(projectRoot, ec);
+    return ec ? projectRoot.string() : c.string();
+}
+
 // Resolve the active document to a runnable command. Saves a dirty buffer
 // first (so the run reflects on-disk state). Returns {command, workingDir};
 // the working dir is the script's own folder so relative paths in the script
@@ -7213,14 +7223,6 @@ void Editor::loadSettings()
             extLanguageOverrides()[k] = v;
         else if (section == "build")
             projectBuildOverrides[k] = v;
-        else if (section == "debug_adapters")        // ".ext" -> adapter cmdline
-            debugAdapterOverrides[k] = v;
-        else if (section == "debug_bridge")          // raddbg/devenv paths + verb templates
-            debugBridgeSettings[k] = v;
-        else if (section == "debug_project_adapter") // <project root> -> adapter cmdline
-            dbgProjectAdapter[k] = v;
-        else if (section == "debug_project_target")  // <project root> -> "program|args"
-            dbgProjectTarget[k] = v;
         else if (section == "run")                   // <project root> -> "cmd|dir" (F5 pin)
             projectRunOverrides[k] = v;
         else if (section == "palette_usage")         // action id -> "uses|lastEpoch"
@@ -7512,18 +7514,6 @@ void Editor::saveSettings()
         f << k << "=" << v << "\n";
     f << "\n[build]\n";
     for (auto &[k, v] : projectBuildOverrides)
-        f << k << "=" << v << "\n";
-    f << "\n[debug_adapters]\n";
-    for (auto &[k, v] : debugAdapterOverrides)
-        f << k << "=" << v << "\n";
-    f << "\n[debug_bridge]\n";
-    for (auto &[k, v] : debugBridgeSettings)
-        f << k << "=" << v << "\n";
-    f << "\n[debug_project_adapter]\n";
-    for (auto &[k, v] : dbgProjectAdapter)
-        f << k << "=" << v << "\n";
-    f << "\n[debug_project_target]\n";
-    for (auto &[k, v] : dbgProjectTarget)
         f << k << "=" << v << "\n";
     f << "\n[run]\n";
     for (auto &[k, v] : projectRunOverrides)
@@ -9119,7 +9109,21 @@ void Editor::refreshMarkers(TabDocument &t)
     t.editor.ClearMarkers();
     addChangeMarkers(t);   // lowest: broad "this file changed" wash
     applyNoteMarkers(t);   // middle: sticky-note diamonds
-    applyDebugMarkers(t);  // highest: breakpoints / stopped-here must stay visible
+    // Highest: plugin markers (the debugger's breakpoints / stopped-here line).
+    {
+        PluginDocInfo info;
+        info.filename = t.filename;
+        info.extLower = std::filesystem::path(t.filename).extension().string();
+        std::transform(info.extLower.begin(), info.extLower.end(), info.extLower.begin(),
+                       [](unsigned char c) { return (char) std::tolower(c); });
+        int lineCount = t.editor.GetLineCount();
+        pluginRegistry.composeMarkers(*this, info,
+                                      [&](int line, unsigned gutterCol, unsigned textCol,
+                                          const std::string &gutterTip, const std::string &textTip) {
+                                          if (line >= 0 && line < lineCount)
+                                              t.editor.AddMarker(line, gutterCol, textCol, gutterTip, textTip);
+                                      });
+    }
 }
 
 void Editor::markChangedLines(TabDocument &t, const std::string &oldText)
@@ -9131,9 +9135,22 @@ void Editor::markChangedLines(TabDocument &t, const std::string &oldText)
     t.editor.ClearLineDecorator();
     t.changedRanges = t.editor.MarkChangedLines(oldText); // clears + adds change markers
     t.externalMarkers = !t.changedRanges.empty();
-    // The widget's clear wiped the other layers — put notes + debug back on top.
+    // The widget's clear wiped the other layers — put notes + plugin markers back.
     applyNoteMarkers(t);
-    applyDebugMarkers(t);
+    {
+        PluginDocInfo info;
+        info.filename = t.filename;
+        info.extLower = std::filesystem::path(t.filename).extension().string();
+        std::transform(info.extLower.begin(), info.extLower.end(), info.extLower.begin(),
+                       [](unsigned char c) { return (char) std::tolower(c); });
+        int lineCount = t.editor.GetLineCount();
+        pluginRegistry.composeMarkers(*this, info,
+                                      [&](int line, unsigned gutterCol, unsigned textCol,
+                                          const std::string &gutterTip, const std::string &textTip) {
+                                          if (line >= 0 && line < lineCount)
+                                              t.editor.AddMarker(line, gutterCol, textCol, gutterTip, textTip);
+                                      });
+    }
     if (t.changedRanges.empty())
         return;
     t.editor.SetLineDecorator(-1.6f, [this](TextEditor::Decorator &d) {
@@ -9918,8 +9935,6 @@ void Editor::render()
 
     renderNavigationPanel();
     renderGitHistory();
-    pollDap();          // drain debug-adapter results (stops, output, stack, vars)
-    renderDebugPanel();
     renderCommandPalette();
     renderBuildPicker();
     renderTour();   // after the panels exist, so a step can anchor to a real window
@@ -11893,39 +11908,6 @@ void Editor::renderMenuBar()
             {
             }
             ImGui::Separator();
-            // ── Debugger (DAP) ──
-            if (!dbgSessionActive)
-            {
-                if (ImGui::MenuItem("Start Debugging", nullptr, false, !tabs.empty()))
-                    startDebugSession();
-            }
-            else
-            {
-                if (ImGui::MenuItem("Stop Debugging", "Shift+F5"))
-                    stopDebugSession();
-                if (dbgStopped)
-                {
-                    if (ImGui::MenuItem("Continue", "F5"))
-                        dapClient.continueExec(dbgThreadId);
-                    if (ImGui::MenuItem("Step Over"))
-                        dapClient.next(dbgThreadId);
-                    if (ImGui::MenuItem("Step Into"))
-                        dapClient.stepIn(dbgThreadId);
-                    if (ImGui::MenuItem("Step Out"))
-                        dapClient.stepOut(dbgThreadId);
-                }
-            }
-            if (ImGui::MenuItem("Toggle Breakpoint", "F9", false, !tabs.empty()))
-                toggleBreakpointAtCursor();
-            ImGui::MenuItem("Debug Panel", nullptr, &dbgPanelVisible);
-            if (ImGui::BeginMenu("Launch in External Debugger"))
-            {
-                if (ImGui::MenuItem("raddbg"))
-                    debugInRadDbg();
-                if (ImGui::MenuItem("Visual Studio"))
-                    debugInVisualStudio();
-                ImGui::EndMenu();
-            }
             // Project-type plugins (e.g. Unreal) contribute their submenu here.
             pluginRegistry.menu(*this, PluginMenu::Project);
 
@@ -12122,25 +12104,26 @@ void Editor::renderMenuBar()
         // → Keybinds catalogue. Order: more-specific (Shift) chords first where a
         // plain chord could otherwise swallow them.
         tickKeyChordPending(); // age out / cancel a half-entered two-stroke chord
-        // Debugger keys. F9 toggles a breakpoint. Shift+F5 stops a live session.
-        // F5 CONTINUES only while paused, otherwise it falls through to Run (F5's
-        // existing binding). Stepping is on the Debug panel buttons — F10/F11 stay
-        // free (F11 is Focus Mode). Starting a session is explicit (Tools ▸ Debug).
-        if (keybindPressed("view.palette", "Ctrl+Shift+P"))
+        // Plugin keybinds dispatch FIRST so a plugin can contextually shadow a
+        // core chord by only emitting its bind while relevant — the debugger
+        // plugin emits F5=continue only while paused, F9 only with a doc open,
+        // etc. Recollected each pass so enable/disable applies immediately.
+        bool pluginBindRan = false;
+        pluginKeybinds.clear();
+        pluginRegistry.keybinds(*this, pluginKeybinds);
+        for (auto &pk : pluginKeybinds)
+            if (pk.run && keybindPressed(pk.id.c_str(), pk.defaultChord.c_str()))
+            {
+                pk.run();
+                pluginBindRan = true;
+                break;
+            }
+        if (pluginBindRan)
+        {
+        }
+        else if (keybindPressed("view.palette", "Ctrl+Shift+P"))
         {
             openCommandPalette();
-        }
-        else if (!tabs.empty() && ImGui::IsKeyPressed(ImGuiKey_F9, false))
-        {
-            toggleBreakpointAtCursor();
-        }
-        else if (dbgSessionActive && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F5, false))
-        {
-            stopDebugSession();
-        }
-        else if (dbgStopped && !io.KeyShift && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F5, false))
-        {
-            dapClient.continueExec(dbgThreadId);
         }
         else if (keybindPressed("view.screenshot", "Ctrl+Alt+S"))
         {
@@ -12223,20 +12206,6 @@ void Editor::renderMenuBar()
         else if (keybindPressed("proj.build", "F6"))
         {
             runProjectBuild();
-        }
-        else
-        {
-            // Plugin-contributed keybinds — same matcher, same override store
-            // ([keybinds] in settings), rebindable in Settings > Keybinds under
-            // each plugin's group. Collected fresh so enable/disable applies.
-            pluginKeybinds.clear();
-            pluginRegistry.keybinds(*this, pluginKeybinds);
-            for (auto &pk : pluginKeybinds)
-                if (pk.run && keybindPressed(pk.id.c_str(), pk.defaultChord.c_str()))
-                {
-                    pk.run();
-                    break;
-                }
         }
 
         // Mouse thumb buttons: X1 = back, X2 = forward (browser convention).

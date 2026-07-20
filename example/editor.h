@@ -22,7 +22,6 @@
 #include <future>
 #include <mutex>
 #include <unordered_map>
-#include <set>
 #include <unordered_set>
 #include <vector>
 #include <imgui.h>
@@ -30,8 +29,6 @@
 #include "../TextDiff.h"
 #include "tsindex.h"
 #include "lsp_client.h"
-#include "dap_client.h"
-#include "debug_bridge.h"
 #include "git_url.h"
 #include "nav_history.h"
 #include "notes.h"
@@ -97,6 +94,31 @@ class Editor : public PluginHost {
 			doc().editor.ReplaceTextInCurrentCursor(text);
 	}
 	void hostToast(const std::string &text) override { pushToast(text, IM_COL32(80, 160, 255, 255), 0); }
+	std::filesystem::path hostConfigDir() const override { return userConfigDir(); }
+	int hostActiveCursorLine() const override {
+		if (tabs.empty()) return -1;
+		int line = 0, col = 0;
+		doc().editor.GetMainCursor(line, col);
+		return line;
+	}
+	void hostJumpTo(const std::string &file, int line0) override {
+		navHistory.record(currentNavLocation());
+		openFile(file);
+		if (!tabs.empty()) {
+			auto &e = doc().editor;
+			e.SetCursor(line0, 0);
+			e.ScrollToLine(line0, TextEditor::Scroll::alignMiddle);
+		}
+	}
+	void hostRefreshMarkers() override {
+		for (auto &up : tabs)
+			refreshMarkers(*up);
+	}
+	std::string hostFindBuiltExe() const override { return findBuiltExe().string(); }
+	void hostSaveActiveDocument() override {
+		if (!tabs.empty() && doc().filename != "untitled" && isDirty())
+			saveFile();
+	}
 	void hostError(const std::string &message) override { showError(message); }
 	void hostSendToClaude(const std::string &message) override { writeToastReply(message); }
 	void hostSuppressAppShortcuts() override { appShortcutsSuppressed = true; }
@@ -146,7 +168,6 @@ class Editor : public PluginHost {
 		bool        externalChange = false;
 		bool        externallyTouched = false;   // edited on disk since you last viewed this tab (badge)
 		bool        externalMarkers   = false;   // gutter markers on externally-changed lines are live
-		bool        debugMarkers      = false;   // breakpoint / stop-line markers are live on this tab
 		bool        largeFile         = false;   // >8 MB: whole-doc intelligence (trie/LSP/folds/brackets) disabled
 		bool        pendingLoad       = false;   // SetTextAsync in flight: doc is empty until the worker lands
 		std::vector<std::pair<int,int>> changedRanges; // inclusive 0-based line ranges Claude/an external tool changed
@@ -1052,78 +1073,11 @@ private:
 	void renderFindInFilesPanel();
 	void openFindInFiles();        // show the panel, focus the query, seed from selection
 
-	// ── Debugger (DAP) ───────────────────────────────────────────────────────
-	// Debug Adapter Protocol client + UI: breakpoints with gutter markers (F9),
-	// a Debug panel (controls / call stack / variables / console), and stepping
-	// (F10 over, F11 into, Shift+F11 out; F5 continues while a session is live).
-	// Adapters resolve per extension — Python works out of the box via debugpy
-	// (`python -m debugpy.adapter`); other languages can map an adapter command
-	// in settings ([debug_adapters] ".ext=lldb-dap …"). Same async architecture
-	// as the LSP client: the adapter runs as a child process, a reader thread
-	// queues results, and pollDap() drains them on the UI thread each frame.
-	dap::DapClient dapClient;
-	bool  dbgPanelVisible = false;
-	bool  dbgSessionActive = false;   // adapter spawned, session not ended yet
-	bool  dbgLaunchSent = false;      // launch request went out (after initialize response)
-	bool  dbgStopped = false;         // paused at a breakpoint/step/exception
-	std::string dbgStopReason;
-	std::string dbgStopFile;          // canonical path of the stopped frame ("" = unknown)
-	int   dbgStopLine = -1;           // 0-based editor line of the stop marker
-	int   dbgThreadId = 0;            // thread of the last stop
-	int   dbgCurrentFrame = 0;        // frameId whose scopes/variables are shown
-	std::string dbgProgram;           // program being debugged (panel readout)
-	std::string dbgAdapterType;       // launch "type" for the active adapter
-	std::vector<dap::StackFrame> dbgFrames;
-	std::vector<dap::Scope>      dbgScopes;
-	std::unordered_map<int, std::vector<dap::Variable>> dbgVarChildren;  // varRef -> children
-	std::unordered_set<int>      dbgVarRequested;   // varRefs with an in-flight request
-	std::string dbgConsole;           // output events + evaluate results
-	bool  dbgConsoleScrollDown = false;
-	char  dbgEvalBuf[256] = "";
-	// Breakpoints per canonical file path, 0-based editor lines (session-only).
-	std::unordered_map<std::string, std::set<int>> dbgBreakpoints;
-	std::unordered_map<std::string, std::string> debugAdapterOverrides;  // ".ext" -> adapter cmdline
-	// Per-PROJECT debug configuration (canonical project root -> value). A project
-	// association WINS over the per-extension mapping: the adapter is what debugs
-	// this project, regardless of which file happens to be focused. Both edited in
-	// the Debug panel's Configuration section; persisted in settings.
-	std::unordered_map<std::string, std::string> dbgProjectAdapter;  // root -> adapter cmdline
-	std::unordered_map<std::string, std::string> dbgProjectTarget;   // root -> "program|args"
+	// ── Debugger ─────────────────────────────────────────────────────────────────────
+	// The DAP debugger lives ENTIRELY in the debugger plugin (plugins/debugger):
+	// panel, breakpoints, adapters, project associations, raddbg/VS bridges. The
+	// core keeps only the canonical-project-root helper other features share.
 	std::string dbgProjectKey() const;             // canonical projectRoot ("" when none)
-	std::string dbgCanonPath(const std::string& file) const;
-	void  toggleBreakpointAtCursor();
-	void  applyDebugMarkers(TabDocument& t);        // rebuild bp + stop-line markers for one tab
-	void  refreshAllDebugMarkers();
-	void  sendBreakpointsFor(const std::string& canonPath);
-	// Resolve {argv, launch-type, launch extras} for a file; empty argv = no
-	// adapter known. Native (C/C++) adapters are detected once and cached:
-	// vsdbg (cppvsdbg) → OpenDebugAD7+gdb (cppdbg) → lldb-dap → `gdb -i dap`.
-	std::vector<std::string> debugAdapterFor(const std::string& ext,
-	                                         const std::filesystem::path& scriptPath,
-	                                         std::string& adapterType,
-	                                         std::vector<std::pair<std::string, std::string>>& launchExtras) const;
-	static bool isNativeDebugExt(const std::string& extLower);   // C-family → debug the built exe
-	mutable bool nativeAdapterDetected = false;   // one-shot detection cache
-	mutable std::vector<std::string> nativeAdapterArgv;
-	mutable std::string nativeAdapterType;
-	mutable std::vector<std::pair<std::string, std::string>> nativeAdapterExtras;
-	std::vector<std::pair<std::string, std::string>> dbgLaunchExtras;   // for the active session
-	std::vector<std::string> dbgProgramArgs;   // debuggee argv (from the project target)
-	void  startDebugSession();        // debug the active doc (or built exe for C/C++)
-	void  stopDebugSession();         // disconnect + kill + clear state
-	void  pollDap();                  // per-frame: drain adapter results
-	void  dbgJumpTo(const std::string& file, int line0);
-	void  renderDebugPanel();
-
-	// External native debuggers (raddbg / Visual Studio) — launch the target in
-	// the tool's own UI, seeding raddbg with our breakpoints via --ipc. Paths +
-	// the raddbg breakpoint verb come from settings [debug_bridge] with detection.
-	std::unordered_map<std::string, std::string> debugBridgeSettings;
-	std::string bridgeToolPath(const char* key, std::string (*detect)()) const;
-	bool  externalDebugTarget(std::string& exe, std::string& args, std::string& why);
-	void  launchDetached(const std::vector<std::string>& argv);   // spawn, no pipes, fire-and-forget
-	void  debugInRadDbg();
-	void  debugInVisualStudio();
 
 	// ── Command palette (Ctrl+Shift+P) ───────────────────────────────────────
 	// Modular action registry: built ONCE when the palette opens (core actions

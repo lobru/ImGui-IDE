@@ -106,7 +106,6 @@ target_compile_options(dapclient PRIVATE
 # ── Example executable ───────────────────────────────────────────────────
 add_executable(example
 	editor.cpp
-	debugger_ui.cpp
 	command_palette.cpp
 	build_picker.cpp
 	search_async.cpp
@@ -118,7 +117,7 @@ add_executable(example
 	dejavu.cpp
 	main.cpp)
 
-target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient dapclient dbgbridge)
+target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
 
 # ── Feature plugins, packaged as runtime-loaded DLLs ──────────────────────
 # Domain-specific features live in plugins, each behind its own flag (default
@@ -133,11 +132,16 @@ option(IMGUIIDE_PLUGIN_TERMINAL "Build the integrated terminal plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_CPPGEN "Build the C++ code generation plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_PDF "Build the in-app PDF viewer plugin (DLL, Windows)" ON)
 option(IMGUIIDE_PLUGIN_TEXTTOOLS "Build the text tools plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_DEBUGGER "Build the DAP debugger plugin (DLL)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS OR IMGUIIDE_PLUGIN_DEBUGGER)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
+endif()
+if(IMGUIIDE_PLUGIN_DEBUGGER)
+	# static libs pulled into the debugger DLL must be PIC on non-Windows
+	set_property(TARGET dapproto dapclient dbgbridge lspproto PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
 # imguiide_add_plugin(<target> <factory> <sources...>)
@@ -245,6 +249,18 @@ if(IMGUIIDE_PLUGIN_TEXTTOOLS)
 	target_include_directories(imguiide_texttools PRIVATE plugins/texttools)
 	target_link_libraries(imguiide_texttools PRIVATE nlohmann_json)
 	target_compile_definitions(imguiide_texttools PRIVATE IMGUIIDE_PLUGIN_TEXTTOOLS=1)
+endif()
+
+if(IMGUIIDE_PLUGIN_DEBUGGER)
+	# The whole DAP debugger: panel, breakpoints/markers, adapter resolution,
+	# raddbg/VS bridges. Speaks to the editor only through PluginHost; config
+	# persists in <config>/debugger.ini. SDL3 resolves at load time because the
+	# host exe already has it mapped.
+	imguiide_add_plugin(imguiide_debugger createDebuggerPlugin
+		plugins/debugger/debugger_plugin.cpp)
+	target_include_directories(imguiide_debugger PRIVATE plugins/debugger)
+	target_link_libraries(imguiide_debugger PRIVATE dapclient dbgbridge)
+	target_compile_definitions(imguiide_debugger PRIVATE IMGUIIDE_PLUGIN_DEBUGGER=1)
 endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only). The PDF

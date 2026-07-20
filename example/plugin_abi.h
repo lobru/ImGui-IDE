@@ -35,7 +35,10 @@ class EditorPlugin;
 //     so a v1 DLL under a v2 host dispatches into the WRONG functions (this
 //     exact mismatch crashed the installed build with stale plugin DLLs).
 //  3: PluginHost gained hostReplaceSelection (2026-07-20, appended last).
-#define IMGUIIDE_PLUGIN_ABI_VERSION 3u
+//  4: PluginHost gained hostConfigDir/hostActiveCursorLine/hostJumpTo/
+//     hostRefreshMarkers/hostFindBuiltExe; EditorPlugin gained
+//     contributeMarkers (2026-07-20, all appended — the debugger is a plugin).
+#define IMGUIIDE_PLUGIN_ABI_VERSION 4u
 
 // Exact export names the loader resolves. Keep in sync with plugin_dll_main.cpp.
 #define IMGUIIDE_PLUGIN_ABI_VERSION_SYMBOL "imguiide_plugin_abi_version"

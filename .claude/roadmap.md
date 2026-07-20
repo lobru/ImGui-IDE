@@ -20,9 +20,13 @@ that is still genuinely outstanding.
       show the candidates instead of giving up. Same principle for debugger setup.
       (user: "you try and fail to automate and instead of giving that power to
       the user you just give up. stop that")
-- [ ] **Debugger fully plugin-ized + automatic setup** (user: "torn out of
-      anything except a plugin"). Auto-setup: detect adapters silently, pick
-      target from build discovery, zero-config for common cases.
+- [x] **Debugger fully plugin-ized** (7th DLL imguiide_debugger, ABI 4): panel,
+      breakpoints (markers via contributeMarkers), adapters, project pins,
+      raddbg/VS bridges — core carries ZERO debugger code. Auto-setup: silent
+      adapter detection + venv debugpy + built-exe target + project pins; the
+      Configuration GUI ships in the plugin panel. Config in debugger.ini.
+      Plugin keybinds now dispatch BEFORE core (conditional emission = F5
+      continue only while paused, F9 only with a doc).
 - [x] **Text-tools plugin** (a0ec237, 6th DLL; hostReplaceSelection added, ABI 3): json<->xml, json minify/pretty, sort
       lines/selection (numeric/alpha, asc/desc), case convert selection
       (camel/snake/upper/lower/title). Needs hostReplaceSelection host API.
@@ -164,11 +168,11 @@ that is still genuinely outstanding.
      the core exe into the plugin DLL.
   3. **notes → plugin** (marker composer DONE — remaining gap: marker + gutter
      hit-test + git-blame host APIs; notes also feed reanchor-on-load).
-  4. **debugger → plugin** (BIGGEST: needs host APIs for markers, F-key keybind
-     registration, palette [done], panel docking, per-project settings store,
-     openFile-jump [exists]. Files already isolated: dap_protocol/dap_client/
-     debug_bridge/debugger_ui + dbg* state block in editor.h. Do AFTER the
-     marker composer + a keybind-contribution hook land.)
+  4. [x] **debugger → plugin** (2026-07-20) — host API v4 (hostConfigDir/
+     hostActiveCursorLine/hostJumpTo/hostRefreshMarkers/hostFindBuiltExe/
+     hostSaveActiveDocument) + contributeMarkers hook; plugin keybind dispatch
+     moved BEFORE core so conditional emission shadows F5/F9/F10/F11
+     contextually.
 - [x] **Keybind-contribution hook** (2026-07-19) — `PluginKeybind` +
       `contributeKeybinds`; registry stamps the plugin display name as the
       Settings group; binds dispatch through the same chord matcher/override

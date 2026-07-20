@@ -151,6 +151,23 @@ public:
     // appended last deliberately; adding host virtuals anywhere else reorders
     // the vtable for every existing plugin (see IMGUIIDE_PLUGIN_ABI_VERSION).
     virtual void hostReplaceSelection(const std::string &text) = 0;
+
+    // ── v4 additions (defaulted so mocks/hosts stay source-compatible) ─────
+    // Per-user writable config dir — plugins persist their own files here
+    // (e.g. the debugger's debugger.ini) instead of the host's settings.txt.
+    virtual std::filesystem::path hostConfigDir() const { return {}; }
+    // 0-based cursor line of the active document (-1 when none).
+    virtual int hostActiveCursorLine() const { return -1; }
+    // Open `file` and place/scroll the cursor to `line0` (records nav history).
+    virtual void hostJumpTo(const std::string &file, int line0) { (void) file; (void) line0; }
+    // Recompose the gutter-marker layers on every open tab (plugins call this
+    // after their marker source changed — see EditorPlugin::contributeMarkers).
+    virtual void hostRefreshMarkers() {}
+    // Freshest built executable under the project ("" when none).
+    virtual std::string hostFindBuiltExe() const { return {}; }
+    // Save the active document if it is dirty and has a real path (debuggers
+    // want on-disk state to match the buffer before launching).
+    virtual void hostSaveActiveDocument() {}
 };
 
 //
@@ -191,8 +208,20 @@ public:
                                         const std::function<void(const std::string &)> &) {}
 
     // Contribute rebindable app-level keybinds (append to `out`). Collected each
-    // frame from enabled plugins; the registry stamps `group` with displayName().
+    // frame from enabled plugins and dispatched BEFORE the core shortcuts, so a
+    // plugin can contextually shadow a core chord by only emitting its bind while
+    // relevant (the debugger emits F5=continue only while stopped, say). The
+    // registry stamps `group` with displayName().
     virtual void contributeKeybinds(PluginHost &, std::vector<PluginKeybind> &) {}
+
+    // Contribute gutter markers for one document during the host's marker
+    // composition (topmost layer — a marker here wins a shared line). Called for
+    // every open tab whenever markers recompose; call host.hostRefreshMarkers()
+    // when your marker source changes. add(line0, lineNumberColor, textColor,
+    // lineNumberTooltip, textTooltip).
+    virtual void contributeMarkers(PluginHost &, const PluginDocInfo &,
+                                   const std::function<void(int, unsigned, unsigned,
+                                                            const std::string &, const std::string &)> &) {}
 
     // Contribute items into the editor's right-click context menu (called inside
     // the popup's scope, every frame it is open — draw ImGui::MenuItem yourself

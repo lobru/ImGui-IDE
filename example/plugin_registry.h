@@ -125,6 +125,17 @@ public:
         }
     }
 
+    // gather one document's plugin gutter markers (topmost layer of the host's
+    // marker composition)
+    void composeMarkers(PluginHost &host, const PluginDocInfo &doc,
+                        const std::function<void(int, unsigned, unsigned,
+                                                 const std::string &, const std::string &)> &add)
+    {
+        for (auto &p : plugins)
+            if (p->enabled())
+                p->contributeMarkers(host, doc, add);
+    }
+
     // contribute into the editor's right-click context menu (call inside the popup)
     void documentContextMenu(PluginHost &host, const PluginDocContext &ctx)
     {
