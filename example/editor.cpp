@@ -890,6 +890,31 @@ void Editor::hostAugmentCppLanguage(const std::vector<std::string> &types,
 
 void Editor::runProjectBuild()
 {
+    // A pinned per-project choice (Build/Run Targets picker, "Set F6") wins
+    // outright — "cmd|dir", dir optional (defaults to the project root).
+    if (!projectRoot.empty())
+    {
+        auto it = projectBuildOverrides.find(dbgProjectKey());
+        if (it == projectBuildOverrides.end())
+            it = projectBuildOverrides.find(projectRoot.string()); // legacy key
+        if (it != projectBuildOverrides.end() && !it->second.empty())
+        {
+            auto bar = it->second.find('|');
+            std::string cmd = it->second.substr(0, bar);
+            std::filesystem::path dir = bar == std::string::npos
+                                            ? projectRoot
+                                            : std::filesystem::path(it->second.substr(bar + 1));
+            std::string token = "%CONFIG%";
+            for (size_t pos = 0; (pos = cmd.find(token, pos)) != std::string::npos;)
+            {
+                cmd.replace(pos, token.size(), activeBuildConfig);
+                pos += activeBuildConfig.size();
+            }
+            runCommandInOutputPanel(cmd, dir);
+            return;
+        }
+    }
+
     std::filesystem::path startDir;
     if (!tabs.empty() && doc().filename != "untitled")
     {
@@ -903,10 +928,10 @@ void Editor::runProjectBuild()
     auto [scriptPath, interp] = findProjectBuildCommand(startDir);
     if (scriptPath.empty())
     {
-        std::lock_guard<std::mutex> lock(script->mutex);
-        script->output = "[no build.bat / build.ps1 / build.sh / Makefile / CMakeLists.txt found above " +
-                         startDir.string() + "]\n";
-        script->visible = true;
+        // Don't give up with a message — show the user every candidate we CAN
+        // see and let them pick (and pin) one.
+        pushToast("No build target auto-detected — pick one", IM_COL32(240, 200, 90, 255));
+        openBuildPicker();
         return;
     }
 
@@ -1108,6 +1133,17 @@ std::pair<std::string, std::filesystem::path> Editor::projectRunCommand()
 {
     if (!projectRoot.empty())
     {
+        // A pinned F5 target (Build/Run Targets picker) wins — "cmd|dir".
+        auto it = projectRunOverrides.find(dbgProjectKey());
+        if (it != projectRunOverrides.end() && !it->second.empty())
+        {
+            auto bar = it->second.find('|');
+            std::string cmd = it->second.substr(0, bar);
+            std::filesystem::path dir = bar == std::string::npos
+                                            ? projectRoot
+                                            : std::filesystem::path(it->second.substr(bar + 1));
+            return {cmd, dir};
+        }
         auto exe = findBuiltExe();
         if (!exe.empty())
             return {"\"" + exe.string() + "\"", exe.parent_path()};
@@ -7019,6 +7055,8 @@ void Editor::loadSettings()
             dbgProjectAdapter[k] = v;
         else if (section == "debug_project_target")  // <project root> -> "program|args"
             dbgProjectTarget[k] = v;
+        else if (section == "run")                   // <project root> -> "cmd|dir" (F5 pin)
+            projectRunOverrides[k] = v;
         else if (section == "palette_usage")         // action id -> "uses|lastEpoch"
         {
             auto bar = v.find('|');
@@ -7308,6 +7346,9 @@ void Editor::saveSettings()
         f << k << "=" << v << "\n";
     f << "\n[debug_project_target]\n";
     for (auto &[k, v] : dbgProjectTarget)
+        f << k << "=" << v << "\n";
+    f << "\n[run]\n";
+    for (auto &[k, v] : projectRunOverrides)
         f << k << "=" << v << "\n";
     f << "\n[palette_usage]\n";
     for (auto &[k, v] : paletteUsage)
@@ -9689,6 +9730,7 @@ void Editor::render()
     pollDap();          // drain debug-adapter results (stops, output, stack, vars)
     renderDebugPanel();
     renderCommandPalette();
+    renderBuildPicker();
     renderTour();   // after the panels exist, so a step can anchor to a real window
     renderGithubBrowser();
     renderImageWindows();
@@ -11639,6 +11681,10 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("Build Project", "F6"))
             {
                 runProjectBuild();
+            }
+            if (ImGui::MenuItem("Build / Run Targets..."))
+            {
+                openBuildPicker();
             }
             if (ImGui::MenuItem("Run", "F5"))
             {

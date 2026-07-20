@@ -821,6 +821,28 @@ private:
 	// run it. Returns empty if none found.
 	std::filesystem::path findBuiltExe() const;
 	void        runProjectExeOrScript();   // F5: prefer exe, fall back to script
+
+	// ── Build / Run target picker ─────────────────────────────────────────
+	// Discovery enumerates EVERY plausible build/run target under the project
+	// (build scripts, each .sln/.csproj/.vcxproj, CMake trees, package.json,
+	// Cargo.toml, plugin project types, freshest built exe) across nested dirs,
+	// and the picker presents them graphically: one click builds/runs, one
+	// click pins the choice as this project's F6/F5 default (persisted in
+	// [build] / [run]). When auto-resolution fails the picker OPENS with the
+	// candidates instead of giving up with a message.
+	struct BuildTarget {
+		std::string           label;     // human row ("dotnet build App.sln")
+		std::string           command;   // what actually runs
+		std::filesystem::path dir;       // working directory
+		bool                  runnable = false;  // sensible as the F5 target too
+	};
+	std::vector<BuildTarget> discoverBuildTargets() const;
+	std::unordered_map<std::string, std::string> projectRunOverrides; // root -> "cmd|dir"
+	bool buildPickerVisible = false;
+	std::vector<BuildTarget> buildPickerTargets;   // snapshot taken when opened
+	char buildPickerCustom[512] = "";
+	void openBuildPicker();
+	void renderBuildPicker();
 	void        runProjectWithArgs();      // like F5 but prompts for arguments
 
 	// Shared launcher: spawn `cmd` (optionally cd'd to runDir) on a detached

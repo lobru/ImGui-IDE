@@ -164,6 +164,7 @@ void Editor::buildPaletteActions()
         add("Diff: Against Another File...", "", docSrc, [this] { openDiffOtherDialog(); });
     }
     add("Code: Rebuild Symbol Index", "", "Project", [this] { rebuildProjectIndex(); });
+    add("Project: Build / Run Targets...", "", "Project", [this] { openBuildPicker(); });
     add("Project: Run", "F5", "Project", [this] { runProjectExeOrScript(); });
     add("Project: Run with Arguments...", "", "Project", [this] { runProjectWithArgs(); });
     add("Project: Build", "F6", "Project", [this] { runProjectBuild(); });

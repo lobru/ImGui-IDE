@@ -108,6 +108,7 @@ add_executable(example
 	editor.cpp
 	debugger_ui.cpp
 	command_palette.cpp
+	build_picker.cpp
 	search_async.cpp
 	updater.cpp
 	notes.cpp
