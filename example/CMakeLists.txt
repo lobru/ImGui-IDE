@@ -132,10 +132,11 @@ option(IMGUIIDE_PLUGIN_UEVR "Build the UEVR / Blueprint tooling plugin (DLL)" ON
 option(IMGUIIDE_PLUGIN_TERMINAL "Build the integrated terminal plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_CPPGEN "Build the C++ code generation plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_PDF "Build the in-app PDF viewer plugin (DLL, Windows)" ON)
+option(IMGUIIDE_PLUGIN_TEXTTOOLS "Build the text tools plugin (DLL)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
@@ -235,6 +236,17 @@ if(IMGUIIDE_PLUGIN_PDF)
 	endif()
 endif()
 
+if(IMGUIIDE_PLUGIN_TEXTTOOLS)
+	# Everyday text transforms (case/sort/JSON/XML) on the selection. Pure logic
+	# in plugins/texttools/texttools.cpp (also compiled into selftest).
+	imguiide_add_plugin(imguiide_texttools createTextToolsPlugin
+		plugins/texttools/texttools_plugin.cpp
+		plugins/texttools/texttools.cpp)
+	target_include_directories(imguiide_texttools PRIVATE plugins/texttools)
+	target_link_libraries(imguiide_texttools PRIVATE nlohmann_json)
+	target_compile_definitions(imguiide_texttools PRIVATE IMGUIIDE_PLUGIN_TEXTTOOLS=1)
+endif()
+
 # In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only). The PDF
 # viewer's C++/WinRT dependency moved into the pdfview plugin DLL; windowsapp
 # stays off the core exe.
@@ -332,8 +344,9 @@ add_custom_command(TARGET example POST_BUILD
 # colorizer, fold detection — with no SDL/GPU/ImGui context. It links the same
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
-add_executable(selftest selftest.cpp plugins/cppgen/cppgen.cpp notes.cpp screenshot.cpp)
-target_include_directories(selftest PRIVATE plugins/cppgen)
+add_executable(selftest selftest.cpp plugins/cppgen/cppgen.cpp plugins/texttools/texttools.cpp notes.cpp screenshot.cpp)
+target_include_directories(selftest PRIVATE plugins/cppgen plugins/texttools)
+target_link_libraries(selftest PRIVATE nlohmann_json)
 target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto dbgbridge)
 # The UE + Blueprint tests are gated on their plugin flags; compile the (now
 # plugin-owned) sources into selftest when the flag is on so they still run.

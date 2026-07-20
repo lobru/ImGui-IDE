@@ -23,6 +23,20 @@ read `tag-commits-gsha`.
   commands** through the plugin API, gated by file type and/or project type: the
   Unreal plugin's entries (build, clangd DB, launch editor, class wizard, ...)
   appear only in Unreal projects; the terminal plugin adds Terminal: Toggle.
+- **Text tools plugin** (`imguiide_texttools`, 6th DLL): selection transforms
+  from the right-click "Text Tools" submenu or the palette — UPPER/lower/Title/
+  camelCase/snake_case, sort lines (alpha or numeric, both directions), JSON
+  pretty-print/minify, JSON ↔ XML. All undoable; plugins gained a
+  `hostReplaceSelection` API for this.
+- **Command palette rebuilt**: modular action registry (built on open, not per
+  frame), usage/recency-biased ranking that persists across sessions, per-row
+  source tags ("Filetype: .lua", "Plugin: …") with tooltips, and quick-run via
+  Alt+1…9 (plain 1…9 while the query is empty).
+- **Build / Run Targets picker**: discovers every plausible target in a
+  multilevel project (scripts, each .sln/.csproj/.vcxproj, CMake trees, npm,
+  cargo, Unreal, built exes) and presents them graphically — build/run any with
+  one click or pin as the project's F6/F5 default; auto-opens with candidates
+  when F6 can't resolve instead of giving up.
 - **Plugins can contribute keyboard shortcuts**: rebindable app-level binds
   that appear in Settings ▸ Keybinds under the plugin's own group and persist
   overrides like the built-ins — the terminal plugin ships Ctrl+` to toggle.

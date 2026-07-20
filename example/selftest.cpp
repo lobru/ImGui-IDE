@@ -26,6 +26,7 @@
 #include "nav_history.h"
 #include "cppgen.h"
 #include "debug_bridge.h"
+#include "texttools.h"
 #include "plugin_registry.h"
 #ifdef IMGUIIDE_PLUGIN_UNREAL
 #include "unreal.h"
@@ -1689,6 +1690,7 @@ int main(int argc, char** argv)
 			std::filesystem::path hostRepoRoot() const override { return {}; }
 			bool hostGetFlag(const std::string&, bool d) const override { return d; }
 			void hostSetFlag(const std::string&, bool) override {}
+			void hostReplaceSelection(const std::string&) override {}
 			bool hostPanInverted() const override { return false; }
 			void hostMiddleMousePanScroll(int) override {}
 			// mirror Editor's impl so this test exercises the real host-routed path
@@ -1870,6 +1872,7 @@ int main(int argc, char** argv)
 			std::filesystem::path hostRepoRoot() const override { return {}; }
 			bool hostGetFlag(const std::string&, bool d) const override { return d; }
 			void hostSetFlag(const std::string&, bool) override {}
+			void hostReplaceSelection(const std::string&) override {}
 			bool hostPanInverted() const override { return false; }
 			void hostMiddleMousePanScroll(int) override {}
 			void hostAugmentCppLanguage(const std::vector<std::string>&, const std::vector<std::string>&,
@@ -1953,6 +1956,7 @@ int main(int argc, char** argv)
 				return it == flags.end() ? d : it->second;
 			}
 			void hostSetFlag(const std::string& k, bool v) override { flags[k] = v; }
+			void hostReplaceSelection(const std::string&) override {}
 		};
 		struct CountPlugin : EditorPlugin {
 			int registers = 0, frames = 0;
@@ -2071,6 +2075,43 @@ int main(int argc, char** argv)
 			reg.keybinds(host, kbs);
 			CHECK(kbs.empty(), "keybinds: disabled plugin contributes nothing");
 		}
+	}
+
+	// ── Text tools (texttools plugin's pure transforms) ──────────────────────
+	{
+		using namespace texttools;
+		std::string err;
+
+		CHECK(convertCase("hello worldFoo", Case::Upper) == "HELLO WORLDFOO", "tt: upper");
+		CHECK(convertCase("Hello WORLD", Case::Lower) == "hello world", "tt: lower");
+		CHECK(convertCase("hello world foo", Case::Title) == "Hello World Foo", "tt: title");
+		CHECK(convertCase("hello_world foo-bar", Case::Camel) == "helloWorldFooBar", "tt: camel from mixed separators");
+		CHECK(convertCase("XMLParser httpRequest2", Case::Snake) == "xml_parser_http_request_2",
+			"tt: snake splits camel + abbreviation + digit boundaries");
+
+		CHECK(sortLines("b\na\nc", false, true) == "a\nb\nc", "tt: sort A->Z, no trailing newline kept off");
+		CHECK(sortLines("b\na\nc\n", false, false) == "c\nb\na\n", "tt: sort Z->A keeps trailing newline");
+		CHECK(sortLines("item 10\nitem 2\nitem 1\n", true, true) == "item 1\nitem 2\nitem 10\n",
+			"tt: numeric sort orders 1 < 2 < 10");
+
+		CHECK(jsonMinify("{ \"a\" : 1,\n  \"b\": [1, 2] }", err) == "{\"a\":1,\"b\":[1,2]}" && err.empty(),
+			"tt: json minify");
+		CHECK(jsonPretty("{\"a\":1}", err).find("\n  \"a\": 1") != std::string::npos && err.empty(),
+			"tt: json pretty");
+		jsonPretty("{nope", err);
+		CHECK(!err.empty(), "tt: invalid json reports an error");
+
+		std::string xml = jsonToXml("{\"a\":1,\"b\":[\"x\",\"y\"]}", err);
+		CHECK(err.empty() && xml.find("<a>1</a>") != std::string::npos &&
+		          xml.find("<b>x</b>") != std::string::npos && xml.find("<b>y</b>") != std::string::npos,
+			"tt: json -> xml (arrays repeat the element)");
+
+		std::string j = xmlToJson("<r kind=\"demo\"><a>1</a><a>2</a><name>hi</name></r>", err);
+		CHECK(err.empty() && j.find("\"@kind\": \"demo\"") != std::string::npos &&
+		          j.find("\"a\": [") != std::string::npos && j.find("\"name\": \"hi\"") != std::string::npos,
+			"tt: xml -> json (attributes @-prefixed, repeated tags become arrays)");
+		xmlToJson("no xml here", err);
+		CHECK(!err.empty(), "tt: invalid xml reports an error");
 	}
 
 	// ── Debug adapter type inference (project-adapter command lines) ─────────

@@ -145,6 +145,12 @@ public:
     // small persisted key -> bool store (runtime enable toggles, etc.)
     virtual bool hostGetFlag(const std::string &key, bool def) const = 0;
     virtual void hostSetFlag(const std::string &key, bool value) = 0;
+
+    // Replace the active document's current selection (undoable). No-op when
+    // nothing is selected — the workhorse for text-transform plugins. NOTE:
+    // appended last deliberately; adding host virtuals anywhere else reorders
+    // the vtable for every existing plugin (see IMGUIIDE_PLUGIN_ABI_VERSION).
+    virtual void hostReplaceSelection(const std::string &text) = 0;
 };
 
 //
