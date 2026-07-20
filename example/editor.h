@@ -743,6 +743,9 @@ private:
 	int  symbolPacksLoaded = 0;      // types registered from packs (status line)
 	void loadSymbolPacks();          // scan the pack dirs; called once at startup
 	static int loadSymbolPackFile(const std::filesystem::path& file); // -> types added
+	// Dump the project index's type->members map to a symbol pack. toProject=true
+	// writes <root>/.imguiide/symbols (shareable, versionable); else <config>.
+	void exportProjectSymbols(bool toProject);
 
 	// ── Screenshot ──────────────────────────────────────────────────────────
 	// The app captures ITSELF: main.cpp re-renders the frame into an offscreen GPU

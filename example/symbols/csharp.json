@@ -1,0 +1,21 @@
+{
+  "_comment": "C# / .NET BCL — common types and their most-used members (methods, properties). Member-completion refinement for `str.`, `list.`, etc. Not exhaustive; augment via per-project export or a hand-edited copy in <config>/symbols. Format: {types:{Type:[members...]}}.",
+  "types": {
+    "string": ["Length", "Contains", "StartsWith", "EndsWith", "IndexOf", "LastIndexOf", "Substring", "Replace", "Split", "Trim", "TrimStart", "TrimEnd", "ToUpper", "ToLower", "ToUpperInvariant", "ToLowerInvariant", "PadLeft", "PadRight", "Insert", "Remove", "Format", "Join", "Concat", "IsNullOrEmpty", "IsNullOrWhiteSpace", "Compare", "Equals", "ToCharArray", "CompareTo"],
+    "String": ["Length", "Contains", "StartsWith", "EndsWith", "IndexOf", "LastIndexOf", "Substring", "Replace", "Split", "Trim", "ToUpper", "ToLower", "PadLeft", "PadRight", "Format", "Join", "Concat", "IsNullOrEmpty", "IsNullOrWhiteSpace", "Empty"],
+    "List": ["Add", "AddRange", "Insert", "InsertRange", "Remove", "RemoveAt", "RemoveAll", "RemoveRange", "Clear", "Contains", "IndexOf", "LastIndexOf", "Find", "FindAll", "FindIndex", "Exists", "ForEach", "Sort", "Reverse", "ToArray", "GetRange", "Count", "Capacity", "TrueForAll", "BinarySearch"],
+    "Dictionary": ["Add", "TryAdd", "Remove", "Clear", "ContainsKey", "ContainsValue", "TryGetValue", "GetValueOrDefault", "Keys", "Values", "Count", "Item"],
+    "IEnumerable": ["Where", "Select", "SelectMany", "First", "FirstOrDefault", "Last", "LastOrDefault", "Single", "SingleOrDefault", "Any", "All", "Count", "Sum", "Min", "Max", "Average", "OrderBy", "OrderByDescending", "ThenBy", "GroupBy", "Distinct", "Union", "Intersect", "Except", "Concat", "Skip", "Take", "SkipWhile", "TakeWhile", "ToList", "ToArray", "ToDictionary", "ToHashSet", "Aggregate", "Contains", "ElementAt", "Reverse", "Zip"],
+    "Task": ["Wait", "Result", "Status", "IsCompleted", "IsCanceled", "IsFaulted", "ContinueWith", "ConfigureAwait", "GetAwaiter", "Run", "Delay", "WhenAll", "WhenAny", "FromResult", "CompletedTask"],
+    "Console": ["WriteLine", "Write", "ReadLine", "ReadKey", "Read", "Clear", "ForegroundColor", "BackgroundColor", "Title", "Error", "In", "Out"],
+    "Math": ["Abs", "Min", "Max", "Pow", "Sqrt", "Floor", "Ceiling", "Round", "Truncate", "Sign", "Log", "Log10", "Log2", "Exp", "Sin", "Cos", "Tan", "Atan", "Atan2", "PI", "E", "Clamp"],
+    "StringBuilder": ["Append", "AppendLine", "AppendFormat", "Insert", "Remove", "Replace", "Clear", "ToString", "Length", "Capacity"],
+    "DateTime": ["Now", "UtcNow", "Today", "Year", "Month", "Day", "Hour", "Minute", "Second", "Millisecond", "DayOfWeek", "DayOfYear", "AddDays", "AddHours", "AddMinutes", "AddSeconds", "AddMonths", "AddYears", "ToString", "Parse", "TryParse", "Ticks", "Date", "TimeOfDay"],
+    "File": ["Exists", "ReadAllText", "ReadAllLines", "ReadAllBytes", "WriteAllText", "WriteAllLines", "WriteAllBytes", "AppendAllText", "Delete", "Copy", "Move", "Open", "OpenRead", "OpenWrite", "Create", "OpenText", "CreateText"],
+    "Directory": ["Exists", "CreateDirectory", "Delete", "Move", "GetFiles", "GetDirectories", "EnumerateFiles", "EnumerateDirectories", "GetCurrentDirectory", "SetCurrentDirectory"],
+    "Path": ["Combine", "GetFileName", "GetFileNameWithoutExtension", "GetExtension", "GetDirectoryName", "GetFullPath", "GetTempPath", "GetTempFileName", "ChangeExtension", "HasExtension", "IsPathRooted", "DirectorySeparatorChar"],
+    "Regex": ["IsMatch", "Match", "Matches", "Replace", "Split", "Escape", "Unescape"],
+    "Convert": ["ToInt32", "ToInt64", "ToDouble", "ToSingle", "ToBoolean", "ToString", "ToChar", "ToByte", "ToDecimal", "ToBase64String", "FromBase64String"],
+    "Enumerable": ["Range", "Repeat", "Empty"]
+  }
+}

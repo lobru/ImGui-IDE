@@ -1705,6 +1705,7 @@ void Editor::setProjectRoot(const std::filesystem::path &p)
     navPanelVisible = true;
     rememberRecentProject(abs.string());
     loadNotes();   // sticky notes are per-project (sidecar at the new root)
+    loadSymbolPacks(); // pick up this project's exported pack (.imguiide/symbols)
 #ifdef _WIN32
     // Persist the last project path to HKCU so external tools (and a "reopen last
     // project" flow) can find where we last were.
@@ -11892,6 +11893,13 @@ void Editor::renderMenuBar()
             {
                 openBuildPicker();
             }
+            if (ImGui::MenuItem("Export Symbol Pack (project)"))
+            {
+                exportProjectSymbols(/*toProject*/ true);
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Dump this project's types + members to "
+                                  "<root>/.imguiide/symbols so they complete next session");
             if (ImGui::MenuItem("Run", "F5"))
             {
                 runProjectExeOrScript();
@@ -14964,12 +14972,70 @@ int Editor::loadSymbolPackFile(const std::filesystem::path &file)
     return added;
 }
 
+// Export the current project index's member map to a symbol pack. The index
+// already maps type -> member names (idx->members), which is exactly the pack
+// shape, so this makes a project's OWN types complete their members in future
+// sessions (and is a shareable artifact). Writes to <config>/symbols/ (loaded
+// automatically next launch) unless the project root is chosen.
+void Editor::exportProjectSymbols(bool toProject)
+{
+    auto idx = indexSnapshot();
+    if (!idx || idx->members.empty())
+    {
+        pushToast("No project symbols to export — open a project + let the index build",
+                  IM_COL32(240, 200, 90, 255));
+        return;
+    }
+    // Stable, sorted output so the file diffs cleanly across regenerations.
+    nlohmann::ordered_json types = nlohmann::ordered_json::object();
+    std::vector<std::string> typeNames;
+    typeNames.reserve(idx->members.size());
+    for (auto &kv : idx->members)
+        typeNames.push_back(kv.first);
+    std::sort(typeNames.begin(), typeNames.end());
+    for (auto &tn : typeNames)
+    {
+        auto members = idx->members.at(tn);
+        std::sort(members.begin(), members.end());
+        members.erase(std::unique(members.begin(), members.end()), members.end());
+        types[tn] = members;
+    }
+
+    std::string projName = projectRoot.empty() ? std::string("project")
+                                               : projectRoot.filename().string();
+    nlohmann::ordered_json pack;
+    pack["_comment"] = "Auto-generated project symbol pack for " + projName +
+                       " (Project > Export Symbol Pack). Regenerate after big changes.";
+    pack["types"] = std::move(types);
+
+    std::error_code ec;
+    std::filesystem::path dir = toProject && !projectRoot.empty()
+                                    ? projectRoot / ".imguiide" / "symbols"
+                                    : userConfigDir() / "symbols";
+    std::filesystem::create_directories(dir, ec);
+    std::filesystem::path out = dir / (projName + "-symbols.json");
+    std::ofstream f(out, std::ios::trunc);
+    if (!f.is_open())
+    {
+        pushToast("Could not write " + out.string(), IM_COL32(240, 110, 90, 255));
+        return;
+    }
+    f << pack.dump(2);
+    f.close();
+    // Load it into THIS session immediately too.
+    int added = loadSymbolPackFile(out);
+    symbolPacksLoaded += added;
+    pushToast("Exported " + std::to_string(added) + " types -> " + out.string(),
+              IM_COL32(120, 200, 120, 255), 0);
+}
+
 void Editor::loadSymbolPacks()
 {
     std::error_code ec;
     std::vector<std::filesystem::path> dirs = {
         hostExeDir() / "symbols",
         userConfigDir() / "symbols",
+        projectRoot.empty() ? std::filesystem::path{} : projectRoot / ".imguiide" / "symbols",
     };
 
     int types = 0;

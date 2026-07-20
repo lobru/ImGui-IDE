@@ -1,0 +1,14 @@
+{
+  "_comment": "Lua 5.4 standard library — global tables and their functions/fields. Loaded as member-completion for `string.`, `table.`, `math.`, etc. Format: {types:{Type:[members...]}}.",
+  "types": {
+    "string": ["byte", "char", "dump", "find", "format", "gmatch", "gsub", "len", "lower", "match", "pack", "packsize", "rep", "reverse", "sub", "unpack", "upper"],
+    "table": ["concat", "insert", "move", "pack", "remove", "sort", "unpack"],
+    "math": ["abs", "acos", "asin", "atan", "ceil", "cos", "deg", "exp", "floor", "fmod", "huge", "log", "max", "maxinteger", "min", "mininteger", "modf", "pi", "rad", "random", "randomseed", "sin", "sqrt", "tan", "tointeger", "type", "ult"],
+    "os": ["clock", "date", "difftime", "execute", "exit", "getenv", "remove", "rename", "setlocale", "time", "tmpname"],
+    "io": ["close", "flush", "input", "lines", "open", "output", "popen", "read", "stderr", "stdin", "stdout", "tmpfile", "type", "write"],
+    "coroutine": ["close", "create", "isyieldable", "resume", "running", "status", "wrap", "yield"],
+    "utf8": ["char", "charpattern", "codepoint", "codes", "len", "offset"],
+    "debug": ["debug", "gethook", "getinfo", "getlocal", "getmetatable", "getregistry", "getupvalue", "getuservalue", "sethook", "setlocal", "setmetatable", "setupvalue", "setuservalue", "traceback", "upvalueid", "upvaluejoin"],
+    "package": ["config", "cpath", "loaded", "loadlib", "path", "preload", "searchers", "searchpath"]
+  }
+}

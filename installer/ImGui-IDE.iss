@@ -54,6 +54,8 @@ Source: "{#BuildDir}\plugins\*.dll"; DestDir: "{app}\plugins"; Flags: ignorevers
 ; Source the runtime languages from the canonical example/languages/ folder so a
 ; clean checkout always packages them (independent of the build's POST_BUILD copy).
 Source: "..\example\languages\*"; DestDir: "{app}\languages"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Static symbol packs (STL / Python / C# / Lua / Unreal) — member completion.
+Source: "..\example\symbols\*"; DestDir: "{app}\symbols"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\example\app.ico";      DestDir: "{app}"; Flags: ignoreversion
 Source: "..\CHANGELOG.md";         DestDir: "{app}"; Flags: ignoreversion
 ; UE source-code-accessor plugin — installed into a game's Plugins/ via
