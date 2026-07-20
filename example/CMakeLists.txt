@@ -51,9 +51,9 @@ target_compile_options(TextEditorLib PRIVATE
 # ── Tree-sitter symbol index ─────────────────────────────────────────────
 # Pure logic (parse → tagged symbols), no ImGui/SDL — links into both the app
 # and the headless self-test. Pulls in the isolated treesitter dep.
-add_library(tsindex STATIC tsindex.cpp tsindex.h)
+add_library(tsindex STATIC index/tsindex.cpp index/tsindex.h)
 target_link_libraries(tsindex PUBLIC treesitter)
-target_include_directories(tsindex PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(tsindex PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/index)
 target_compile_options(tsindex PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
@@ -61,17 +61,17 @@ target_compile_options(tsindex PRIVATE
 # ── LSP protocol layer ───────────────────────────────────────────────────
 # Pure JSON-RPC framing/builders/parsers + UTF offset conversion (no SDL), so
 # the headless selftest can link it. The transport (lsp_client) adds SDL.
-add_library(lspproto STATIC lsp_protocol.cpp lsp_protocol.h)
+add_library(lspproto STATIC lsp/lsp_protocol.cpp lsp/lsp_protocol.h)
 target_link_libraries(lspproto PUBLIC nlohmann_json)
-target_include_directories(lspproto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(lspproto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lsp)
 target_compile_options(lspproto PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
 # ── LSP client transport (spawns clangd via SDL3 process API) ─────────────
-add_library(lspclient STATIC lsp_client.cpp lsp_client.h)
+add_library(lspclient STATIC lsp/lsp_client.cpp lsp/lsp_client.h)
 target_link_libraries(lspclient PUBLIC lspproto SDL3::SDL3 SDL3_Headers)
-target_include_directories(lspclient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(lspclient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lsp)
 target_compile_options(lspclient PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
@@ -79,9 +79,9 @@ target_compile_options(lspclient PRIVATE
 # ── DAP protocol layer ───────────────────────────────────────────────────
 # Pure Debug Adapter Protocol builders/parsers (no SDL) — reuses lspproto's
 # Content-Length framing. Links into the app and the headless selftest.
-add_library(dapproto STATIC dap_protocol.cpp dap_protocol.h)
+add_library(dapproto STATIC dap/dap_protocol.cpp dap/dap_protocol.h)
 target_link_libraries(dapproto PUBLIC lspproto nlohmann_json)
-target_include_directories(dapproto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(dapproto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/dap)
 target_compile_options(dapproto PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
@@ -89,16 +89,16 @@ target_compile_options(dapproto PRIVATE
 # ── Native-debugger bridges (raddbg / Visual Studio / MS DAP adapters) ────
 # Pure command builders + tool detection, no ImGui/SDL — links into the app
 # and the headless selftest.
-add_library(dbgbridge STATIC debug_bridge.cpp debug_bridge.h)
-target_include_directories(dbgbridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_library(dbgbridge STATIC dap/debug_bridge.cpp dap/debug_bridge.h)
+target_include_directories(dbgbridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/dap)
 target_compile_options(dbgbridge PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
 
 # ── DAP client transport (spawns a debug adapter via SDL3 process API) ────
-add_library(dapclient STATIC dap_client.cpp dap_client.h)
+add_library(dapclient STATIC dap/dap_client.cpp dap/dap_client.h)
 target_link_libraries(dapclient PUBLIC dapproto SDL3::SDL3 SDL3_Headers)
-target_include_directories(dapclient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(dapclient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/dap)
 target_compile_options(dapclient PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
 	$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/W4 /WX>)
@@ -106,16 +106,22 @@ target_compile_options(dapclient PRIVATE
 # ── Example executable ───────────────────────────────────────────────────
 add_executable(example
 	editor.cpp
-	command_palette.cpp
-	build_picker.cpp
-	search_async.cpp
-	updater.cpp
-	notes.cpp
-	screenshot.cpp
-	plugin_registry.cpp
-	plugin_loader.cpp
-	dejavu.cpp
+	features/palette/command_palette.cpp
+	features/build/build_picker.cpp
+	features/search/search_async.cpp
+	features/updater/updater.cpp
+	features/notes/notes.cpp
+	features/screenshot/screenshot.cpp
+	features/fonts/dejavu.cpp
+	plugin/plugin_registry.cpp
+	plugin/plugin_loader.cpp
 	main.cpp)
+# Feature/subsystem folders (only editor.{h,cpp} + main.cpp stay top-level);
+# includes remain bare-name via these directories.
+target_include_directories(example PRIVATE
+	${CMAKE_CURRENT_SOURCE_DIR}
+	features/notes features/screenshot features/updater features/git
+	features/nav features/fonts plugin)
 
 target_link_libraries(example PRIVATE TextEditorLib SDL3::SDL3 SDL3_Headers imguifd tsindex lspclient)
 
@@ -154,6 +160,7 @@ function(imguiide_add_plugin name factory)
 	target_link_libraries(${name} PRIVATE imguifd)
 	target_include_directories(${name} PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}
+		${CMAKE_CURRENT_SOURCE_DIR}/plugin
 		${CMAKE_CURRENT_SOURCE_DIR}/..)
 	target_compile_definitions(${name} PRIVATE IMGUIIDE_PLUGIN_FACTORY=${factory})
 	set_target_properties(${name} PROPERTIES
@@ -360,8 +367,11 @@ add_custom_command(TARGET example POST_BUILD
 # colorizer, fold detection — with no SDL/GPU/ImGui context. It links the same
 # TextEditorLib + imgui (for ImFont/ImVec2 types) but never creates a context,
 # so it runs in CI and even while example.exe is open. `ctest` or run directly.
-add_executable(selftest selftest.cpp plugins/cppgen/cppgen.cpp plugins/texttools/texttools.cpp notes.cpp screenshot.cpp)
-target_include_directories(selftest PRIVATE plugins/cppgen plugins/texttools)
+add_executable(selftest tests/selftest.cpp plugins/cppgen/cppgen.cpp plugins/texttools/texttools.cpp
+	features/notes/notes.cpp features/screenshot/screenshot.cpp)
+target_include_directories(selftest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+	plugins/cppgen plugins/texttools
+	features/notes features/screenshot features/git features/nav plugin)
 target_link_libraries(selftest PRIVATE nlohmann_json)
 target_link_libraries(selftest PRIVATE TextEditorLib imguifd tsindex lspproto dbgbridge)
 # The UE + Blueprint tests are gated on their plugin flags; compile the (now
@@ -392,7 +402,7 @@ add_test(NAME selftest COMMAND selftest)
 # lookups, serialization, cursor normalization) on a large synthetic doc. Prints
 # every timing and fails only on a gross (order-of-magnitude) regression, so it's
 # a CI tripwire rather than a flaky benchmark.
-add_executable(perftest perftest.cpp)
+add_executable(perftest tests/perftest.cpp)
 target_link_libraries(perftest PRIVATE TextEditorLib imguifd tsindex)
 target_compile_options(perftest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
@@ -402,7 +412,7 @@ add_test(NAME perftest COMMAND perftest)
 # ── LSP integration gate ──────────────────────────────────────────────────
 # Spawns a real clangd and asserts a completion + go-to-def round trip. SKIPs
 # (ctest return code 77) when no clangd is found, so CI without clangd stays green.
-add_executable(lsptest lsptest.cpp)
+add_executable(lsptest tests/lsptest.cpp)
 target_link_libraries(lsptest PRIVATE lspclient SDL3::SDL3 SDL3_Headers)
 target_compile_options(lsptest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
@@ -413,7 +423,7 @@ set_tests_properties(lsptest PROPERTIES SKIP_RETURN_CODE 77)
 # ── DAP integration gate ──────────────────────────────────────────────────
 # Spawns a real debugpy adapter and asserts a breakpoint → stop → inspect →
 # continue → exit round trip. SKIPs (77) when python/debugpy is absent.
-add_executable(daptest daptest.cpp)
+add_executable(daptest tests/daptest.cpp)
 target_link_libraries(daptest PRIVATE dapclient SDL3::SDL3 SDL3_Headers)
 target_compile_options(daptest PRIVATE
 	$<$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>:-Werror -Wall -Wpedantic -Wextra>
