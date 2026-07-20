@@ -59,11 +59,17 @@ std::string buildLaunch(int seq, const std::string& adapterType,
 		{"name", "ImGui-IDE launch"},
 		{"request", "launch"},
 		{"program", program},
+		// debugpy reads "stopOnEntry"; vsdbg (cppvsdbg / coreclr) and MIEngine
+		// (cppdbg) read "stopAtEntry" — send both so entry-stop works either way.
 		{"stopOnEntry", stopOnEntry},
-		// debugpy: run inside the adapter, output arrives as "output" events.
+		{"stopAtEntry", stopOnEntry},
+		// Output arrives as "output" events (internalConsole), not a terminal.
 		{"console", "internalConsole"},
-		{"justMyCode", true},
 	};
+	// justMyCode is a managed/python concept; on the native cppvsdbg engine it
+	// can suppress user breakpoints, so only set it off the native path.
+	if (adapterType != "cppvsdbg" && adapterType != "cppdbg")
+		args["justMyCode"] = true;
 	if (!adapterType.empty())
 		args["type"] = adapterType;
 	if (!cwd.empty())

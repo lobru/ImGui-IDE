@@ -476,10 +476,16 @@ void DebuggerPlugin::pollDap(PluginHost &host)
                 break;
 
             case dap::ResultKind::EvOutput:
-                consoleText += r.outputText;
-                if (!consoleText.empty() && consoleText.back() != '\n')
-                    consoleText += '\n';
-                consoleScrollDown = true;
+                // Drop telemetry — vsdbg emits "VS/Diagnostics/Debugger/..."
+                // events with category "telemetry"; they're adapter internals,
+                // not program output, and just spam the console.
+                if (r.outputCategory != "telemetry")
+                {
+                    consoleText += r.outputText;
+                    if (!consoleText.empty() && consoleText.back() != '\n')
+                        consoleText += '\n';
+                    consoleScrollDown = true;
+                }
                 break;
 
             case dap::ResultKind::EvExited:
@@ -662,6 +668,10 @@ void DebuggerPlugin::renderPanel(PluginHost &host)
                         std::snprintf(cfgExtAdapter, sizeof(cfgExtAdapter), "%s", it->second.c_str());
                 }
 
+                // Labels ABOVE full-width fields with breathing room between
+                // groups — the old label-on-the-right layout crammed everything
+                // against the window edge.
+                ImGui::Spacing();
                 if (projKey.empty())
                     ImGui::TextDisabled("No project open — open one to set a project association.");
                 else
@@ -669,13 +679,16 @@ void DebuggerPlugin::renderPanel(PluginHost &host)
                     ImGui::Text("Project: %s", std::filesystem::path(projKey).filename().string().c_str());
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", projKey.c_str());
-                    ImGui::SetNextItemWidth(-140.0f);
-                    ImGui::InputTextWithHint("Adapter##proj", "empty = auto by file type (e.g. vsdbg --interpreter=vscode)",
+                    ImGui::Spacing();
+
+                    ImGui::TextDisabled("Adapter");
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    ImGui::InputTextWithHint("##adapter", "empty = auto by file type (e.g. vsdbg --interpreter=vscode)",
                                              cfgAdapter, sizeof(cfgAdapter));
-                    ImGui::SetNextItemWidth(-140.0f);
-                    ImGui::InputTextWithHint("Target##proj", "program to debug (empty = built exe / active file)",
-                                             cfgTarget, sizeof(cfgTarget));
-                    ImGui::SameLine(0.0f, 4.0f);
+                    ImGui::Spacing();
+
+                    ImGui::TextDisabled("Target program");
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("built exe"))
                     {
                         auto exe = host.hostFindBuiltExe();
@@ -684,23 +697,33 @@ void DebuggerPlugin::renderPanel(PluginHost &host)
                         else
                             host.hostToast("No built executable found — build first (F6)");
                     }
-                    ImGui::SameLine(0.0f, 4.0f);
+                    ImGui::SameLine();
                     if (ImGui::SmallButton("active file"))
                     {
                         if (!active.empty() && active != "untitled")
                             std::snprintf(cfgTarget, sizeof(cfgTarget), "%s", active.c_str());
                     }
-                    ImGui::SetNextItemWidth(-140.0f);
-                    ImGui::InputTextWithHint("Arguments##proj", "debuggee argv (space separated)",
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    ImGui::InputTextWithHint("##target", "empty = built exe / active file",
+                                             cfgTarget, sizeof(cfgTarget));
+                    ImGui::Spacing();
+
+                    ImGui::TextDisabled("Arguments");
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    ImGui::InputTextWithHint("##args", "debuggee argv (space separated)",
                                              cfgArgs, sizeof(cfgArgs));
+                    ImGui::Spacing();
                 }
                 if (!ext.empty())
                 {
-                    ImGui::SetNextItemWidth(-140.0f);
-                    ImGui::InputTextWithHint((std::string("Adapter for ") + ext + "##ext").c_str(),
-                                             "empty = built-in default", cfgExtAdapter, sizeof(cfgExtAdapter));
+                    ImGui::TextDisabled("Adapter for %s files", ext.c_str());
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    ImGui::InputTextWithHint("##extadapter", "empty = built-in default",
+                                             cfgExtAdapter, sizeof(cfgExtAdapter));
+                    ImGui::Spacing();
                 }
 
+                ImGui::Spacing();
                 if (ImGui::Button("Save Configuration"))
                 {
                     if (!projKey.empty())
