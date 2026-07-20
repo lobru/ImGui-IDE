@@ -7019,6 +7019,15 @@ void Editor::loadSettings()
             dbgProjectAdapter[k] = v;
         else if (section == "debug_project_target")  // <project root> -> "program|args"
             dbgProjectTarget[k] = v;
+        else if (section == "palette_usage")         // action id -> "uses|lastEpoch"
+        {
+            auto bar = v.find('|');
+            PaletteUse u;
+            u.uses = std::atoi(v.c_str());
+            if (bar != std::string::npos)
+                u.last = std::strtoll(v.c_str() + bar + 1, nullptr, 10);
+            paletteUsage[k] = u;
+        }
         else if (section == "keybinds")
         {
             if (!v.empty())
@@ -7300,6 +7309,10 @@ void Editor::saveSettings()
     f << "\n[debug_project_target]\n";
     for (auto &[k, v] : dbgProjectTarget)
         f << k << "=" << v << "\n";
+    f << "\n[palette_usage]\n";
+    for (auto &[k, v] : paletteUsage)
+        if (v.uses > 0 && k.find('=') == std::string::npos && k.find('\n') == std::string::npos)
+            f << k << "=" << v.uses << "|" << v.last << "\n";
     f << "\n[keybinds]\n";
     for (auto &[k, v] : keybindOverrides)
         f << k << "=" << v << "\n";

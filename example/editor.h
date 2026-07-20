@@ -1085,13 +1085,32 @@ private:
 	void  debugInVisualStudio();
 
 	// ── Command palette (Ctrl+Shift+P) ───────────────────────────────────────
-	// Fuzzy-searchable list of every app action, floating over the main viewport.
-	// Type to filter, ↑/↓ to move, Enter runs, Escape closes. Rebindable
-	// (view.palette). Built fresh each frame from the current state.
+	// Modular action registry: built ONCE when the palette opens (core actions
+	// gated on doc/project state, plugin contributions tagged with their plugin,
+	// recents), then refiltered only when the query changes. Ranking blends the
+	// fuzzy score with persisted usage counts + recency, so an empty query shows
+	// your most-used actions first. Rows run via click, Enter, Alt+1..9 (plain
+	// 1..9 while the query is empty); each row carries a dim source tag +
+	// tooltip ("Filetype: Lua", "Plugin: Unreal Engine integration", ...).
+	struct PaletteAction {
+		std::string id;      // stable key for usage tracking
+		std::string label;
+		std::string source;  // why this row is here (dim tag + tooltip)
+		const char* chord = "";
+		std::function<void()> run;
+	};
+	struct PaletteUse { int uses = 0; long long last = 0; };  // persisted [palette_usage]
+	std::vector<PaletteAction> palActions;                  // rebuilt on open
+	std::unordered_map<std::string, PaletteUse> paletteUsage;
+	std::vector<std::pair<int, int>> palRows;               // (rank score, action idx), filtered
+	std::string palLastQuery = "\x01";                      // forces a refilter on open
 	bool palVisible = false;
 	bool palFocus = false;        // focus the query box next frame (just opened)
 	char palQuery[256] = "";
 	int  palSelected = 0;
+	void buildPaletteActions();   // core + plugin + recents, with sources
+	void refilterPalette();       // recompute palRows for the current query
+	void notePaletteUse(const std::string& id);  // bump usage + persist
 	void openCommandPalette();
 	void renderCommandPalette();
 

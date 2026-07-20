@@ -7,6 +7,34 @@ The whole 2026-05 roadmap (drafted features + high/med/low backlog) has shipped
 — see the **Shipped** changelog below. What follows in **Open** is everything
 that is still genuinely outstanding.
 
+## 🚀 User backlog (2026-07-20) — palette rework + UX batch
+
+- [ ] **Command palette rework** (user: "utter garbage — hardcoded list"): modular
+      action registry built ON OPEN (not per frame), file/project gating, plugin
+      sources, usage+recency-biased ranking (persisted), query-change-only
+      refiltering (the actual snappiness fix), selection via scroll/arrows/number
+      keys, dim source tag + hover tip per row ("Filetype: Lua", "Plugin: X").
+- [ ] **Build/Run discovery for multilevel projects**: enumerate ALL candidate
+      targets (sln/cmake/uproject/cargo/npm/scripts, subdirs included) and present
+      a GRAPHICAL picker; remember choice per project; when auto-detect fails,
+      show the candidates instead of giving up. Same principle for debugger setup.
+      (user: "you try and fail to automate and instead of giving that power to
+      the user you just give up. stop that")
+- [ ] **Debugger fully plugin-ized + automatic setup** (user: "torn out of
+      anything except a plugin"). Auto-setup: detect adapters silently, pick
+      target from build discovery, zero-config for common cases.
+- [ ] **Text-tools plugin** (6th DLL): json<->xml, json minify/pretty, sort
+      lines/selection (numeric/alpha, asc/desc), case convert selection
+      (camel/snake/upper/lower/title). Needs hostReplaceSelection host API.
+- [ ] **Markdown preview: fenced code blocks** syntax-highlighted (we own a
+      highlighting editor — use its colorizer, or render mono + per-token colors).
+- [ ] **File-structure reorg**: features into folders; only editor.{h,cpp} +
+      main.cpp stay top-level in example/.
+- [ ] **Appearance settings**: line spacing, fold-preview style/spacing, more
+      functional visual knobs.
+- [ ] **Symbols viewer**: more language/project aware (group by construct per
+      language, project-type sections).
+
 ## 🔧 Open
 
 ### Bugs needing a Windows repro

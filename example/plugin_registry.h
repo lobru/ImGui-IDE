@@ -142,6 +142,24 @@ public:
                 p->contributePaletteCommands(host, doc, add);
     }
 
+    // same, but tells the collector WHICH plugin contributed each entry (for the
+    // palette's per-row source tag) — host-side only, no plugin ABI impact
+    void paletteCommandsTagged(PluginHost &host, const PluginDocInfo &doc,
+                               const std::function<void(const std::string &, std::function<void()>,
+                                                        const char *)> &add)
+    {
+        for (auto &p : plugins)
+        {
+            if (!p->enabled())
+                continue;
+            const char *name = p->displayName();
+            p->contributePaletteCommands(host, doc,
+                                         [&](const std::string &label, std::function<void()> fn) {
+                                             add(label, std::move(fn), name);
+                                         });
+        }
+    }
+
     // first plugin that claims the project wins
     std::optional<PluginBuildCommand> buildCommand(const std::filesystem::path &startDir)
     {
