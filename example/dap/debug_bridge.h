@@ -67,6 +67,7 @@ std::string findVsdbg();         // NATIVE C/C++ vsdbg (cppvsdbg engine): VS Cod
 std::string findVsdbgManaged();  // MANAGED .NET vsdbg (coreclr engine): C# ext first
 std::string findNetcoredbg();    // Samsung netcoredbg on PATH (.NET fallback)
 std::string findOpenDebugAD7();  // VS Code ms-vscode.cpptools ext (MIEngine)
+std::string findLldbDap();       // LLVM lldb-dap / lldb-vscode (Apache-2.0, free)
 
 // True if `name` resolves to an executable on PATH (checks name and name.exe).
 bool commandOnPath(const std::string& name);

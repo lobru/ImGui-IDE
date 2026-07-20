@@ -8136,6 +8136,7 @@ void Editor::renderSettings()
                     {"proj.run", "Run", "F5", "Project", true, nullptr},
                     {"proj.build", "Build project", "F6", "Project", true, nullptr},
                     {"view.palette", "Command palette", "Ctrl+Shift+P", "View", true, nullptr},
+                    {"view.screenshot", "Save screenshot", "Ctrl+Alt+S", "View", true, nullptr},
                 };
 
                 // Plugin-contributed binds join the catalogue under each plugin's

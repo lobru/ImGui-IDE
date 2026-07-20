@@ -176,14 +176,17 @@ std::vector<std::string> DebuggerPlugin::adapterFor(PluginHost &host, const std:
             python = "python";
         return {python, "-m", "debugpy.adapter"};
     }
-    // .NET (C#): the MANAGED vsdbg (coreclr engine). netcoredbg is the fallback.
+    // .NET (C#): Samsung's netcoredbg is open-licensed (MIT) and drives the
+    // coreclr engine in any host. The MANAGED Microsoft vsdbg speaks coreclr too
+    // but is gated by the same VS/VS Code-only license handshake as its native
+    // engine, so it isn't auto-selected.
     if (ext == ".cs" || ext == ".fs" || ext == ".vb")
     {
         typeOut = "coreclr";
-        if (auto vsdbg = dbgbridge::findVsdbgManaged(); !vsdbg.empty())
-            return {vsdbg, "--interpreter=vscode"};
         if (auto nc = dbgbridge::findNetcoredbg(); !nc.empty())
             return {nc, "--interpreter=vscode"};
+        if (!dbgbridge::findVsdbgManaged().empty())
+            nativeOnlyVsdbg = true;   // only the license-locked engine is present
         return {};
     }
     if (isNativeDebugExt(ext))
@@ -191,10 +194,17 @@ std::vector<std::string> DebuggerPlugin::adapterFor(PluginHost &host, const std:
         if (!nativeAdapterDetected)
         {
             nativeAdapterDetected = true;   // detect once; tools don't appear mid-session
-            if (auto vsdbg = dbgbridge::findVsdbg(); !vsdbg.empty())
+            nativeOnlyVsdbg = false;
+            // Prefer FREELY-LICENSED adapters. Microsoft's vsdbg (cppvsdbg) is
+            // deliberately NOT auto-selected: it gates every session behind a
+            // signed "handshake" reverse-request whose secret ships only in
+            // authorized Microsoft hosts (Visual Studio / VS Code), and its
+            // EULA restricts use to those products — so driving it here just
+            // makes it abort ("adapter gone"). lldb-dap / gdb-dap / OpenDebugAD7
+            // are open-licensed and work in any host.
+            if (auto lldb = dbgbridge::findLldbDap(); !lldb.empty())
             {
-                nativeAdapterArgv = {vsdbg, "--interpreter=vscode"};
-                nativeAdapterType = "cppvsdbg";
+                nativeAdapterArgv = {lldb};   // lldb-dap wants no launch "type"
             }
             else if (auto ad7 = dbgbridge::findOpenDebugAD7();
                      !ad7.empty() && dbgbridge::commandOnPath("gdb"))
@@ -203,13 +213,15 @@ std::vector<std::string> DebuggerPlugin::adapterFor(PluginHost &host, const std:
                 nativeAdapterType = "cppdbg";
                 nativeAdapterExtras = {{"MIMode", "gdb"}, {"miDebuggerPath", "gdb"}};
             }
-            else if (dbgbridge::commandOnPath("lldb-dap"))
-            {
-                nativeAdapterArgv = {"lldb-dap"};
-            }
             else if (dbgbridge::commandOnPath("gdb"))
             {
                 nativeAdapterArgv = {"gdb", "-i", "dap"};
+            }
+            else if (!dbgbridge::findVsdbg().empty())
+            {
+                // Only the license-locked engine is available — flag it so
+                // startSession can point the user at a usable adapter.
+                nativeOnlyVsdbg = true;
             }
         }
         typeOut = nativeAdapterType;
@@ -314,7 +326,24 @@ void DebuggerPlugin::startSession(PluginHost &host)
         argv = adapterFor(host, ext, prog, type, extras);
     if (argv.empty())
     {
-        host.hostToast("No debug adapter for " + ext + " — configure one in Debug panel > Configuration");
+        if (nativeOnlyVsdbg)
+        {
+            bool managed = (ext == ".cs" || ext == ".fs" || ext == ".vb");
+            consoleText += "[no adapter] Microsoft vsdbg was found, but it is licensed for use only\n"
+                           "inside Visual Studio / VS Code and refuses to run in other hosts\n"
+                           "(it aborts every session at its signed handshake). Install instead:\n";
+            consoleText += managed
+                               ? "  - netcoredbg (Samsung's open-source .NET DAP adapter)\n"
+                               : "  - LLVM 'lldb-dap' (works with clang/lldb builds)\n"
+                                 "  - gdb 14+ (adds a built-in DAP mode)\n";
+            consoleText += "then reopen this panel. Or set a custom adapter in Configuration.\n";
+            consoleScrollDown = true;
+            host.hostToast(managed
+                               ? "vsdbg is VS/VS Code-only — install netcoredbg for .NET debugging here"
+                               : "vsdbg is VS/VS Code-only — install lldb-dap or gdb for C++ debugging here");
+        }
+        else
+            host.hostToast("No debug adapter for " + ext + " — configure one in Debug panel > Configuration");
         panelVisible = true;   // put the fix next to the failure
         return;
     }
@@ -356,6 +385,9 @@ void DebuggerPlugin::startSession(PluginHost &host)
     program = prog.string();
     programArgs = std::move(projArgs);
     adapterType = type;
+    adapterPath = argv[0];
+    adapterInitialized = false;
+    licenseBlocked = false;
     launchExtras = std::move(extras);
     sessionActive = true;
     panelVisible = true;
@@ -391,6 +423,7 @@ void DebuggerPlugin::pollDap(PluginHost &host)
         switch (r.kind)
         {
             case dap::ResultKind::Initialize:
+                adapterInitialized = adapterInitialized || r.success;
                 if (r.success && !launchSent)
                 {
                     std::filesystem::path prog(program);
@@ -493,10 +526,33 @@ void DebuggerPlugin::pollDap(PluginHost &host)
                 consoleScrollDown = true;
                 break;
 
+            case dap::ResultKind::LicenseHandshake:
+                licenseBlocked = true;
+                consoleText += "[license] This adapter (Microsoft vsdbg) requires a signed handshake\n"
+                               "that only Visual Studio / VS Code can produce, so it will abort now.\n"
+                               "Use an open adapter (lldb-dap / gdb 14+ / netcoredbg) instead.\n";
+                consoleScrollDown = true;
+                break;   // the adapter will close next; AdapterGone finalizes
+
             case dap::ResultKind::EvTerminated:
             case dap::ResultKind::AdapterGone:
-                consoleText += r.kind == dap::ResultKind::EvTerminated ? "[terminated]\n"
-                                                                       : "[adapter gone]\n";
+                if (r.kind == dap::ResultKind::EvTerminated)
+                    consoleText += "[terminated]\n";
+                else if (licenseBlocked)
+                    consoleText += "[adapter gone] (license handshake refused — see above)\n";
+                else if (!adapterInitialized)
+                {
+                    // Died before it ever answered `initialize` — the adapter
+                    // binary is broken/misconfigured, not the debuggee. Name it
+                    // so the user can swap it out instead of guessing.
+                    consoleText += "[adapter gone] '" + adapterPath + "' exited before initializing.\n"
+                                   "The adapter itself failed to start (missing dependency, wrong\n"
+                                   "path, or an incompatible build). Set a working adapter in\n"
+                                   "Configuration, or install lldb-dap / gdb 14+ / netcoredbg.\n";
+                    host.hostToast("Debug adapter exited on startup — check Console / Configuration");
+                }
+                else
+                    consoleText += "[adapter gone]\n";
                 consoleScrollDown = true;
                 stopSession(host);
                 break;

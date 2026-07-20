@@ -70,6 +70,10 @@ void TextToolsPlugin::applyToSelection(PluginHost &host, const char *what,
 
 void TextToolsPlugin::onDocumentContextMenu(PluginHost &host, const PluginDocContext &)
 {
+    // Every tool transforms the selection, so the menu is meaningless without
+    // one — don't clutter the context menu when nothing is selected.
+    if (host.hostActiveSelection().empty())
+        return;
     ImGui::Separator();
     if (ImGui::BeginMenu("Text Tools"))
     {

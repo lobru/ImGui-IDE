@@ -196,8 +196,19 @@ void DapClient::dispatch(const std::string& body)
 
 	if (in.type == "request")
 	{
-		// Reverse request (runInTerminal, startDebugging, …) we don't support —
-		// refuse it so the adapter doesn't block. Reader only ENQUEUES.
+		// Microsoft vsdbg gates every session behind a signed "handshake"
+		// reverse-request; the secret ships only in authorized MS hosts, so we
+		// can't answer it. Surface a distinct result so the UI explains the
+		// license situation instead of a bare "adapter gone" after the refusal.
+		if (in.command == "handshake")
+		{
+			std::lock_guard<std::mutex> lk(mInMutex);
+			DapResult s;
+			s.kind = ResultKind::LicenseHandshake;
+			mInQueue.push_back(std::move(s));
+		}
+		// Reverse request (handshake, runInTerminal, startDebugging, …) we don't
+		// support — refuse it so the adapter doesn't block. Reader only ENQUEUES.
 		enqueueOut(buildErrorResponse(in.seq, in.command));
 	}
 }

@@ -35,6 +35,10 @@ enum class ResultKind {
 	EvInitialized, EvStopped, EvContinued, EvOutput, EvTerminated, EvExited,
 	// transport
 	AdapterGone,
+	// adapter sent a reverse "handshake" request (Microsoft vsdbg license gate)
+	// we can't satisfy — surfaced so the UI can explain instead of showing a
+	// bare "adapter gone".
+	LicenseHandshake,
 };
 
 struct DapResult {

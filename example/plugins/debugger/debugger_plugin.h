@@ -62,6 +62,9 @@ private:
     int   currentFrame = 0;
     std::string program;
     std::string adapterType;
+    std::string adapterPath;      // argv[0] of the running adapter (for diagnostics)
+    bool  adapterInitialized = false;   // saw a successful initialize response
+    bool  licenseBlocked = false;       // adapter demanded a handshake we can't sign
     std::vector<dap::StackFrame> frames;
     std::vector<dap::Scope>      scopes;
     std::unordered_map<int, std::vector<dap::Variable>> varChildren;
@@ -88,6 +91,10 @@ private:
     std::vector<std::string> nativeAdapterArgv;
     std::string nativeAdapterType;
     std::vector<std::pair<std::string, std::string>> nativeAdapterExtras;
+    // True when the ONLY native adapter present is Microsoft vsdbg, which is
+    // license-locked to Visual Studio / VS Code and can't be driven here — so
+    // we don't auto-select it; startSession explains it instead of aborting.
+    bool nativeOnlyVsdbg = false;
 
     // ── helpers ──────────────────────────────────────────────────────────
     std::string canonPath(const std::string &file) const;

@@ -299,11 +299,12 @@ std::string findOpenDebugAD7()
 	return {};
 }
 
-bool commandOnPath(const std::string& name)
+// Resolve `name` (or name.exe) to its absolute path on PATH, else "".
+static std::string resolveOnPath(const std::string& name)
 {
 	const char* path = std::getenv("PATH");
 	if (!path || name.empty())
-		return false;
+		return {};
 #ifdef _WIN32
 	const char sep = ';';
 #else
@@ -316,10 +317,41 @@ bool commandOnPath(const std::string& name)
 		if (entry.empty())
 			continue;
 		std::filesystem::path base = std::filesystem::path(entry) / name;
-		if (fileExists(base) || fileExists(base.string() + ".exe"))
-			return true;
+		if (fileExists(base))
+			return base.string();
+		if (fileExists(base.string() + ".exe"))
+			return base.string() + ".exe";
 	}
-	return false;
+	return {};
+}
+
+bool commandOnPath(const std::string& name)
+{
+	return !resolveOnPath(name).empty();
+}
+
+std::string findLldbDap()
+{
+	if (auto p = envPath("LLDB_DAP_PATH"); !p.empty())
+		return p;
+	// LLVM renamed the DAP adapter lldb-vscode -> lldb-dap in LLVM 18; accept
+	// both. Apache-2.0 (LLVM exception) — freely usable in any host, unlike the
+	// Microsoft vsdbg engine, which is license-locked to VS / VS Code.
+	for (const char* name : {"lldb-dap", "lldb-vscode"})
+		if (auto p = resolveOnPath(name); !p.empty())
+			return p;
+	// Common LLVM install locations when it isn't on PATH.
+	std::vector<std::filesystem::path> roots;
+	if (const char* e = std::getenv("LLVM_PATH"); e && *e)
+		roots.emplace_back(std::filesystem::path(e) / "bin");
+	for (const char* pf : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"})
+		if (const char* e = std::getenv(pf); e && *e)
+			roots.emplace_back(std::filesystem::path(e) / "LLVM" / "bin");
+	for (const auto& root : roots)
+		for (const char* leaf : {"lldb-dap.exe", "lldb-vscode.exe", "lldb-dap", "lldb-vscode"})
+			if (auto c = root / leaf; fileExists(c))
+				return c.string();
+	return {};
 }
 
 bool unrealEditorTarget(const std::filesystem::path& projectRoot,
