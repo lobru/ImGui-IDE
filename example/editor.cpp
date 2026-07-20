@@ -5871,6 +5871,14 @@ void Editor::renderSymbolsPanel()
     ImGui::SameLine();
     if (ImGui::RadioButton("Project", symbolsProjectMode))
         symbolsProjectMode = true;
+    if (symbolsProjectMode)
+    {
+        ImGui::SameLine(0.0f, 16.0f);
+        // Files = per-file outline tree; Types = the whole project grouped by
+        // construct (classes/functions/...) with external sources separated.
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::Combo("##symView", &symbolsProjView, "Files\0Types\0");
+    }
 
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::InputTextWithHint("##symFilter", "filter…", symbolsFilter, sizeof(symbolsFilter));
@@ -5962,11 +5970,65 @@ void Editor::renderSymbolsPanel()
                 symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind, {}});
         std::sort(symbolsProjectRows.begin(), symbolsProjectRows.end(),
                   [](const SymRow &a, const SymRow &b) { return a.name < b.name; });
-        for (auto &r : symbolsProjectRows) // precompute lowercase once per gen (filter is case-insensitive)
+        // Lowercase names once per gen (filter is case-insensitive) and mark rows
+        // living under an extra source root (engine trees etc.) as external.
+        std::vector<std::string> extRoots;
+        for (auto &loc : extraSourceLocations)
+        {
+            std::string l = loc;
+            std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            extRoots.push_back(std::move(l));
+        }
+        for (auto &r : symbolsProjectRows)
         {
             r.lname = r.name;
             std::transform(r.lname.begin(), r.lname.end(), r.lname.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            if (!extRoots.empty())
+            {
+                std::string lf = r.file;
+                std::transform(lf.begin(), lf.end(), lf.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                for (auto &root : extRoots)
+                    if (lf.rfind(root, 0) == 0)
+                    {
+                        r.external = true;
+                        break;
+                    }
+            }
         }
+        // "Types" view: rows grouped by construct kind, project section first.
+        symbolsTypeGroups.clear();
+        struct KindGroup { const char *name; std::initializer_list<ts::Kind> kinds; };
+        static const KindGroup kGroups[] = {
+            {"Classes", {ts::Kind::Class}},
+            {"Structs", {ts::Kind::Struct}},
+            {"Enums", {ts::Kind::Enum}},
+            {"Types", {ts::Kind::Type}},
+            {"Functions", {ts::Kind::Function, ts::Kind::Method}},
+            {"Namespaces / Modules", {ts::Kind::Module}},
+            {"Macros", {ts::Kind::Macro}},
+            {"Constants", {ts::Kind::Constant}},
+            {"Fields", {ts::Kind::Field}},
+            {"Variables", {ts::Kind::Variable}},
+        };
+        for (int ext = 0; ext < 2; ++ext)
+            for (auto &g : kGroups)
+            {
+                SymTypeGroup grp{ext ? "External sources" : "Project", g.name, {}};
+                for (int i = 0; i < (int)symbolsProjectRows.size(); ++i)
+                {
+                    const auto &r = symbolsProjectRows[(size_t)i];
+                    if ((int)r.external != ext)
+                        continue;
+                    for (auto k : g.kinds)
+                        if (r.kind == k)
+                        {
+                            grp.rows.push_back(i);
+                            break;
+                        }
+                }
+                if (!grp.rows.empty())
+                    symbolsTypeGroups.push_back(std::move(grp));
+            }
         symbolsFilterCache = std::string(1, '\x01'); // force a refilter against the new rows
         symbolsProjectGen = gen;
     }
@@ -6016,6 +6078,47 @@ void Editor::renderSymbolsPanel()
             ImGui::TextDisabled("%zu match%s%s", symbolsFilteredIdx.size(),
                                 symbolsFilteredIdx.size() == 1 ? "" : "es",
                                 symbolsFilteredIdx.size() > 2000 ? " (showing first 2000)" : "");
+        }
+        else if (symbolsProjView == 1)
+        {
+            // Types view: whole project grouped by construct kind; symbols from
+            // extra source roots (engine trees) sit in their own section so the
+            // project's own types aren't drowned out.
+            const char *lastSection = nullptr;
+            int uid = 0;
+            for (auto &grp : symbolsTypeGroups)
+            {
+                if (!lastSection || std::strcmp(lastSection, grp.section) != 0)
+                {
+                    lastSection = grp.section;
+                    ImGui::SeparatorText(grp.section);
+                }
+                ImGui::PushID(uid++);
+                std::string hdr = std::string(grp.kindName) + " (" + std::to_string(grp.rows.size()) + ")";
+                if (ImGui::TreeNodeEx(hdr.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
+                {
+                    int shown = 0;
+                    for (int ri : grp.rows)
+                    {
+                        if (++shown > 1000)
+                        {
+                            ImGui::TextDisabled("(… %zu more — use the filter)", grp.rows.size() - 1000);
+                            break;
+                        }
+                        const auto &row = symbolsProjectRows[(size_t) ri];
+                        ImGui::PushID(ri);
+                        if (ImGui::Selectable(row.name.c_str()))
+                            projectJump(row.file, row.line);
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("%s:%d", row.file.c_str(), row.line + 1);
+                        ImGui::PopID();
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+            if (symbolsTypeGroups.empty())
+                ImGui::TextDisabled("(index still building, or no symbols)");
         }
         else
         {

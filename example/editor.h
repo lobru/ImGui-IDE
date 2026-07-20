@@ -1020,7 +1020,12 @@ private:
 	std::string                     symbolsCacheFile;              // doc-mode cache key (filename)
 	size_t                          symbolsCacheUndo = (size_t) -1;// doc-mode cache key (edit count)
 	std::vector<ts::Symbol>         symbolsCacheSyms;              // parsed outline of the active doc
-	struct SymRow { std::string name; std::string file; int line; ts::Kind kind; std::string lname; };
+	struct SymRow { std::string name; std::string file; int line; ts::Kind kind; std::string lname; bool external = false; };
+	// Project-mode "Types" view: rows grouped by construct kind, partitioned into
+	// project vs external-source sections (extra source roots / engine trees).
+	struct SymTypeGroup { const char* section; const char* kindName; std::vector<int> rows; };
+	std::vector<SymTypeGroup> symbolsTypeGroups;   // rebuilt per index gen
+	int symbolsProjView = 0;                       // 0 = Files tree, 1 = Types
 	std::vector<SymRow>             symbolsProjectRows;            // flattened project index (filtered flat view)
 	std::vector<std::string>        symbolsFiles;                  // sorted file paths (project tree view)
 	int                             symbolsProjectGen = -1;        // index gen the two caches above are from
