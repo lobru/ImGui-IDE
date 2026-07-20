@@ -1240,15 +1240,17 @@ void TextEditor::renderText()
 					case Braces:        preview = " ...";   break;
 					default:            preview = " ...";     break;
 					}
-					float px = cursorScreenPos.x + textOffset + (line.maxColumn + 1) * glyphSize.x;
+					float px = cursorScreenPos.x + textOffset + (line.maxColumn + 1) * glyphSize.x +
+					           foldPreviewSpacingPx;
 					float py = lineScreenPos.y;
 					float tw = ImGui::CalcTextSize(preview).x;
 					ImVec2 rmin(px, py + 2.0f);
 					ImVec2 rmax(px + tw + 6.0f, py + glyphSize.y - 2.0f);
 					bool hovered = ImGui::IsMouseHoveringRect(rmin, rmax);
-					ImU32 bgCol = hovered ? IM_COL32(100, 100, 110, 200) : IM_COL32(80, 80, 80, 140);
+					int bgA = (int) ((hovered ? 200.0f : 140.0f) * foldPreviewOpacity);
+					ImU32 bgCol = hovered ? IM_COL32(100, 100, 110, bgA) : IM_COL32(80, 80, 80, bgA);
 					ImU32 fgCol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-					drawList->AddRectFilled(rmin, rmax, bgCol, 3.0f);
+					drawList->AddRectFilled(rmin, rmax, bgCol, foldPreviewRounding);
 					drawList->AddText(ImVec2(px + 3.0f, py), fgCol, preview);
 
 					if (hovered)

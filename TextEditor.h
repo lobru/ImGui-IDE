@@ -63,6 +63,13 @@ public:
 						if (value < 1.0f) value = 1.0f;
  lineSpacing =value; }
 	inline float GetLineSpacing() const { return lineSpacing; }
+	// Fold-preview chip styling: extra gap after the line's text (px), corner
+	// rounding (px), and background opacity (0..1 scale on the default alphas).
+	inline void SetFoldPreviewStyle(float spacingPx, float rounding, float opacity) {
+		foldPreviewSpacingPx = spacingPx;
+		foldPreviewRounding = rounding;
+		foldPreviewOpacity = opacity < 0.0f ? 0.0f : (opacity > 1.0f ? 1.0f : opacity);
+	}
 	inline void SetReadOnlyEnabled(bool value) { readOnly = value; }
 	inline bool IsReadOnlyEnabled() const { return readOnly; }
 	inline void SetAutoIndentEnabled(bool value) { autoIndent = value; }
@@ -1753,6 +1760,9 @@ protected:
 
 	// editor options
 	float lineSpacing = 1.0f;
+	float foldPreviewSpacingPx = 0.0f;   // extra gap between text end and the chip
+	float foldPreviewRounding = 3.0f;    // chip corner rounding
+	float foldPreviewOpacity = 1.0f;     // 0..1 scale on the chip's bg alpha
 	bool readOnly = false;
 	bool autoIndent = true;
 	bool showSpaces = true;

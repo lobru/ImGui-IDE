@@ -699,6 +699,16 @@ private:
 	bool   prefInvertPan       = true;    // inverted ("grab the content") pan is the default
 	bool   prefWordWrap        = false;   // soft-wrap long lines
 	int    prefWrapWidthPx     = 0;       // 0 = wrap to view width, else fixed px
+	// Appearance (Settings ▸ Editor ▸ Appearance) — applied to every open tab on
+	// change and to new tabs on creation.
+	float  prefLineSpacing        = 1.0f; // line height multiplier (0.9–1.8)
+	float  prefFoldPreviewSpacing = 0.0f; // px gap before the fold-preview chip
+	float  prefFoldPreviewRounding = 3.0f;
+	float  prefFoldPreviewOpacity = 1.0f;
+	void   applyAppearanceToEditor(TextEditor& e) {
+		e.SetLineSpacing(prefLineSpacing);
+		e.SetFoldPreviewStyle(prefFoldPreviewSpacing, prefFoldPreviewRounding, prefFoldPreviewOpacity);
+	}
 	float  prefPanScrollAccel  = 1.0f;    // middle-mouse pan/scroll accel gain (1.0 = default feel, 0 = linear)
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited
 	bool   prefIdleThrottle    = true;    // drop to ~10 fps when window unfocused

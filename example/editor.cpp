@@ -505,6 +505,7 @@ Editor::TabDocument &Editor::newTab()
     t->diff.SetPanScrollAccel(prefPanScrollAccel);
     t->editor.SetWordWrap(prefWordWrap);
     t->editor.SetWrapWidth(static_cast<float>(prefWrapWidthPx));
+    applyAppearanceToEditor(t->editor);
     if (focusMode)
         t->editor.SetShowScrollbarMiniMapEnabled(false); // honor focus mode for tabs opened while focused
     applyKeybindOverridesToEditor(t->editor);            // user keybind remaps into this editor
@@ -7179,6 +7180,14 @@ void Editor::loadSettings()
                 prefWordWrap = (v == "1" || v == "true");
             else if (k == "wrap_width")
                 prefWrapWidthPx = std::atoi(v.c_str());
+            else if (k == "line_spacing")
+                prefLineSpacing = std::strtof(v.c_str(), nullptr);
+            else if (k == "fold_preview_spacing")
+                prefFoldPreviewSpacing = std::strtof(v.c_str(), nullptr);
+            else if (k == "fold_preview_rounding")
+                prefFoldPreviewRounding = std::strtof(v.c_str(), nullptr);
+            else if (k == "fold_preview_opacity")
+                prefFoldPreviewOpacity = std::strtof(v.c_str(), nullptr);
             else if (k == "fps_limit")
                 prefFpsLimit = std::atoi(v.c_str());
             else if (k == "idle_throttle")
@@ -7349,6 +7358,10 @@ void Editor::saveSettings()
     f << "update_channel=" << prefUpdateChannel << "\n";
     f << "word_wrap=" << (prefWordWrap ? "1" : "0") << "\n";
     f << "wrap_width=" << prefWrapWidthPx << "\n";
+    f << "line_spacing=" << prefLineSpacing << "\n";
+    f << "fold_preview_spacing=" << prefFoldPreviewSpacing << "\n";
+    f << "fold_preview_rounding=" << prefFoldPreviewRounding << "\n";
+    f << "fold_preview_opacity=" << prefFoldPreviewOpacity << "\n";
     f << "fps_limit=" << prefFpsLimit << "\n";
     f << "idle_throttle=" << (prefIdleThrottle ? "1" : "0") << "\n";
     f << "live_coding=" << (prefLiveCoding ? "1" : "0") << "\n";
@@ -7613,6 +7626,19 @@ void Editor::renderSettings()
                 ImGui::SliderFloat("Pan/scroll acceleration", &prefPanScrollAccel, 0.0f, 4.0f, "%.2f");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Middle-mouse scroll speed-up by distance from the click point.\n0 = constant speed (no acceleration).");
+                ImGui::SeparatorText("Appearance");
+                bool appearanceChanged = false;
+                appearanceChanged |= ImGui::SliderFloat("Line spacing", &prefLineSpacing, 0.9f, 1.8f, "%.2fx");
+                appearanceChanged |= ImGui::SliderFloat("Fold preview gap", &prefFoldPreviewSpacing, 0.0f, 32.0f, "%.0f px");
+                appearanceChanged |= ImGui::SliderFloat("Fold preview rounding", &prefFoldPreviewRounding, 0.0f, 10.0f, "%.0f px");
+                appearanceChanged |= ImGui::SliderFloat("Fold preview opacity", &prefFoldPreviewOpacity, 0.15f, 1.0f, "%.2f");
+                if (appearanceChanged)
+                {
+                    for (auto &up : tabs)
+                        applyAppearanceToEditor(up->editor);
+                    saveSettings();
+                }
+                ImGui::Separator();
                 ImGui::Checkbox("Word wrap", &prefWordWrap);
                 if (prefWordWrap)
                 {
