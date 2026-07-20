@@ -9,12 +9,12 @@ that is still genuinely outstanding.
 
 ## 🚀 User backlog (2026-07-20) — palette rework + UX batch
 
-- [ ] **Command palette rework** (user: "utter garbage — hardcoded list"): modular
+- [x] **Command palette rework** (deae8f9) (user: "utter garbage — hardcoded list"): modular
       action registry built ON OPEN (not per frame), file/project gating, plugin
       sources, usage+recency-biased ranking (persisted), query-change-only
       refiltering (the actual snappiness fix), selection via scroll/arrows/number
       keys, dim source tag + hover tip per row ("Filetype: Lua", "Plugin: X").
-- [ ] **Build/Run discovery for multilevel projects**: enumerate ALL candidate
+- [x] **Build/Run discovery for multilevel projects** (7beb9eb — picker + [build]/[run] pins; F6 was ALSO ignoring the [build] override entirely): enumerate ALL candidate
       targets (sln/cmake/uproject/cargo/npm/scripts, subdirs included) and present
       a GRAPHICAL picker; remember choice per project; when auto-detect fails,
       show the candidates instead of giving up. Same principle for debugger setup.
@@ -23,7 +23,7 @@ that is still genuinely outstanding.
 - [ ] **Debugger fully plugin-ized + automatic setup** (user: "torn out of
       anything except a plugin"). Auto-setup: detect adapters silently, pick
       target from build discovery, zero-config for common cases.
-- [ ] **Text-tools plugin** (6th DLL): json<->xml, json minify/pretty, sort
+- [x] **Text-tools plugin** (a0ec237, 6th DLL; hostReplaceSelection added, ABI 3): json<->xml, json minify/pretty, sort
       lines/selection (numeric/alpha, asc/desc), case convert selection
       (camel/snake/upper/lower/title). Needs hostReplaceSelection host API.
 - [ ] **Markdown preview: fenced code blocks** syntax-highlighted (we own a
