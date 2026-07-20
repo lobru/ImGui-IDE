@@ -294,10 +294,14 @@ void TerminalPlugin::onFrame(PluginHost &host)
     ImGui::SameLine();
     ImGui::Checkbox("Auto-scroll", &autoScroll);
     ImGui::SameLine();
-    ImGui::TextDisabled("%s  \xc2\xb7  %s", running ? session->shellName.c_str() : "(stopped)",
+    // Re-evaluate — the Stop button above just reset `session`, so the pre-toolbar
+    // `running` is stale THIS frame and dereferencing through it crashed (null
+    // shellName read the frame Stop was clicked).
+    const bool runningNow = session && session->alive.load();
+    ImGui::TextDisabled("%s  \xc2\xb7  %s", runningNow ? session->shellName.c_str() : "(stopped)",
                         wantCwd.c_str());
 
-    if (running && startedForRoot != wantCwd)
+    if (runningNow && startedForRoot != wantCwd)
     {
         ImGui::SameLine();
         if (ImGui::SmallButton("cd to project"))
