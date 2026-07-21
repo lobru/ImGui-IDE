@@ -15,12 +15,17 @@ LspClient::~LspClient()
 	stop();
 }
 
-bool LspClient::start(const std::string& serverPath, const std::string& rootUri)
+bool LspClient::start(const std::string& serverPath, const std::string& rootUri,
+                      const std::vector<std::string>& extraArgs)
 {
 	if (mProcess)
 		return true;
-	const char* args[] = { serverPath.c_str(), nullptr };
-	mProcess = SDL_CreateProcess(args, /*pipe_stdio*/ true);
+	std::vector<const char*> args;
+	args.push_back(serverPath.c_str());
+	for (const auto& a : extraArgs)
+		args.push_back(a.c_str());
+	args.push_back(nullptr);
+	mProcess = SDL_CreateProcess(args.data(), /*pipe_stdio*/ true);
 	if (!mProcess)
 		return false;
 	mStdin = SDL_GetProcessInput(mProcess);

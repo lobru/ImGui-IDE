@@ -42,8 +42,10 @@ public:
 
 	// Spawn `serverPath` rooted at `rootUri`. Non-blocking: the initialize
 	// handshake runs asynchronously — ready() flips true once it completes.
-	// Returns false only if the process failed to spawn.
-	bool start(const std::string& serverPath, const std::string& rootUri);
+	// Returns false only if the process failed to spawn. `extraArgs` are
+	// appended to the command line (e.g. clangd's --compile-commands-dir).
+	bool start(const std::string& serverPath, const std::string& rootUri,
+	           const std::vector<std::string>& extraArgs = {});
 	void stop();                                   // graceful then force; idempotent
 
 	bool spawned() const { return mProcess != nullptr; }

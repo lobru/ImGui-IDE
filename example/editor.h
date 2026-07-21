@@ -1278,6 +1278,10 @@ private:
 	std::vector<std::filesystem::path> buildIncRootsCache_;
 	std::string buildIncRootsKey_;
 	double      buildIncRootsTime_ = -1e9;
+	// Dir holding the first compile_commands.json buildIncludeRoots() parsed
+	// (empty = none found). startLspForProject() hands it to clangd via
+	// --compile-commands-dir so dep includes resolve after a build.
+	std::filesystem::path buildCompileCommandsDir_;
 
 	// Recents — MRU lists of recently opened files and projects.
 	// Capped at 20 entries each, persisted in settings.

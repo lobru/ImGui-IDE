@@ -3527,6 +3527,25 @@ void Editor::detectClangd()
     clangdPath = "clangd"; // last resort: rely on PATH (start() fails cleanly if absent)
 }
 
+// MSVC-generator builds have no compile_commands.json, so clangd can't see the
+// build tree's dep includes. Synthesize a compile_flags.txt (one -I per build-
+// derived include root) in a per-project config dir and point clangd at it via
+// --compile-commands-dir. Returns the dir ("" on I/O failure).
+static std::filesystem::path writeGeneratedCompileFlags(const std::filesystem::path &projectRoot,
+                                                        const std::vector<std::filesystem::path> &roots)
+{
+    std::error_code ec;
+    auto dir = Editor::userConfigDir() / "clangd" /
+               std::to_string(std::hash<std::string>{}(projectRoot.string()));
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream f(dir / "compile_flags.txt", std::ios::trunc);
+    if (!f.is_open())
+        return {};
+    for (const auto &r : roots)
+        f << "-I" << r.string() << "\n";
+    return dir;
+}
+
 void Editor::startLspForProject()
 {
     if (!lspEnabled || projectRoot.empty())
@@ -3535,7 +3554,31 @@ void Editor::startLspForProject()
         detectClangd();
     lspClient.stop();
     lspDocHash.clear();
-    lspClient.start(clangdPath, lsp::pathToUri(projectRoot.string()));
+    // Post-build intel: a compile_commands.json (Ninja/Makefile generators)
+    // gives clangd exact per-TU flags — point it there. Without one, fall back
+    // to a generated compile_flags.txt from the build-derived include roots so
+    // fetched deps still resolve on MSVC-generator projects.
+    const auto &roots = buildIncludeRoots();
+    std::vector<std::string> extraArgs;
+    if (!buildCompileCommandsDir_.empty())
+        extraArgs.push_back("--compile-commands-dir=" + buildCompileCommandsDir_.string());
+    else
+    {
+        bool depRoots = false;
+        for (const auto &r : roots)
+            if (r != projectRoot && r != projectRoot / "include")
+            {
+                depRoots = true;
+                break;
+            }
+        if (depRoots)
+        {
+            auto dir = writeGeneratedCompileFlags(projectRoot, roots);
+            if (!dir.empty())
+                extraArgs.push_back("--compile-commands-dir=" + dir.string());
+        }
+    }
+    lspClient.start(clangdPath, lsp::pathToUri(projectRoot.string()), extraArgs);
 }
 
 std::string Editor::lspUriForTab(const TabDocument &t) const
@@ -3685,8 +3728,12 @@ void Editor::rebuildProjectIndex()
     // Extra source locations are indexed alongside the project root (go-to-def +
     // autocomplete over folders outside the project). Snapshot for the worker.
     auto extraSnap = extraSourceLocations;
+    // Build-derived include roots: dep headers live under build trees skipDir
+    // prunes, so after the source walk the worker resolves the #includes it saw
+    // against these roots and indexes the hits (member completion for deps).
+    auto includeRootsSnap = buildIncludeRoots();
 
-    std::thread([st, gen, root, cachePath, excludedSnap, extraSnap]() {
+    std::thread([st, gen, root, cachePath, excludedSnap, extraSnap, includeRootsSnap]() {
         // Snapshot the previous build's per-file cache once; reused across passes
         // to skip re-parsing files whose mtime+size are unchanged.
         std::unordered_map<std::string, ts::FileSyms> oldCache;
@@ -3811,6 +3858,26 @@ void Editor::rebuildProjectIndex()
         auto idx = std::make_shared<ProjectIndex>();
         std::unordered_set<std::string> idset;
         std::unordered_map<std::string, ts::FileSyms> newCache;   // this pass's cache (-> disk)
+        // #include targets seen in the walk ("nlohmann/json.hpp", "imgui.h", …);
+        // resolved against includeRootsSnap after the walk.
+        std::unordered_set<std::string> includeTargets;
+        // '#include <x>' / '#include "x"' -> "x" ("" if not an include line).
+        auto parseIncludeTarget = [](const std::string &line) -> std::string {
+            size_t p = line.find_first_not_of(" \t");
+            if (p == std::string::npos || line[p] != '#')
+                return {};
+            p = line.find_first_not_of(" \t", p + 1);
+            if (p == std::string::npos || line.compare(p, 7, "include") != 0)
+                return {};
+            p = line.find_first_not_of(" \t", p + 7);
+            if (p == std::string::npos || (line[p] != '<' && line[p] != '"'))
+                return {};
+            char close = line[p] == '<' ? '>' : '"';
+            size_t e = line.find(close, p + 1);
+            if (e == std::string::npos || e <= p + 1)
+                return {};
+            return line.substr(p + 1, e - p - 1);
+        };
         // Fold a file's tree-sitter symbols into the index aggregates.
         auto aggregate = [&](const std::string &fpath, const std::vector<ts::Symbol> &syms) {
             for (auto &sym : syms)
@@ -3961,6 +4028,12 @@ void Editor::rebuildProjectIndex()
                     char c1 = (lead + 1 < n) ? line[lead + 1] : '\0';
                     commentLine = (c0 == '/' && c1 == '/') || (c0 == '-' && c1 == '-') || c0 == ';' || c0 == '*';
                 }
+                if (hashLine && includeTargets.size() < 2000)
+                {
+                    std::string inc = parseIncludeTarget(line);
+                    if (!inc.empty())
+                        includeTargets.insert(inc);
+                }
 
                 std::string prevTok;
                 size_t i = 0;
@@ -4036,6 +4109,84 @@ void Editor::rebuildProjectIndex()
             }
         }
         } // end for each scanRoot
+
+        // Dep-header pass: resolve the #include targets the walk collected
+        // against the build-derived include roots and ts-index the hits, chasing
+        // nested includes transitively under a hard cap. This is what teaches
+        // member completion + go-to-def about CMake-fetched deps after a build
+        // ("run a successful build → the editor knows everything it needs").
+        if (!includeRootsSnap.empty() && !includeTargets.empty())
+        {
+            std::vector<std::string> pending(includeTargets.begin(), includeTargets.end());
+            std::unordered_set<std::string> seenTargets = includeTargets;
+            int headerBudget = 600;
+            while (!pending.empty() && headerBudget > 0)
+            {
+                if (curGen != st->gen.load())
+                {
+                    st->building = false;
+                    return;
+                } // superseded
+                std::string target = std::move(pending.back());
+                pending.pop_back();
+                for (const auto &incRoot : includeRootsSnap)
+                {
+                    std::error_code hec;
+                    std::filesystem::path hp = incRoot / target;
+                    if (!std::filesystem::is_regular_file(hp, hec))
+                        continue;
+                    std::string fileStr = hp.string();
+                    if (newCache.count(fileStr))
+                        break;   // already indexed (walk or an earlier target)
+                    --headerBudget;
+
+                    std::error_code mec, sec;
+                    auto wtime = std::filesystem::last_write_time(hp, mec);
+                    long long mtime = mec ? 0 : (long long) wtime.time_since_epoch().count();
+                    std::uintmax_t fsz = std::filesystem::file_size(hp, sec);
+                    unsigned long long fsize = sec ? 0 : (unsigned long long) fsz;
+                    if (!sec && fsz > 1500000)
+                        break;   // same mega-header cap as the main walk
+
+                    std::ifstream hf(hp, std::ios::binary);
+                    if (!hf.is_open())
+                        break;
+                    std::string whole((std::istreambuf_iterator<char>(hf)), std::istreambuf_iterator<char>());
+                    hf.close();
+
+                    // Cache hit skips the (expensive) parse; the buffer is still
+                    // read above so nested includes keep the chain alive.
+                    auto cit = oldCache.find(fileStr);
+                    if (mtime != 0 && cit != oldCache.end() &&
+                        cit->second.mtime == mtime && cit->second.size == fsize)
+                    {
+                        aggregate(fileStr, cit->second.symbols);
+                        mergeMemberTypes(cit->second.memberTypes);
+                        newCache.emplace(fileStr, cit->second);
+                    }
+                    else
+                    {
+                        // Dep headers are C/C++ regardless of extension (<chrono>-style
+                        // extensionless files included).
+                        auto syms = ts::extractSymbols(ts::Lang::Cpp, whole);
+                        auto mtypes = ts::extractMemberTypes(ts::Lang::Cpp, whole);
+                        aggregate(fileStr, syms);
+                        mergeMemberTypes(mtypes);
+                        newCache.emplace(fileStr, ts::FileSyms{mtime, fsize, std::move(syms), std::move(mtypes)});
+                    }
+
+                    std::istringstream hss(whole);
+                    std::string hline;
+                    while (std::getline(hss, hline) && seenTargets.size() < 4000)
+                    {
+                        std::string inc = parseIncludeTarget(hline);
+                        if (!inc.empty() && seenTargets.insert(inc).second)
+                            pending.push_back(std::move(inc));
+                    }
+                    break;   // first root wins, like the preprocessor
+                }
+            }
+        }
 
         idx->identifiers.assign(idset.begin(), idset.end());
         std::sort(idx->identifiers.begin(), idx->identifiers.end());
@@ -4845,6 +4996,7 @@ const std::vector<std::filesystem::path> &Editor::buildIncludeRoots()
     buildIncRootsKey_ = key;
     buildIncRootsTime_ = now;
     buildIncRootsCache_.clear();
+    buildCompileCommandsDir_.clear();
     if (projectRoot.empty())
         return buildIncRootsCache_;
 
@@ -4900,6 +5052,8 @@ const std::vector<std::filesystem::path> &Editor::buildIncludeRoots()
         nlohmann::json cc = nlohmann::json::parse(in, nullptr, /*allow_exceptions*/ false);
         if (!cc.is_array())
             return;
+        if (buildCompileCommandsDir_.empty() && !cc.empty())
+            buildCompileCommandsDir_ = file.parent_path();   // first (project-root) DB wins
         int entries = 0;
         auto addFlagArg = [&](const std::string &tok, const std::filesystem::path &base) {
             for (const char *pre : {"-I", "/I", "-isystem", "-external:I"})
