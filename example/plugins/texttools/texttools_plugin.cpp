@@ -106,15 +106,16 @@ void TextToolsPlugin::applySelectionOrDoc(PluginHost &host, const char *what,
 
 void TextToolsPlugin::onMenu(PluginHost &host, PluginMenu which)
 {
-    if (which == PluginMenu::Edit)
+    if (which == PluginMenu::Tools)
     {
-        // JSON/XML + sorting: whole-document tools (operate on the selection
-        // when one is active). One separator marks the group. Sorting a
-        // SINGLE-line selection is meaningless — enabled only for a multi-line
-        // selection or no selection at all (whole document).
+        // JSON/XML + sorting live under Tools > Text Tools (user-preferred
+        // home). Whole-document tools — they operate on the selection when
+        // one is active. Sorting a SINGLE-line selection is meaningless —
+        // line tools enable only for a multi-line selection or no selection.
+        if (!ImGui::BeginMenu("Text Tools"))
+            return;
         std::string sel = host.hostActiveSelection();
         bool sortOk = sel.empty() || sel.find('\n') != std::string::npos;
-        ImGui::Separator();
         for (const auto &t : kDocTools)
         {
             if (t.separatorBefore)
@@ -124,6 +125,7 @@ void TextToolsPlugin::onMenu(PluginHost &host, PluginMenu which)
             if (ImGui::MenuItem(t.menuLabel, nullptr, false, !isLineTool || sortOk))
                 applySelectionOrDoc(host, t.menuLabel, t.fn);
         }
+        ImGui::EndMenu();
     }
     else if (which == PluginMenu::Selection)
     {

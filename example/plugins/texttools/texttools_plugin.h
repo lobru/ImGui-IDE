@@ -2,8 +2,9 @@
 //  texttools_plugin.h — everyday text-transform tools as an ImGui-IDE plugin.
 //
 //  Wraps the pure transforms (texttools.{cpp,h}) behind the EditorPlugin hooks:
-//    - onMenu(Edit): JSON/XML + line-sorting tools. Selection-aware but never
-//      REQUIRE a selection — with none they transform the whole document.
+//    - onMenu(Tools): "Text Tools" submenu with the JSON/XML + line tools.
+//      Selection-aware but never REQUIRE a selection — with none they
+//      transform the whole document.
 //    - onMenu(Selection): the extra case-conversion tools (Title/camel/snake;
 //      UPPER/lower are core editor items already).
 //    - onDocumentContextMenu: case tools FLAT (separator, no submenu), only
