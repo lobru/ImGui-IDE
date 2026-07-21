@@ -11366,7 +11366,6 @@ void Editor::renderMenuBar()
                 settingsVisible = true;
                 settingsFocusRequest = true; // un-collapse + focus even if already open
             }
-            ImGui::Separator();
             // Path utilities — handy when the current doc lives on disk.
             bool hasPath = !tabs.empty() && doc().filename != "untitled";
             if (ImGui::MenuItem("Open Containing Folder", nullptr, false, hasPath))
@@ -11491,6 +11490,8 @@ void Editor::renderMenuBar()
             {
                 navigateForward();
             }
+            // Plugin-contributed Edit items (text tools: JSON/XML, sorting).
+            pluginRegistry.menu(*this, PluginMenu::Edit);
             ImGui::EndMenu();
         }
 
@@ -11539,6 +11540,8 @@ void Editor::renderMenuBar()
             {
                 e.SelectAllOccurrences();
             }
+            // Plugin-contributed Selection items (text tools: Title/camel/snake case).
+            pluginRegistry.menu(*this, PluginMenu::Selection);
             ImGui::EndMenu();
         }
 
@@ -11571,11 +11574,6 @@ void Editor::renderMenuBar()
         // VIEW — appearance toggles.
         if (ImGui::BeginMenu("View"))
         {
-            if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P"))
-            {
-                openCommandPalette();
-            }
-            ImGui::Separator();
             if (ImGui::MenuItem("Zoom In", " " SHORTCUT "+"))
             {
                 increaseFontSIze();
@@ -11587,7 +11585,6 @@ void Editor::renderMenuBar()
             ImGui::Separator();
             if (ImGui::MenuItem("Notes", nullptr, notesVisible))
                 notesVisible = !notesVisible;
-            ImGui::Separator();
             // With Unreal Live Coding owning F11, don't advertise a shortcut that
             // deliberately does nothing — the menu item still works.
             if (ImGui::MenuItem("Focus Mode", liveCodingOwnsF11() ? "" : "F11", focusMode))
@@ -11610,42 +11607,36 @@ void Editor::renderMenuBar()
                 ImGui::EndMenu();
             }
             ImGui::Separator();
-            // Per-editor rendering toggles grouped in one submenu so the View
-            // menu stays scannable — these are set-and-forget, not everyday.
-            if (ImGui::BeginMenu("Display"))
+            bool flag;
+            flag = e.IsShowLineNumbersEnabled();
+            if (ImGui::MenuItem("Show Line Numbers", nullptr, &flag))
+                e.SetShowLineNumbersEnabled(flag);
+            flag = e.IsShowWhitespacesEnabled();
+            if (ImGui::MenuItem("Show Whitespaces", nullptr, &flag))
+                e.SetShowWhitespacesEnabled(flag);
+            flag = e.IsShowSpacesEnabled();
+            if (ImGui::MenuItem("Show Spaces", nullptr, &flag))
+                e.SetShowSpacesEnabled(flag);
+            flag = e.IsShowTabsEnabled();
+            if (ImGui::MenuItem("Show Tabs", nullptr, &flag))
+                e.SetShowTabsEnabled(flag);
+            flag = e.IsShowingMatchingBrackets();
+            if (ImGui::MenuItem("Show Matching Brackets", nullptr, &flag))
+                e.SetShowMatchingBrackets(flag);
+            flag = e.IsShowPanScrollIndicatorEnabled();
+            if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag))
+                e.SetShowPanScrollIndicatorEnabled(flag);
+            flag = e.IsMiddleMousePanMode();
+            if (ImGui::MenuItem("Middle Mouse Pan", nullptr, &flag))
             {
-                bool flag;
-                flag = e.IsShowLineNumbersEnabled();
-                if (ImGui::MenuItem("Show Line Numbers", nullptr, &flag))
-                    e.SetShowLineNumbersEnabled(flag);
-                flag = e.IsShowWhitespacesEnabled();
-                if (ImGui::MenuItem("Show Whitespaces", nullptr, &flag))
-                    e.SetShowWhitespacesEnabled(flag);
-                flag = e.IsShowSpacesEnabled();
-                if (ImGui::MenuItem("Show Spaces", nullptr, &flag))
-                    e.SetShowSpacesEnabled(flag);
-                flag = e.IsShowTabsEnabled();
-                if (ImGui::MenuItem("Show Tabs", nullptr, &flag))
-                    e.SetShowTabsEnabled(flag);
-                flag = e.IsShowingMatchingBrackets();
-                if (ImGui::MenuItem("Show Matching Brackets", nullptr, &flag))
-                    e.SetShowMatchingBrackets(flag);
-                flag = e.IsShowPanScrollIndicatorEnabled();
-                if (ImGui::MenuItem("Show Pan/Scroll Indicator", nullptr, &flag))
-                    e.SetShowPanScrollIndicatorEnabled(flag);
-                flag = e.IsMiddleMousePanMode();
-                if (ImGui::MenuItem("Middle Mouse Pan", nullptr, &flag))
-                {
-                    if (flag)
-                        e.SetMiddleMousePanMode();
-                    else
-                        e.SetMiddleMouseScrollMode();
-                }
-                if (ImGui::MenuItem("Word Wrap", nullptr, &prefWordWrap))
-                    for (auto &up : tabs)
-                        up->editor.SetWordWrap(prefWordWrap);
-                ImGui::EndMenu();
+                if (flag)
+                    e.SetMiddleMousePanMode();
+                else
+                    e.SetMiddleMouseScrollMode();
             }
+            if (ImGui::MenuItem("Word Wrap", nullptr, &prefWordWrap))
+                for (auto &up : tabs)
+                    up->editor.SetWordWrap(prefWordWrap);
             ImGui::Separator();
            	if (ImGui::MenuItem("Navigation Panel", nullptr, &navPanelVisible))
             {
@@ -11685,43 +11676,40 @@ void Editor::renderMenuBar()
             }
 
             ImGui::Separator();
-            // Split / pop-out / merge / layout are all "arrange my windows" —
-            // one submenu keeps them together and off the top level.
-            if (ImGui::BeginMenu("Window"))
+            if (ImGui::MenuItem("Split Right", SHORTCUT "\\"))
+                splitActiveTabRight();
+            if (ImGui::MenuItem("Pop Out Left", "Ctrl+Alt+←"))
+                popOutActiveDoc(-1);
+            if (ImGui::MenuItem("Pop Out Right", "Ctrl+Alt+→"))
+                popOutActiveDoc(+1);
+            if (ImGui::MenuItem("Merge Window Back", "Ctrl+Alt+M"))
+                remergeActiveWindow();
+            if (ImGui::MenuItem("Merge All Windows", "Ctrl+Alt+Shift+M"))
+                remergeAllWindows();
+            if (ImGui::MenuItem("Save Layout Now"))
             {
-                if (ImGui::MenuItem("Split Right", SHORTCUT "\\"))
-                    splitActiveTabRight();
-                if (ImGui::MenuItem("Pop Out Left", "Ctrl+Alt+←"))
-                    popOutActiveDoc(-1);
-                if (ImGui::MenuItem("Pop Out Right", "Ctrl+Alt+→"))
-                    popOutActiveDoc(+1);
-                if (ImGui::MenuItem("Merge Window Back", "Ctrl+Alt+M"))
-                    remergeActiveWindow();
-                if (ImGui::MenuItem("Merge All Windows", "Ctrl+Alt+Shift+M"))
-                    remergeAllWindows();
-                ImGui::Separator();
-                if (ImGui::MenuItem("Save Layout Now"))
-                {
-                    if (auto *fn = ImGui::GetIO().IniFilename)
-                        ImGui::SaveIniSettingsToDisk(fn);
-                }
-                if (ImGui::MenuItem("Reset Layout"))
-                {
-                    // Defer the rebuild to just before the next DockSpace() in the
-                    // host window's context. Doing it here (menu popup, and AFTER this
-                    // frame's DockSpace) plus the old LoadIniSettingsFromMemory("")
-                    // clear made the empty-settings reload discard the DockBuilder
-                    // rebuild next frame — every window floated and stayed floated.
-                    // The deferred path matches the first-run navInitDockLayout timing.
-                    wantResetLayout = true;
-                }
-                ImGui::EndMenu();
+                if (auto *fn = ImGui::GetIO().IniFilename)
+                    ImGui::SaveIniSettingsToDisk(fn);
+            }
+            if (ImGui::MenuItem("Reset Layout"))
+            {
+                // Defer the rebuild to just before the next DockSpace() in the
+                // host window's context. Doing it here (menu popup, and AFTER this
+                // frame's DockSpace) plus the old LoadIniSettingsFromMemory("")
+                // clear made the empty-settings reload discard the DockBuilder
+                // rebuild next frame — every window floated and stayed floated.
+                // The deferred path matches the first-run navInitDockLayout timing.
+                wantResetLayout = true;
             }
 
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Tools"))
         {
+            if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P"))
+            {
+                openCommandPalette();
+            }
             if (ImGui::MenuItem("Developer Tools", nullptr, &devToolsVisible))
             {
             }

@@ -38,7 +38,10 @@ class EditorPlugin;
 //  4: PluginHost gained hostConfigDir/hostActiveCursorLine/hostJumpTo/
 //     hostRefreshMarkers/hostFindBuiltExe; EditorPlugin gained
 //     contributeMarkers (2026-07-20, all appended — the debugger is a plugin).
-#define IMGUIIDE_PLUGIN_ABI_VERSION 4u
+//  5: PluginHost gained hostSetActiveText (whole-document undoable replace);
+//     EditorPlugin gained topLevelMenuVisible (hide a top-level menu when its
+//     project type doesn't apply) (2026-07-21, appended).
+#define IMGUIIDE_PLUGIN_ABI_VERSION 5u
 
 // Exact export names the loader resolves. Keep in sync with plugin_dll_main.cpp.
 #define IMGUIIDE_PLUGIN_ABI_VERSION_SYMBOL "imguiide_plugin_abi_version"

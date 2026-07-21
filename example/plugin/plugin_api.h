@@ -168,6 +168,12 @@ public:
     // Save the active document if it is dirty and has a real path (debuggers
     // want on-disk state to match the buffer before launching).
     virtual void hostSaveActiveDocument() {}
+
+    // ── v5 additions ───────────────────────────────────────────────────────
+    // Replace the ENTIRE active document's text (undoable). The whole-document
+    // counterpart to hostReplaceSelection for transforms that shouldn't require
+    // a selection (JSON pretty-print, line sorting, ...).
+    virtual void hostSetActiveText(const std::string &text) { (void) text; }
 };
 
 //
@@ -252,6 +258,12 @@ public:
     // assets are viewable in-app instead of launching the OS default. Called before
     // the host falls back to the external opener.
     virtual bool openFile(PluginHost &, const std::filesystem::path &) { return false; }
+
+    // ── v5 additions ───────────────────────────────────────────────────────
+    // Whether the plugin's top-level menu should be shown at all this frame.
+    // Return false to HIDE the menu entirely (e.g. the Unreal menu in a
+    // non-Unreal project) instead of showing a disabled placeholder.
+    virtual bool topLevelMenuVisible(PluginHost &) { return true; }
 
 protected:
     bool enabledState = true; // backs enabled()/setEnabled(); persisted by the registry

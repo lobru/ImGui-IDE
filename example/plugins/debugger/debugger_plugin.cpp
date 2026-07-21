@@ -596,8 +596,12 @@ void DebuggerPlugin::contributeKeybinds(PluginHost &host, std::vector<PluginKeyb
     }
 }
 
-void DebuggerPlugin::onTopLevelMenu(PluginHost &host)
+void DebuggerPlugin::onMenu(PluginHost &host, PluginMenu which)
 {
+    if (which != PluginMenu::Tools)
+        return;
+    if (!ImGui::BeginMenu("Debug"))
+        return;
     if (!sessionActive)
     {
         if (ImGui::MenuItem("Start Debugging"))
@@ -626,6 +630,7 @@ void DebuggerPlugin::onTopLevelMenu(PluginHost &host)
         debugInRadDbg(host);
     if (ImGui::MenuItem("Launch in Visual Studio"))
         debugInVisualStudio(host);
+    ImGui::EndMenu();
 }
 
 void DebuggerPlugin::contributePaletteCommands(PluginHost &host, const PluginDocInfo &,

@@ -93,7 +93,7 @@ public:
             if (!p->enabled())
                 continue;
             const char *title = p->topLevelMenu();
-            if (title && *title && ImGui::BeginMenu(title))
+            if (title && *title && p->topLevelMenuVisible(host) && ImGui::BeginMenu(title))
             {
                 p->onTopLevelMenu(host);
                 ImGui::EndMenu();

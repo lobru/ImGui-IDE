@@ -93,6 +93,13 @@ class Editor : public PluginHost {
 		if (!tabs.empty() && doc().editor.AnyCursorHasSelection())
 			doc().editor.ReplaceTextInCurrentCursor(text);
 	}
+	void hostSetActiveText(const std::string &text) override {
+		// SelectAll + replace-in-cursor keeps the operation on the undo stack
+		// (SetText would wipe undo history).
+		if (tabs.empty()) return;
+		doc().editor.SelectAll();
+		doc().editor.ReplaceTextInCurrentCursor(text);
+	}
 	void hostToast(const std::string &text) override { pushToast(text, IM_COL32(80, 160, 255, 255), 0); }
 	std::filesystem::path hostConfigDir() const override { return userConfigDir(); }
 	int hostActiveCursorLine() const override {

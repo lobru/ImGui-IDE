@@ -27,25 +27,33 @@ std::string tXmlJson(const std::string &s, std::string &e) { return texttools::x
 
 struct Tool
 {
-    const char *menuLabel;    // context-menu row
+    const char *menuLabel;    // menu row
     const char *paletteLabel; // palette row
     std::string (*fn)(const std::string &, std::string &);
     bool separatorBefore = false;
 };
-const Tool kTools[] = {
+
+// Case conversions — inherently about the SELECTION. Live in the Selection
+// menu and (flat) in the right-click context menu while a selection is active.
+const Tool kCaseTools[] = {
     {"UPPER CASE", "Text: Selection to UPPER CASE", tUpper},
     {"lower case", "Text: Selection to lower case", tLower},
     {"Title Case", "Text: Selection to Title Case", tTitle},
     {"camelCase", "Text: Selection to camelCase", tCamel},
     {"snake_case", "Text: Selection to snake_case", tSnake},
-    {"Sort Lines A->Z", "Text: Sort Lines A->Z", tSortAZ, true},
+};
+
+// Document tools — selection-aware but never require one (whole doc when no
+// selection). Live in the Edit menu; kept OUT of the context menu.
+const Tool kDocTools[] = {
+    {"Sort Lines A->Z", "Text: Sort Lines A->Z", tSortAZ},
     {"Sort Lines Z->A", "Text: Sort Lines Z->A", tSortZA},
     {"Sort Lines 0->9", "Text: Sort Lines 0->9 (numeric)", tSort09},
     {"Sort Lines 9->0", "Text: Sort Lines 9->0 (numeric)", tSort90},
-    {"JSON: Pretty-print", "JSON: Pretty-print Selection", tJsonPretty, true},
-    {"JSON: Minify", "JSON: Minify Selection", tJsonMin},
-    {"JSON -> XML", "JSON: Selection to XML", tJsonXml},
-    {"XML -> JSON", "XML: Selection to JSON", tXmlJson},
+    {"JSON: Pretty-print", "JSON: Pretty-print", tJsonPretty, true},
+    {"JSON: Minify", "JSON: Minify", tJsonMin},
+    {"JSON -> XML", "JSON: Convert to XML", tJsonXml},
+    {"XML -> JSON", "XML: Convert to JSON", tXmlJson},
 };
 } // namespace
 
@@ -68,35 +76,84 @@ void TextToolsPlugin::applyToSelection(PluginHost &host, const char *what,
     host.hostReplaceSelection(out);
 }
 
-void TextToolsPlugin::onDocumentContextMenu(PluginHost &host, const PluginDocContext &)
+void TextToolsPlugin::applySelectionOrDoc(PluginHost &host, const char *what,
+                                          std::string (*fn)(const std::string &, std::string &))
 {
-    // Every tool transforms the selection, so the menu is meaningless without
-    // one — don't clutter the context menu when nothing is selected.
-    if (host.hostActiveSelection().empty())
-        return;
-    ImGui::Separator();
-    if (ImGui::BeginMenu("Text Tools"))
+    std::string sel = host.hostActiveSelection();
+    bool useSel = !sel.empty();
+    std::string in = useSel ? std::move(sel) : host.hostActiveText();
+    if (in.empty())
     {
-        for (const auto &t : kTools)
+        host.hostToast(std::string(what) + ": document is empty");
+        return;
+    }
+    std::string err;
+    std::string out = fn(in, err);
+    if (!err.empty())
+    {
+        host.hostToast(std::string(what) + ": " + err);
+        return;
+    }
+    if (useSel)
+        host.hostReplaceSelection(out);
+    else
+        host.hostSetActiveText(out);
+}
+
+void TextToolsPlugin::onMenu(PluginHost &host, PluginMenu which)
+{
+    if (which == PluginMenu::Edit)
+    {
+        // JSON/XML + sorting: whole-document tools (operate on the selection
+        // when one is active). One separator marks the group. Sorting a
+        // SINGLE-line selection is meaningless — enabled only for a multi-line
+        // selection or no selection at all (whole document).
+        std::string sel = host.hostActiveSelection();
+        bool sortOk = sel.empty() || sel.find('\n') != std::string::npos;
+        ImGui::Separator();
+        for (const auto &t : kDocTools)
         {
             if (t.separatorBefore)
                 ImGui::Separator();
-            if (ImGui::MenuItem(t.menuLabel))
-                applyToSelection(host, t.menuLabel, t.fn);
+            bool isSort = t.fn == tSortAZ || t.fn == tSortZA || t.fn == tSort09 || t.fn == tSort90;
+            if (ImGui::MenuItem(t.menuLabel, nullptr, false, !isSort || sortOk))
+                applySelectionOrDoc(host, t.menuLabel, t.fn);
         }
-        ImGui::EndMenu();
     }
+    else if (which == PluginMenu::Selection)
+    {
+        // Extra case conversions next to the core To Uppercase/To Lowercase
+        // rows (which stay core — the widget handles those two natively).
+        ImGui::Separator();
+        bool hasSel = !host.hostActiveSelection().empty();
+        for (const Tool *t : {&kCaseTools[2], &kCaseTools[3], &kCaseTools[4]})
+            if (ImGui::MenuItem(t->menuLabel, nullptr, false, hasSel))
+                applyToSelection(host, t->menuLabel, t->fn);
+    }
+}
+
+void TextToolsPlugin::onDocumentContextMenu(PluginHost &host, const PluginDocContext &)
+{
+    // Case tools only, flat (no submenu), and only while a selection exists.
+    if (host.hostActiveSelection().empty())
+        return;
+    ImGui::Separator();
+    for (const auto &t : kCaseTools)
+        if (ImGui::MenuItem(t.menuLabel))
+            applyToSelection(host, t.menuLabel, t.fn);
 }
 
 void TextToolsPlugin::contributePaletteCommands(PluginHost &host, const PluginDocInfo &,
                                                 const std::function<void(const std::string &,
                                                                          std::function<void()>)> &add)
 {
-    // The host is the Editor (process lifetime) and kTools is static — both
-    // safely outlive the palette's deferred run.
+    // The host is the Editor (process lifetime) and the tool tables are static —
+    // both safely outlive the palette's deferred run.
     PluginHost *h = &host;
-    for (const auto &t : kTools)
+    for (const auto &t : kCaseTools)
         add(t.paletteLabel, [this, h, &t]() { applyToSelection(*h, t.menuLabel, t.fn); });
+    for (const auto &t : kDocTools)
+        add(t.paletteLabel, [this, h, &t]() { applySelectionOrDoc(*h, t.menuLabel, t.fn); });
 }
 
 std::unique_ptr<EditorPlugin> createTextToolsPlugin()

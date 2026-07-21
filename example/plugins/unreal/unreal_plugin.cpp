@@ -498,8 +498,9 @@ bool UnrealPlugin::openFile(PluginHost &host, const std::filesystem::path &path)
     return true;
 }
 
-// Drawn inside the host-owned top-level "Unreal" menu (see topLevelMenu()).
-void UnrealPlugin::onTopLevelMenu(PluginHost &host)
+// Refresh the per-project menu cache; returns true when the current project is
+// an Unreal project (a .uproject/.uplugin was found).
+bool UnrealPlugin::topLevelMenuVisible(PluginHost &host)
 {
     std::filesystem::path projectRoot = host.hostProjectRoot();
     if (menuCachedRoot != projectRoot)
@@ -511,12 +512,16 @@ void UnrealPlugin::onTopLevelMenu(PluginHost &host)
         menuEngine = menuProj.empty() ? std::filesystem::path{}
                                       : unreal::findEngineRoot(menuProj, menuAssoc);
     }
+    return !menuProj.empty();
+}
+
+// Drawn inside the host-owned top-level "Unreal" menu (see topLevelMenu()).
+// Only reachable when topLevelMenuVisible() returned true, so menuProj is set.
+void UnrealPlugin::onTopLevelMenu(PluginHost &host)
+{
+    (void) host;
     if (menuProj.empty())
-    {
-        ImGui::TextDisabled(projectRoot.empty() ? "(no project open)"
-                                                : "(not an Unreal project)");
-        return;
-    }
+        return; // defensive — visibility gate should have hidden the menu
 
     const bool isPlugin = unreal::isPluginDescriptor(menuProj);
 

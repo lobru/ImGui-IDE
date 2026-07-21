@@ -38,8 +38,8 @@ public:
 
     void onRegister(PluginHost &host) override;   // load debugger.ini
     void onFrame(PluginHost &host) override;      // pollDap + Debug panel
-    const char *topLevelMenu() const override { return "Debug"; }
-    void onTopLevelMenu(PluginHost &host) override;
+    // Lives as a "Debug" submenu inside Tools (menu-bar declutter).
+    void onMenu(PluginHost &host, PluginMenu which) override;
     void contributeKeybinds(PluginHost &host, std::vector<PluginKeybind> &out) override;
     void contributeMarkers(PluginHost &host, const PluginDocInfo &doc,
                            const std::function<void(int, unsigned, unsigned,
