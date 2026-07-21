@@ -182,7 +182,7 @@ void Editor::buildPaletteActions()
 
     // Editor extras
     add("View: Notes", "", "Core", [this] { notesVisible = !notesVisible; });
-    add("View: Save Screenshot", "Ctrl+Alt+S", "Core", [this] { requestScreenshot(); });
+    add("View: Save Screenshot", "Ctrl+Shift+4", "Core", [this] { requestScreenshot(); });
     add("Help: Take the Tour", "", "Core", [this] { startTour(); });
 
     // Plugin contributions — gated by file type and/or project type inside each

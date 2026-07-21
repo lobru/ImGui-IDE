@@ -8136,7 +8136,7 @@ void Editor::renderSettings()
                     {"proj.run", "Run", "F5", "Project", true, nullptr},
                     {"proj.build", "Build project", "F6", "Project", true, nullptr},
                     {"view.palette", "Command palette", "Ctrl+Shift+P", "View", true, nullptr},
-                    {"view.screenshot", "Save screenshot", "Ctrl+Alt+S", "View", true, nullptr},
+                    {"view.screenshot", "Save screenshot", "Ctrl+Shift+4", "View", true, nullptr},
                 };
 
                 // Plugin-contributed binds join the catalogue under each plugin's
@@ -11921,7 +11921,7 @@ void Editor::renderMenuBar()
             ImGui::MenuItem(("Version  " + std::string(kAppVersion)).c_str(), nullptr, false, false);
             if (ImGui::MenuItem("Take the Tour"))
                 startTour();
-            if (ImGui::MenuItem("Save Screenshot", "Ctrl-Alt-S"))
+            if (ImGui::MenuItem("Save Screenshot", "Ctrl+Shift+4"))
                 requestScreenshot();
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Reads back the frame the app itself drew (PNG, to %s).\n"
@@ -12118,7 +12118,7 @@ void Editor::renderMenuBar()
         {
             openCommandPalette();
         }
-        else if (keybindPressed("view.screenshot", "Ctrl+Alt+S"))
+        else if (keybindPressed("view.screenshot", "Ctrl+Shift+4"))
         {
             requestScreenshot();
         }
