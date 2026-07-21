@@ -42,24 +42,30 @@ that is still genuinely outstanding.
 ## 🚀 User backlog (2026-07-21) — mega batch (UE tooling + editor UX)
 
 ### Quick fixes
-- [ ] Rogue separator at the bottom of the Project menu (trailing separator
-      before an empty plugin contribution).
-- [ ] Settings window: always come to top on open (failed when Find-in-Files
-      was open) + brief attention linger.
-- [ ] Pan scroll accel default halved (new 1.0 == old 0.5); rescale stored pref.
-- [ ] `PROJECTNAME_API` / `ENGINE_API` macros polluting symbols + go-to-def:
-      skip ALL-CAPS `*_API` tokens between `class`/`struct` and the real name
-      (ts indexer + goto). Symbols view should catalogue UCLASS/UPROPERTY etc.
-- [ ] Sort-lines on a selection HANGS — fix texttools::sortLines; add
-      "Unique Lines" tool + "Number Lines" tool + insert line before/after.
-- [ ] Context menu: more spacing around separators.
+- [x] Rogue separator at the bottom of the Project menu (ccf8b1e/5f6c593).
+- [x] Settings window: always come to top on open — focus linger (ccf8b1e).
+- [x] Pan scroll accel default halved (ccf8b1e).
+- [x] `PROJECTNAME_API`/`ENGINE_API` macros polluting symbols + go-to-def:
+      ts::stripApiMacros blanks them before every C++ parse (ccf8b1e).
+- [x] Sort-lines hang guard + Unique Lines + Number Lines tools (ccf8b1e).
+      (insert line before/after still open — see below)
+- [x] Context menu: more spacing around separators (22a3c2c).
+- [x] Breakpoints removable by clicking the gutter marker; F9 only for
+      debuggable file types (22a3c2c, onGutterClick ABI 6).
+- [x] Text tools rehomed to Tools > Text Tools (9c1c5d4).
+- [x] Panels share nav dock space + split L/R farthest-pane fallback (d2dc671).
+- [x] Fold preview v-pad + style variants; optional horizontal guides (6f6024b).
+- [x] Fold Level 1/2/3 + Fold Comments (5b61588).
+- [x] Settings: expose hidden custom-interpreter + filetype overrides (ab2fa97).
+- [x] File dialog new-folder — already built in (Create Directory button).
+- [ ] insert line before/after Text tools options.
 - [ ] Panels must not clip content on narrow windows (debug panel, dev tools):
-      push/pop item width + wrapping.
-- [ ] Breakpoints removable by clicking the gutter marker; hide debug context
-      items for file types with no adapter support.
+      push/pop item width + wrapping.  [chip: editor input QoL]
 - [ ] Python Ctrl+Shift+/ does nothing (no block comment): keybind priority
       routing when two actions share a chord — fall back to line comment;
-      user-adjustable priority, smart default.
+      user-adjustable priority, smart default.  [chip: editor input QoL]
+- [ ] Middle-mouse pan/scroll INSIDE the ImGuiFileDialog file list — needs a
+      patch to the vendored FetchContent source (fork or local .patch).
 
 ### Toasts + replies
 - [ ] Toast rework: close button; hover pauses expiry; clicking a toast with a
