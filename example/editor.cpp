@@ -4832,6 +4832,164 @@ void Editor::applyKeybindOverridesToEditors()
 //   4. Windows SDK: registry KitsRoot10 (or well-known) -> newest
 //      Include\<ver>\{ucrt,um,shared}.
 // Cached after the first call (the vswhere subprocess + dir walks run once).
+// Include roots derived from the project's build trees — see editor.h. The
+// scan is bounded (budgets + depth caps) and runs lazily from the include
+// context menu, memoized per project with a short TTL so a fresh build's
+// newly fetched deps show up without a restart.
+const std::vector<std::filesystem::path> &Editor::buildIncludeRoots()
+{
+    double now = ImGui::GetTime();
+    std::string key = projectRoot.string();
+    if (key == buildIncRootsKey_ && (now - buildIncRootsTime_) < 120.0)
+        return buildIncRootsCache_;
+    buildIncRootsKey_ = key;
+    buildIncRootsTime_ = now;
+    buildIncRootsCache_.clear();
+    if (projectRoot.empty())
+        return buildIncRootsCache_;
+
+    std::error_code ec;
+    auto add = [&](const std::filesystem::path &p) {
+        if (p.empty() || !std::filesystem::is_directory(p, ec))
+            return;
+        for (auto &e : buildIncRootsCache_)
+            if (e == p)
+                return;
+        buildIncRootsCache_.push_back(p);
+    };
+    add(projectRoot);
+    add(projectRoot / "include");
+
+    // 1. Locate build dirs: any dir holding a CMakeCache.txt, a few levels deep
+    //    (out/build/x64-Debug, build/, nested project build dirs, ...).
+    std::vector<std::filesystem::path> buildDirs;
+    {
+        int budget = 4000;
+        for (auto it = std::filesystem::recursive_directory_iterator(
+                 projectRoot, std::filesystem::directory_options::skip_permission_denied, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+        {
+            if (--budget < 0)
+                break;
+            if (it.depth() > 4)
+                it.disable_recursion_pending();
+            if (!it->is_directory(ec))
+                continue;
+            auto name = it->path().filename().string();
+            if (name == ".git" || name == "node_modules" || name == "Intermediate" ||
+                name == "Binaries" || name == "DerivedDataCache" || name == "Saved")
+            {
+                it.disable_recursion_pending();
+                continue;
+            }
+            if (std::filesystem::is_regular_file(it->path() / "CMakeCache.txt", ec))
+            {
+                buildDirs.push_back(it->path());
+                it.disable_recursion_pending(); // its innards get the dedicated scan below
+            }
+        }
+    }
+
+    // 2. compile_commands.json — the authoritative include list when present
+    //    (Ninja/Makefile generators). Pull -I / /I / -isystem / -external:I
+    //    flags out of every command.
+    auto parseCompileCommands = [&](const std::filesystem::path &file) {
+        std::ifstream in(file, std::ios::binary);
+        if (!in)
+            return;
+        nlohmann::json cc = nlohmann::json::parse(in, nullptr, /*allow_exceptions*/ false);
+        if (!cc.is_array())
+            return;
+        int entries = 0;
+        auto addFlagArg = [&](const std::string &tok, const std::filesystem::path &base) {
+            for (const char *pre : {"-I", "/I", "-isystem", "-external:I"})
+            {
+                size_t n = std::strlen(pre);
+                if (tok.compare(0, n, pre) == 0 && tok.size() > n)
+                {
+                    std::filesystem::path p = tok.substr(n);
+                    if (p.is_relative())
+                        p = base / p;
+                    add(p);
+                    return;
+                }
+            }
+        };
+        for (const auto &entry : cc)
+        {
+            if (!entry.is_object())
+                continue;
+            if (++entries > 400)
+                break; // include sets repeat per-TU; a sample is plenty
+            std::filesystem::path base = entry.value("directory", std::string());
+            if (entry.contains("arguments") && entry["arguments"].is_array())
+            {
+                for (const auto &a : entry["arguments"])
+                    if (a.is_string())
+                        addFlagArg(a.get<std::string>(), base);
+            }
+            else if (entry.contains("command") && entry["command"].is_string())
+            {
+                // Tokenize the command string honoring double quotes.
+                std::string cmd = entry["command"].get<std::string>();
+                std::string tok;
+                bool q = false;
+                for (char c : cmd)
+                {
+                    if (c == '"') { q = !q; continue; }
+                    if (!q && (c == ' ' || c == '\t'))
+                    {
+                        if (!tok.empty()) { addFlagArg(tok, base); tok.clear(); }
+                        continue;
+                    }
+                    tok += c;
+                }
+                if (!tok.empty())
+                    addFlagArg(tok, base);
+            }
+        }
+    };
+    parseCompileCommands(projectRoot / "compile_commands.json");
+    for (auto &bd : buildDirs)
+        parseCompileCommands(bd / "compile_commands.json");
+
+    // 3. Layout heuristic for generators without compile_commands (MSVC):
+    //    fetched deps live under the build dir as <name>-src trees — their
+    //    include/ single_include/ dirs and the -src roots themselves are the
+    //    include roots (that's where <nlohmann/json.hpp> actually resolves).
+    for (auto &bd : buildDirs)
+    {
+        int budget = 8000;
+        for (auto it = std::filesystem::recursive_directory_iterator(
+                 bd, std::filesystem::directory_options::skip_permission_denied, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+        {
+            if (--budget < 0)
+                break;
+            if (it.depth() > 6)
+                it.disable_recursion_pending();
+            if (!it->is_directory(ec))
+                continue;
+            auto n = it->path().filename().string();
+            if (n == "CMakeFiles" || n == ".git" || n == "Testing" || n == "docs" ||
+                n == "test" || n == "tests")
+            {
+                it.disable_recursion_pending();
+                continue;
+            }
+            if (n == "include" || n == "single_include")
+            {
+                add(it->path());
+                it.disable_recursion_pending(); // roots don't nest usefully
+                continue;
+            }
+            if (n.size() > 4 && n.compare(n.size() - 4, 4, "-src") == 0)
+                add(it->path()); // keep recursing — its include/ adds itself above
+        }
+    }
+    return buildIncRootsCache_;
+}
+
 const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
 {
     if (sysIncludeComputed_)
@@ -7226,6 +7384,8 @@ void Editor::loadSettings()
             projectBuildOverrides[k] = v;
         else if (section == "run")                   // <project root> -> "cmd|dir" (F5 pin)
             projectRunOverrides[k] = v;
+        else if (section == "project")               // <project root> -> active target label
+            projectActiveName[k] = v;
         else if (section == "palette_usage")         // action id -> "uses|lastEpoch"
         {
             auto bar = v.find('|');
@@ -7519,6 +7679,10 @@ void Editor::saveSettings()
     f << "\n[run]\n";
     for (auto &[k, v] : projectRunOverrides)
         f << k << "=" << v << "\n";
+    f << "\n[project]\n";
+    for (auto &[k, v] : projectActiveName)
+        if (!v.empty())
+            f << k << "=" << v << "\n";
     f << "\n[palette_usage]\n";
     for (auto &[k, v] : paletteUsage)
         if (v.uses > 0 && k.find('=') == std::string::npos && k.find('\n') == std::string::npos)
@@ -10764,6 +10928,28 @@ void Editor::renderDocumentWindow(TabDocument &t)
                         }
                     }
 
+                    // 3.4. Build-derived include roots: dependencies fetched INTO
+                    // the build tree (CMake FetchContent & co) sit under build/out
+                    // dirs the project walk above deliberately prunes, so e.g.
+                    // <nlohmann/json.hpp> living at out/build/x64-Debug/deps/json/
+                    // nlohmann_json-src/include/nlohmann/json.hpp never matched.
+                    // buildIncludeRoots() derives roots from compile_commands.json
+                    // and build-dir dep layouts; a direct join is an EXACT match
+                    // (full include tail), so no basename guessing.
+                    if (!found)
+                    {
+                        for (const auto &root : buildIncludeRoots())
+                        {
+                            auto direct = root / incPath;
+                            if (std::filesystem::is_regular_file(direct, ec))
+                            {
+                                candidate = direct;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+
                     // 3.5. Project-type plugins (e.g. Unreal): UE includes are
                     // MODULE-relative ("GameFramework/Actor.h" lives in Engine/
                     // Source/Runtime/Engine/Classes/...), so neither the project
@@ -13594,6 +13780,25 @@ void Editor::renderStatusBar()
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("branch %s — %d changed, %d ahead, %d behind", gb.c_str(), gd, ga, gbh);
         }
+    }
+
+    // Repo name + active project (the target picked in Build/Run Targets).
+    // Clicking opens the picker — the graphical way to switch projects.
+    if (!projectRoot.empty())
+    {
+        std::string plabel = projectRoot.filename().string();
+        if (auto it = projectActiveName.find(dbgProjectKey()); it != projectActiveName.end() && !it->second.empty())
+            plabel += "  \xc2\xb7  " + it->second; // middle dot
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%s", plabel.c_str());
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("Active project — click to view/select build & run targets");
+        }
+        if (ImGui::IsItemClicked())
+            openBuildPicker();
     }
 
     int line, column;

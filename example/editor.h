@@ -883,6 +883,9 @@ private:
 	};
 	std::vector<BuildTarget> discoverBuildTargets() const;
 	std::unordered_map<std::string, std::string> projectRunOverrides; // root -> "cmd|dir"
+	// The "active project": the target the user selected in the picker. Shown on
+	// the status bar next to the repo name; persisted in [project].
+	std::unordered_map<std::string, std::string> projectActiveName;   // root -> target label
 	bool buildPickerVisible = false;
 	std::vector<BuildTarget> buildPickerTargets;   // snapshot taken when opened
 	char buildPickerCustom[512] = "";
@@ -1264,6 +1267,17 @@ private:
 	const std::vector<std::filesystem::path>& systemIncludeDirs();
 	std::vector<std::filesystem::path> sysIncludeDirs_;
 	bool sysIncludeComputed_ = false;
+
+	// Include roots derived from the project's BUILD trees — dependencies CMake
+	// fetches land under build/out dirs the source walk prunes, so #includes
+	// like <nlohmann/json.hpp> only resolve against these. Sources: every
+	// compile_commands.json's -I//I/-isystem/-external:I flags, plus a bounded
+	// scan of each CMakeCache build dir for include/ single_include/ *-src
+	// layouts. Cached per project with a short TTL (build output changes).
+	const std::vector<std::filesystem::path>& buildIncludeRoots();
+	std::vector<std::filesystem::path> buildIncRootsCache_;
+	std::string buildIncRootsKey_;
+	double      buildIncRootsTime_ = -1e9;
 
 	// Recents — MRU lists of recently opened files and projects.
 	// Capped at 20 entries each, persisted in settings.

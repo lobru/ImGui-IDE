@@ -181,6 +181,23 @@ void Editor::renderBuildPicker()
         if (ImGui::SmallButton("Rescan"))
             buildPickerTargets = discoverBuildTargets();
 
+        // The active project — what the status bar shows next to the repo name.
+        {
+            auto a = projectActiveName.find(key);
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("Active project: %s",
+                        a != projectActiveName.end() ? a->second.c_str() : "(none — pick one below)");
+            if (a != projectActiveName.end())
+            {
+                ImGui::SameLine();
+                if (ImGui::SmallButton("clear##active"))
+                {
+                    projectActiveName.erase(key);
+                    saveSettings();
+                }
+            }
+        }
+
         // Current pins.
         {
             auto b = projectBuildOverrides.find(key);
@@ -213,6 +230,19 @@ void Editor::renderBuildPicker()
             {
                 runCommandInOutputPanel(t.command, t.dir);
                 buildPickerVisible = false;
+            }
+            ImGui::SameLine();
+            // One click makes this THE project: pins it (F6 for build rows, F5
+            // for runnable rows) and names it on the status bar.
+            if (ImGui::SmallButton("Set Active"))
+            {
+                projectActiveName[key] = t.label;
+                if (t.runnable)
+                    projectRunOverrides[key] = t.command + "|" + t.dir.string();
+                else
+                    projectBuildOverrides[key] = t.command + "|" + t.dir.string();
+                saveSettings();
+                pushToast("Active project: " + t.label, IM_COL32(120, 200, 120, 255));
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Set F6"))
