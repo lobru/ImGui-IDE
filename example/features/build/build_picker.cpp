@@ -15,6 +15,7 @@
 #include <cctype>
 
 #include "imgui.h"
+#include "imgui_internal.h" // FindWindowByName — dock beside the nav panel
 
 std::vector<Editor::BuildTarget> Editor::discoverBuildTargets() const
 {
@@ -167,6 +168,11 @@ void Editor::renderBuildPicker()
     if (!buildPickerVisible)
         return;
     ImGui::SetNextWindowSize(ImVec2(760.0f, 460.0f), ImGuiCond_FirstUseEver);
+    // Share the nav panel's dock space: tab in beside Navigation/Symbols
+    // whenever the picker (re)appears (if the nav panel is docked).
+    if (ImGuiWindow *navWin = ImGui::FindWindowByName("Navigation##projectNav"))
+        if (navWin->DockId)
+            ImGui::SetNextWindowDockID(navWin->DockId, ImGuiCond_Appearing);
     if (ImGui::Begin("Build / Run Targets###buildPicker", &buildPickerVisible))
     {
         if (projectRoot.empty())

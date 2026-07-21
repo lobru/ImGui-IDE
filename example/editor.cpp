@@ -3329,7 +3329,8 @@ void Editor::navInitDockLayout(unsigned int dockId)
     ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.25f, &bottomId, &dockMain);
 
     ImGui::DockBuilderDockWindow("Navigation##projectNav", leftId);
-    ImGui::DockBuilderDockWindow("Symbols###symbolsPanel", leftId); // tabs with Navigation
+    ImGui::DockBuilderDockWindow("Symbols###symbolsPanel", leftId);            // tabs with Navigation
+    ImGui::DockBuilderDockWindow("Build / Run Targets###buildPicker", leftId); // tabs with Navigation
     ImGui::DockBuilderDockWindow("###refsPanel", rightId);
     ImGui::DockBuilderDockWindow("###outputPanel", bottomId);
     centralDockId = dockMain; // documents go here as tabs
@@ -3394,7 +3395,8 @@ void Editor::remergeAllWindows()
     ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.25f, &bottomId, &dockMain);
 
     ImGui::DockBuilderDockWindow("Navigation##projectNav", leftId);
-    ImGui::DockBuilderDockWindow("Symbols###symbolsPanel", leftId); // tabs with Navigation
+    ImGui::DockBuilderDockWindow("Symbols###symbolsPanel", leftId);            // tabs with Navigation
+    ImGui::DockBuilderDockWindow("Build / Run Targets###buildPicker", leftId); // tabs with Navigation
     ImGui::DockBuilderDockWindow("###refsPanel", rightId);
     ImGui::DockBuilderDockWindow("###outputPanel", bottomId);
     for (auto &up : tabs)
@@ -6185,6 +6187,11 @@ void Editor::renderSymbolsPanel()
     if (!symbolsPanelVisible)
         return;
     ImGui::SetNextWindowSize(ImVec2(300.0f, 480.0f), ImGuiCond_FirstUseEver);
+    // Share the nav panel's dock space: whenever this panel (re)appears, tab
+    // it into the node the Navigation panel lives in (if it's docked).
+    if (ImGuiWindow *navWin = ImGui::FindWindowByName("Navigation##projectNav"))
+        if (navWin->DockId)
+            ImGui::SetNextWindowDockID(navWin->DockId, ImGuiCond_Appearing);
     if (!ImGui::Begin("Symbols###symbolsPanel", &symbolsPanelVisible))
     {
         ImGui::End();
@@ -10617,13 +10624,39 @@ void Editor::renderDockedDocuments()
     ImGuiID centralId = central ? central->ID
                                 : (centralDockId ? (ImGuiID)centralDockId : rootId);
 
+    // Find the left/right-most dock nodes currently holding documents — the
+    // "already split" fallback target for split/open-to-side requests.
+    auto edgeDocNode = [&](int dir) -> ImGuiDockNode * {
+        ImGuiDockNode *leftNode = nullptr, *rightNode = nullptr;
+        for (auto &up : tabs)
+        {
+            ImGuiWindow *w = ImGui::FindWindowByName(windowLabelFor(*up).c_str());
+            if (!w || !w->DockNode)
+                continue;
+            ImGuiDockNode *nd = w->DockNode;
+            if (!leftNode || nd->Pos.x < leftNode->Pos.x)
+                leftNode = nd;
+            if (!rightNode || nd->Pos.x > rightNode->Pos.x)
+                rightNode = nd;
+        }
+        return dir < 0 ? leftNode : rightNode;
+    };
+
     // Honor a pending "split right" request by splitting the central node and
     // re-docking the active doc into the new right pane.
     if ((wantSplitRight || wantSplitLeft) && tabs.size() >= 2 && activeTab < tabs.size())
     {
         if (countDocNodes() >= 2)
         {
-            pushToast("Split limit: only two side-by-side editor panes", IM_COL32(240, 200, 90, 255));
+            // Already split: don't fail — move the doc into the FARTHEST pane
+            // on the requested side (as a tab there).
+            if (ImGuiDockNode *target = edgeDocNode(wantSplitLeft ? -1 : +1))
+            {
+                ImGui::DockBuilderDockWindow(windowLabelFor(*tabs[activeTab]).c_str(), target->ID);
+                ImGui::DockBuilderFinish(rootId);
+                tabs[activeTab]->wantFocus = true;
+                tabs[activeTab]->dockedOnce = true;
+            }
         }
         else if (central && central->IsLeafNode()) // only split a real leaf node
         {
@@ -10654,20 +10687,7 @@ void Editor::renderDockedDocuments()
             // Already at the split limit. Don't dump the file into whatever node
             // is "central" (that's always the left pane) — dock it as a tab in the
             // existing LEFT or RIGHT pane so it lands on the requested side.
-            ImGuiDockNode *leftNode = nullptr, *rightNode = nullptr;
-            for (auto &up : tabs)
-            {
-                ImGuiWindow *w = ImGui::FindWindowByName(windowLabelFor(*up).c_str());
-                if (!w || !w->DockNode)
-                    continue;
-                ImGuiDockNode *nd = w->DockNode;
-                if (!leftNode || nd->Pos.x < leftNode->Pos.x)
-                    leftNode = nd;
-                if (!rightNode || nd->Pos.x > rightNode->Pos.x)
-                    rightNode = nd;
-            }
-            ImGuiDockNode *target = (pendingSideDir < 0) ? leftNode : rightNode;
-            if (target)
+            if (ImGuiDockNode *target = edgeDocNode(pendingSideDir))
             {
                 for (auto &up : tabs)
                 {
