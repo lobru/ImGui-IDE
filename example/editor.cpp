@@ -8393,6 +8393,78 @@ void Editor::renderSettings()
                     ImGui::Spacing();
                     ImGui::PopID();
                 }
+
+                // Custom interpreters — extensions beyond the fixed rows above.
+                // Previously these lived only in settings.txt with no UI.
+                ImGui::SeparatorText("Custom interpreters");
+                {
+                    static const std::unordered_set<std::string> fixedExts = {
+                        ".py", ".pyw", ".ps1", ".sh", ".bat", ".cmd", ".lua", ".js"};
+                    std::string removeExt;
+                    int rid = 0;
+                    for (auto &[ext, cmd] : interpreterOverrides)
+                    {
+                        if (fixedExts.count(ext))
+                            continue;
+                        ImGui::PushID(rid++);
+                        ImGui::TextUnformatted(ext.c_str());
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("remove"))
+                            removeExt = ext;
+                        char buf[256];
+                        std::snprintf(buf, sizeof(buf), "%s", cmd.c_str());
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        if (ImGui::InputText("##cinterp", buf, sizeof(buf)))
+                            cmd = buf;
+                        ImGui::PopID();
+                    }
+                    if (!removeExt.empty())
+                    {
+                        interpreterOverrides.erase(removeExt);
+                        saveSettings();
+                    }
+                    static char newExt[16] = "", newCmd[256] = "";
+                    ImGui::SetNextItemWidth(80.0f);
+                    ImGui::InputTextWithHint("##newext", ".ext", newExt, sizeof(newExt));
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(-80.0f);
+                    ImGui::InputTextWithHint("##newcmd", "interpreter command", newCmd, sizeof(newCmd));
+                    ImGui::SameLine();
+                    if (ImGui::Button("Add") && newExt[0] == '.' && newCmd[0])
+                    {
+                        std::string e = newExt;
+                        std::transform(e.begin(), e.end(), e.begin(),
+                                       [](unsigned char c) { return (char) std::tolower(c); });
+                        interpreterOverrides[e] = newCmd;
+                        newExt[0] = newCmd[0] = 0;
+                        saveSettings();
+                    }
+                }
+
+                // Extension -> language overrides (set from the status-bar language
+                // combo) — visible + removable here instead of hiding in settings.txt.
+                ImGui::SeparatorText("File type \xe2\x86\x92 language overrides");
+                {
+                    auto &ovr = extLanguageOverrides();
+                    if (ovr.empty())
+                        ImGui::TextDisabled("None. Set one via the language combo on the status bar.");
+                    std::string removeExt;
+                    int rid = 0;
+                    for (auto &[ext, langName] : ovr)
+                    {
+                        ImGui::PushID(1000 + rid++);
+                        ImGui::Text("%s  \xe2\x86\x92  %s", ext.c_str(), langName.c_str());
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("remove"))
+                            removeExt = ext;
+                        ImGui::PopID();
+                    }
+                    if (!removeExt.empty())
+                    {
+                        ovr.erase(removeExt);
+                        saveSettings();
+                    }
+                }
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Toolchains"))
