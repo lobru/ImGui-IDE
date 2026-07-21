@@ -432,6 +432,19 @@ private:
 	void renderScriptOutputWindow();
 	void runScriptForDoc();
 
+	// Output panel: split-line cache (rebuilt only when the append-only stream
+	// grows) + clickable file:line diagnostic links.
+	std::vector<std::string> outputLines;
+	size_t                   outputSplitLen = (size_t) -1;
+	struct OutputLink { std::string path; int line0 = 0; int col0 = 0; int matchStart = 0; int matchLen = 0; };
+	// Detect a file:line[:col] or file(line[,col]) reference in `line` (MSVC,
+	// gcc/clang, generic). Returns true + fills the link (match span for the
+	// clickable text). Pure/static — selftest-covered.
+	static bool parseOutputLink(const std::string& line, OutputLink& out);
+	// Resolve `lk.path` (absolute, or relative to project root / a build dir)
+	// and jump to it.
+	void openOutputLink(const OutputLink& lk);
+
 	// C# "Go to Decompiled Source": resolve a BCL type to its runtime assembly
 	// and decompile it with ilspycmd (auto-installed if missing), caching the
 	// generated .cs. Runs on a detached thread (survives Editor via shared_ptr,

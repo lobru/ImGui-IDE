@@ -653,6 +653,131 @@ void Editor::runScriptForActiveDoc()
 {
 }
 
+// Detect a compiler-diagnostic file reference and return its span. Handles:
+//   MSVC:       C:\a\b.cpp(42): error C2065:      and  b.cpp(42,7):
+//   gcc/clang:  src/b.cpp:42:7: error:            and  src/b.cpp:42:
+// The match span covers "<file>(<line>...)" or "<file>:<line>[:col]".
+bool Editor::parseOutputLink(const std::string &line, OutputLink &out)
+{
+    auto isPathChar = [](char c) {
+        return c != '\0' && c != ':' && c != '(' && c != ')' && c != '\n' && c != '\r' &&
+               c != '\t' && c != '"' && c != '<' && c != '>' && c != '|' && c != '*' && c != '?';
+    };
+    // MSVC "(line[,col])" form.
+    for (size_t i = 0; i + 1 < line.size(); ++i)
+    {
+        if (line[i] != '(' || !std::isdigit((unsigned char) line[i + 1]))
+            continue;
+        // File is the run of path chars immediately before '('.
+        size_t fs = i;
+        while (fs > 0 && isPathChar(line[fs - 1]) && line[fs - 1] != ' ')
+            --fs;
+        // Keep a Windows drive prefix ("C:") — its ':' isn't a path char.
+        if (fs >= 2 && line[fs - 1] == ':' && std::isalpha((unsigned char) line[fs - 2]))
+            fs -= 2;
+        if (fs == i)
+            continue;
+        size_t j = i + 1;
+        int lineNo = 0;
+        while (j < line.size() && std::isdigit((unsigned char) line[j]))
+            lineNo = lineNo * 10 + (line[j++] - '0');
+        int colNo = 0;
+        if (j < line.size() && (line[j] == ',' || line[j] == ':'))
+        {
+            ++j;
+            while (j < line.size() && std::isdigit((unsigned char) line[j]))
+                colNo = colNo * 10 + (line[j++] - '0');
+        }
+        if (j >= line.size() || line[j] != ')')
+            continue;
+        std::string path = line.substr(fs, i - fs);
+        if (path.find('.') == std::string::npos)
+            continue; // needs an extension to be a plausible file
+        out.path = path;
+        out.line0 = lineNo > 0 ? lineNo - 1 : 0;
+        out.col0 = colNo > 0 ? colNo - 1 : 0;
+        out.matchStart = (int) fs;
+        out.matchLen = (int) (j + 1 - fs);
+        return true;
+    }
+    // Unix "file:line[:col]" form. Skip a leading "C:" drive colon.
+    for (size_t i = 0; i < line.size(); ++i)
+    {
+        if (line[i] != ':' || i == 0 || !std::isdigit((unsigned char) line[i + 1 < line.size() ? i + 1 : i]))
+            continue;
+        if (i == 1 && std::isalpha((unsigned char) line[0]))
+            continue; // drive letter
+        size_t fs = i;
+        while (fs > 0 && isPathChar(line[fs - 1]) && line[fs - 1] != ' ')
+            --fs;
+        // Allow a drive prefix "C:" to be part of the path.
+        if (fs >= 2 && line[fs - 1] == ':' && std::isalpha((unsigned char) line[fs - 2]))
+            fs -= 2;
+        if (fs == i)
+            continue;
+        std::string path = line.substr(fs, i - fs);
+        if (path.find('.') == std::string::npos)
+            continue;
+        size_t j = i + 1;
+        int lineNo = 0;
+        while (j < line.size() && std::isdigit((unsigned char) line[j]))
+            lineNo = lineNo * 10 + (line[j++] - '0');
+        int colNo = 0;
+        size_t endMatch = j;
+        if (j < line.size() && line[j] == ':' && j + 1 < line.size() &&
+            std::isdigit((unsigned char) line[j + 1]))
+        {
+            ++j;
+            while (j < line.size() && std::isdigit((unsigned char) line[j]))
+                colNo = colNo * 10 + (line[j++] - '0');
+            endMatch = j;
+        }
+        out.path = path;
+        out.line0 = lineNo > 0 ? lineNo - 1 : 0;
+        out.col0 = colNo > 0 ? colNo - 1 : 0;
+        out.matchStart = (int) fs;
+        out.matchLen = (int) (endMatch - fs);
+        return true;
+    }
+    return false;
+}
+
+void Editor::openOutputLink(const OutputLink &lk)
+{
+    std::error_code ec;
+    std::filesystem::path p(lk.path);
+    std::filesystem::path resolved;
+    if (p.is_absolute() && std::filesystem::exists(p, ec))
+        resolved = p;
+    else
+    {
+        // Try relative to the project root, then each build dir (diagnostics
+        // often print paths relative to the build working directory).
+        std::vector<std::filesystem::path> bases;
+        if (!projectRoot.empty())
+            bases.push_back(projectRoot);
+        for (auto &r : buildIncludeRoots())
+            bases.push_back(r);
+        if (!tabs.empty() && doc().filename != "untitled")
+            bases.push_back(std::filesystem::path(doc().filename).parent_path());
+        for (auto &b : bases)
+        {
+            auto cand = b / p;
+            if (std::filesystem::exists(cand, ec))
+            {
+                resolved = cand;
+                break;
+            }
+        }
+    }
+    if (resolved.empty())
+    {
+        pushToast("Output: file not found — " + lk.path, IM_COL32(230, 160, 90, 255));
+        return;
+    }
+    hostJumpTo(resolved.string(), lk.line0);
+}
+
 void Editor::renderScriptOutputWindow()
 {
     if (!script->visible)
@@ -681,22 +806,78 @@ void Editor::renderScriptOutputWindow()
         else
             ImGui::TextDisabled("(F5 to re-run)");
         ImGui::Separator();
-        // CLAUDE make the text split into lines and add line selection and text copying
         ImGui::BeginChild("##outputScroll", ImVec2(0, 0), 0,
                           ImGuiWindowFlags_HorizontalScrollbar |
                               ImGuiWindowFlags_AlwaysVerticalScrollbar);
         // Snapshot under the lock so the worker thread can keep appending
-        // while we draw (worst case the next frame catches up).
-        std::string snapshot;
+        // while we draw. Re-split into lines only when the text length changes
+        // (append-only stream), so link parsing isn't redone every frame.
         {
             std::lock_guard<std::mutex> lock(script->mutex);
-            snapshot = script->output;
+            if (script->output.size() != outputSplitLen)
+            {
+                outputSplitLen = script->output.size();
+                outputLines.clear();
+                size_t p = 0;
+                while (p <= script->output.size())
+                {
+                    size_t nl = script->output.find('\n', p);
+                    if (nl == std::string::npos)
+                    {
+                        if (p < script->output.size())
+                            outputLines.push_back(script->output.substr(p));
+                        break;
+                    }
+                    outputLines.push_back(script->output.substr(p, nl - p));
+                    p = nl + 1;
+                }
+            }
         }
-        ImGui::TextUnformatted(snapshot.c_str());
-        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
+
+        // Render with a clipper so huge build logs stay cheap; each line gets a
+        // clickable file:line span (compiler diagnostics) that jumps to source.
+        bool atBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f;
+        ImGuiListClipper clipper;
+        clipper.Begin((int) outputLines.size());
+        while (clipper.Step())
         {
-            ImGui::SetScrollHereY(1.0f);
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
+            {
+                const std::string &ln = outputLines[(size_t) i];
+                OutputLink lk;
+                if (parseOutputLink(ln, lk))
+                {
+                    if (lk.matchStart > 0)
+                    {
+                        ImGui::TextUnformatted(ln.c_str(), ln.c_str() + lk.matchStart);
+                        ImGui::SameLine(0.0f, 0.0f);
+                    }
+                    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 170, 255, 255));
+                    ImGui::PushID(i);
+                    ImGui::TextUnformatted(ln.c_str() + lk.matchStart,
+                                           ln.c_str() + lk.matchStart + lk.matchLen);
+                    bool clicked = ImGui::IsItemClicked();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::PopID();
+                    ImGui::PopStyleColor();
+                    if (lk.matchStart + lk.matchLen < (int) ln.size())
+                    {
+                        ImGui::SameLine(0.0f, 0.0f);
+                        ImGui::TextUnformatted(ln.c_str() + lk.matchStart + lk.matchLen);
+                    }
+                    if (clicked)
+                        openOutputLink(lk);
+                }
+                else
+                {
+                    ImGui::TextUnformatted(ln.c_str());
+                }
+            }
         }
+        clipper.End();
+        if (atBottom)
+            ImGui::SetScrollHereY(1.0f);
         middleMousePanScroll(3); // output log
         ImGui::EndChild();
     }
