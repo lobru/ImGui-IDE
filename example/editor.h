@@ -738,9 +738,16 @@ private:
 	float  prefFoldPreviewSpacing = 0.0f; // px gap before the fold-preview chip
 	float  prefFoldPreviewRounding = 3.0f;
 	float  prefFoldPreviewOpacity = 1.0f;
+	float  prefFoldPreviewVPad    = 2.0f; // vertical inset of the chip inside the line
+	int    prefFoldPreviewStyle   = 0;    // 0 chip, 1 text only, 2 outline
+	bool   prefHGuides            = false; // faint per-line separators in the editor
+	bool   prefNavGuides          = false; // faint row separators in the nav panel
+	float  prefGuideAlpha         = 0.10f; // shared guide intensity
 	void   applyAppearanceToEditor(TextEditor& e) {
 		e.SetLineSpacing(prefLineSpacing);
-		e.SetFoldPreviewStyle(prefFoldPreviewSpacing, prefFoldPreviewRounding, prefFoldPreviewOpacity);
+		e.SetFoldPreviewStyle(prefFoldPreviewSpacing, prefFoldPreviewRounding, prefFoldPreviewOpacity,
+		                      prefFoldPreviewVPad, prefFoldPreviewStyle);
+		e.SetHorizontalGuides(prefHGuides, prefGuideAlpha);
 	}
 	float  prefPanScrollAccel  = 1.0f;    // middle-mouse pan/scroll accel gain (1.0 = default feel, 0 = linear)
 	int    prefFpsLimit        = 60;      // target framerate cap; 0 = unlimited

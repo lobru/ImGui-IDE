@@ -2912,6 +2912,22 @@ void Editor::renderNavigationPanel()
 
         navContextPath.clear();
         navVisibleOrder.clear(); // rebuilt this frame in render order (shift-range select)
+
+        // Optional faint row guides under the tree area (Settings ▸ Appearance).
+        // Rows are uniform TreeNode heights, so fixed-pitch lines from the tree's
+        // top line up with rows and scroll with the content.
+        if (prefNavGuides)
+        {
+            ImDrawList *gdl = ImGui::GetWindowDrawList();
+            float rowH = ImGui::GetTextLineHeightWithSpacing();
+            ImVec2 wp = ImGui::GetWindowPos();
+            float top = ImGui::GetCursorScreenPos().y + rowH - 1.0f;
+            float bottom = wp.y + ImGui::GetWindowHeight();
+            ImU32 gcol = IM_COL32(128, 128, 128, (int) (prefGuideAlpha * 255.0f));
+            for (float gy = top; gy < bottom; gy += rowH)
+                gdl->AddLine(ImVec2(wp.x, gy), ImVec2(wp.x + ImGui::GetWindowWidth(), gy), gcol);
+        }
+
         std::error_code ec;
         if (std::filesystem::is_directory(root, ec))
         {
@@ -7701,6 +7717,16 @@ void Editor::loadSettings()
                 prefLineSpacing = std::strtof(v.c_str(), nullptr);
             else if (k == "fold_preview_spacing")
                 prefFoldPreviewSpacing = std::strtof(v.c_str(), nullptr);
+            else if (k == "fold_preview_vpad")
+                prefFoldPreviewVPad = std::strtof(v.c_str(), nullptr);
+            else if (k == "fold_preview_style")
+                prefFoldPreviewStyle = std::atoi(v.c_str());
+            else if (k == "h_guides")
+                prefHGuides = (v == "1" || v == "true");
+            else if (k == "nav_guides")
+                prefNavGuides = (v == "1" || v == "true");
+            else if (k == "guide_alpha")
+                prefGuideAlpha = std::strtof(v.c_str(), nullptr);
             else if (k == "fold_preview_rounding")
                 prefFoldPreviewRounding = std::strtof(v.c_str(), nullptr);
             else if (k == "fold_preview_opacity")
@@ -7879,6 +7905,11 @@ void Editor::saveSettings()
     f << "fold_preview_spacing=" << prefFoldPreviewSpacing << "\n";
     f << "fold_preview_rounding=" << prefFoldPreviewRounding << "\n";
     f << "fold_preview_opacity=" << prefFoldPreviewOpacity << "\n";
+    f << "fold_preview_vpad=" << prefFoldPreviewVPad << "\n";
+    f << "fold_preview_style=" << prefFoldPreviewStyle << "\n";
+    f << "h_guides=" << (prefHGuides ? 1 : 0) << "\n";
+    f << "nav_guides=" << (prefNavGuides ? 1 : 0) << "\n";
+    f << "guide_alpha=" << prefGuideAlpha << "\n";
     f << "fps_limit=" << prefFpsLimit << "\n";
     f << "idle_throttle=" << (prefIdleThrottle ? "1" : "0") << "\n";
     f << "live_coding=" << (prefLiveCoding ? "1" : "0") << "\n";
@@ -8150,6 +8181,13 @@ void Editor::renderSettings()
                 appearanceChanged |= ImGui::SliderFloat("Fold preview gap", &prefFoldPreviewSpacing, 0.0f, 32.0f, "%.0f px");
                 appearanceChanged |= ImGui::SliderFloat("Fold preview rounding", &prefFoldPreviewRounding, 0.0f, 10.0f, "%.0f px");
                 appearanceChanged |= ImGui::SliderFloat("Fold preview opacity", &prefFoldPreviewOpacity, 0.15f, 1.0f, "%.2f");
+                appearanceChanged |= ImGui::SliderFloat("Fold preview v-pad", &prefFoldPreviewVPad, 0.0f, 8.0f, "%.0f px");
+                appearanceChanged |= ImGui::Combo("Fold preview style", &prefFoldPreviewStyle, "Chip\0Text only\0Outline\0");
+                appearanceChanged |= ImGui::Checkbox("Horizontal guides (editor)", &prefHGuides);
+                ImGui::SameLine();
+                ImGui::Checkbox("Nav panel guides", &prefNavGuides);
+                if (prefHGuides || prefNavGuides)
+                    appearanceChanged |= ImGui::SliderFloat("Guide intensity", &prefGuideAlpha, 0.03f, 0.5f, "%.2f");
                 if (appearanceChanged)
                 {
                     for (auto &up : tabs)

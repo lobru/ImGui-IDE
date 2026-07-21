@@ -1249,13 +1249,18 @@ void TextEditor::renderText()
 					           foldPreviewSpacingPx;
 					float py = lineScreenPos.y;
 					float tw = ImGui::CalcTextSize(preview).x;
-					ImVec2 rmin(px, py + 2.0f);
-					ImVec2 rmax(px + tw + 6.0f, py + glyphSize.y - 2.0f);
+					ImVec2 rmin(px, py + foldPreviewVPad);
+					ImVec2 rmax(px + tw + 6.0f, py + glyphSize.y - foldPreviewVPad);
 					bool hovered = ImGui::IsMouseHoveringRect(rmin, rmax);
 					int bgA = (int) ((hovered ? 200.0f : 140.0f) * foldPreviewOpacity);
 					ImU32 bgCol = hovered ? IM_COL32(100, 100, 110, bgA) : IM_COL32(80, 80, 80, bgA);
 					ImU32 fgCol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-					drawList->AddRectFilled(rmin, rmax, bgCol, foldPreviewRounding);
+					// Variants: 0 filled chip, 1 text only (hover still shows a
+					// faint chip so the click target stays discoverable), 2 outline.
+					if (foldPreviewVariant == 0 || (foldPreviewVariant == 1 && hovered))
+						drawList->AddRectFilled(rmin, rmax, bgCol, foldPreviewRounding);
+					else if (foldPreviewVariant == 2)
+						drawList->AddRect(rmin, rmax, bgCol, foldPreviewRounding);
 					drawList->AddText(ImVec2(px + 3.0f, py), fgCol, preview);
 
 					if (hovered)
@@ -1278,6 +1283,15 @@ void TextEditor::renderText()
 					break;
 				}
 			}
+		}
+
+		// Optional faint horizontal guide under each line (Settings ▸ Appearance).
+		if (showHorizontalGuides)
+		{
+			float gy = lineScreenPos.y + glyphSize.y - 0.5f;
+			ImU32 gcol = IM_COL32(128, 128, 128, (int) (horizontalGuideAlpha * 255.0f));
+			drawList->AddLine(ImVec2(drawList->GetClipRectMin().x, gy),
+			                  ImVec2(drawList->GetClipRectMax().x, gy), gcol);
 		}
 
 		lineScreenPos.y += glyphSize.y;

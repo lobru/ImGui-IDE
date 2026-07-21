@@ -65,10 +65,18 @@ public:
 	inline float GetLineSpacing() const { return lineSpacing; }
 	// Fold-preview chip styling: extra gap after the line's text (px), corner
 	// rounding (px), and background opacity (0..1 scale on the default alphas).
-	inline void SetFoldPreviewStyle(float spacingPx, float rounding, float opacity) {
+	inline void SetFoldPreviewStyle(float spacingPx, float rounding, float opacity,
+	                                float vpad = 2.0f, int variant = 0) {
 		foldPreviewSpacingPx = spacingPx;
 		foldPreviewRounding = rounding;
 		foldPreviewOpacity = opacity < 0.0f ? 0.0f : (opacity > 1.0f ? 1.0f : opacity);
+		foldPreviewVPad = vpad < 0.0f ? 0.0f : (vpad > 8.0f ? 8.0f : vpad);
+		foldPreviewVariant = variant < 0 ? 0 : (variant > 2 ? 2 : variant); // 0 chip, 1 text-only, 2 outline
+	}
+	// Faint horizontal separator under every text line (off by default).
+	inline void SetHorizontalGuides(bool enabled, float alpha01 = 0.10f) {
+		showHorizontalGuides = enabled;
+		horizontalGuideAlpha = alpha01 < 0.0f ? 0.0f : (alpha01 > 1.0f ? 1.0f : alpha01);
 	}
 	inline void SetReadOnlyEnabled(bool value) { readOnly = value; }
 	inline bool IsReadOnlyEnabled() const { return readOnly; }
@@ -1766,6 +1774,10 @@ protected:
 	float foldPreviewSpacingPx = 0.0f;   // extra gap between text end and the chip
 	float foldPreviewRounding = 3.0f;    // chip corner rounding
 	float foldPreviewOpacity = 1.0f;     // 0..1 scale on the chip's bg alpha
+	float foldPreviewVPad = 2.0f;        // vertical inset of the chip inside the line
+	int   foldPreviewVariant = 0;        // 0 = chip, 1 = text only, 2 = outline
+	bool  showHorizontalGuides = false;  // faint per-line separator lines
+	float horizontalGuideAlpha = 0.10f;  // 0..1 intensity of the guides
 	bool readOnly = false;
 	bool autoIndent = true;
 	bool showSpaces = true;
