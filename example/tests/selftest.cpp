@@ -683,6 +683,35 @@ int main(int argc, char** argv)
 		CHECK(encl("Foo", 1) == "ns", "type Foo enclosed by its namespace ns");
 	}
 
+	// ── Leveled folding (FoldToLevel / FoldComments) ──
+	{
+		// ns { class { fn { body } fn2 { body } } } — three nesting levels.
+		std::string src =
+			"namespace ns {\n"        // 0  (level-1 fold)
+			"class Foo {\n"           // 1  (level-2 fold)
+			"void a() {\n"            // 2  (level-3 fold)
+			"int x;\n"                // 3
+			"}\n"                     // 4
+			"void b() {\n"            // 5  (level-3 fold)
+			"int y;\n"                // 6
+			"}\n"                     // 7
+			"};\n"                    // 8
+			"}\n";                    // 9
+		TextEditor ed;
+		ed.SetFoldingEnabled(true);
+		ed.SetLanguage(TextEditor::Language::Cpp());
+		ed.SetText(src);
+		CHECK(ed.GetFoldCount() >= 3, "foldLevel: nested braces produce 3+ folds");
+		ed.FoldToLevel(1);
+		int hiddenAll = ed.GetHiddenLineCount();
+		ed.FoldToLevel(3);
+		int hiddenFns = ed.GetHiddenLineCount();
+		CHECK(hiddenAll > hiddenFns && hiddenFns > 0,
+			"foldLevel: level 1 hides more than level 3; level 3 still folds functions");
+		ed.UnfoldAll();
+		CHECK(ed.GetHiddenLineCount() == 0, "foldLevel: unfoldAll restores visibility");
+	}
+
 	// ── UE/Windows export macros stripped from C++ parses ──
 	{
 		std::string src = "class CALC_API AGameMode : public AGameModeBase {\npublic:\n  int Health;\n};\n";

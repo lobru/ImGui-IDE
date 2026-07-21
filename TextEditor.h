@@ -121,6 +121,11 @@ public:
 	// Fold control (no-ops when folding is disabled)
 	inline void FoldAll()   { foldRanges.foldAll(document); }
 	inline void UnfoldAll() { foldRanges.unfoldAll(document); }
+	// Fold ranges nested at `level`+ (1 == everything; 2 keeps top-level
+	// namespaces/classes open but folds their children, ...).
+	inline void FoldToLevel(int level) { foldRanges.foldToLevel(document, level); }
+	// Fold every comment block, leaving other folds untouched.
+	inline void FoldComments() { foldRanges.foldByType(document, (int) Comment); }
 	// Toggle / force the innermost fold around the current cursor.
 	inline void ToggleCurrentFold() {
 		int line = cursors.getCurrent().getInteractiveEnd().line;
@@ -138,6 +143,7 @@ public:
 	// Headless test accessors. setText() already colorizes + rebuilds folds with
 	// no ImGui context, so these expose the results for --selftest without a GUI.
 	inline size_t GetFoldCount() const { return foldRanges.size(); }
+	inline int GetHiddenLineCount() const { return foldRanges.hiddenLineCount; } // lines hidden by folds
 	inline int GetGlyphColorAt(int line, int column) const {
 		if (line < 0 || line >= document.lineCount()) return -1;
 		const Line& gl = document[line];
@@ -1393,6 +1399,8 @@ protected:
 		// Bulk fold / unfold operations
 		void foldAll(Document& document);
 		void unfoldAll(Document& document);
+		void foldToLevel(Document& document, int level); // fold nesting depth >= level
+		void foldByType(Document& document, int type);   // fold all ranges of one FoldType
 
 		// Toggle the innermost fold whose range covers `line` (cursor's line).
 		// `forceFolded` = +1 means force fold, -1 means force unfold, 0 means toggle.

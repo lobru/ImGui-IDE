@@ -5234,6 +5234,54 @@ void TextEditor::Folder::unfoldAll(Document& document)
 }
 
 
+//	Fold every range nested at `level` or deeper, unfold shallower ones.
+//	Level 1 folds top-level ranges and everything below (== foldAll); level 2
+//	keeps top-level blocks (namespaces/classes) open but folds their children
+//	(functions), and so on — VSCode's "Fold Level N".
+void TextEditor::Folder::foldToLevel(Document& document, int level)
+{
+	if (!foldingEnabled) return;
+	if (level < 1) level = 1;
+	foldedStartLines.clear();
+	for (size_t i = 0; i < size(); ++i)
+	{
+		auto& fr = (*this)[i];
+		// Nesting depth = number of ranges STRICTLY containing this one.
+		// O(n^2) on the fold count — fine for real documents (hundreds).
+		int depth = 0;
+		for (size_t j = 0; j < size(); ++j)
+		{
+			if (i == j) continue;
+			auto& o = (*this)[j];
+			bool contains = o.start.line <= fr.start.line && o.end.line >= fr.end.line &&
+			                (o.start.line < fr.start.line || o.end.line > fr.end.line);
+			if (contains)
+				++depth;
+		}
+		fr.folded = depth >= level - 1;
+		if (fr.folded)
+			foldedStartLines.insert(fr.start.line);
+	}
+	updateVisibility(document);
+}
+
+
+//	Fold only ranges of one type (e.g. every comment block) — leaves the fold
+//	state of every other range untouched.
+void TextEditor::Folder::foldByType(Document& document, int type)
+{
+	if (!foldingEnabled) return;
+	for (auto& fr : *this)
+	{
+		if ((int) fr.type != type)
+			continue;
+		fr.folded = true;
+		foldedStartLines.insert(fr.start.line);
+	}
+	updateVisibility(document);
+}
+
+
 bool TextEditor::Folder::toggleCurrent(int line, Document& document, int forceFolded)
 {
 	if (!foldingEnabled) return false;

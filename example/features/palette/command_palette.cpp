@@ -131,6 +131,13 @@ void Editor::buildPaletteActions()
     add("View: Settings", "", "Core", [this] { settingsVisible = true; settingsFocusRequest = true; });
     if (hasDoc)
         add("View: Split Tab Right", "Ctrl+\\", docSrc, [this] { splitActiveTabRight(); });
+    if (hasDoc)
+    {
+        add("Code: Fold Level 1 (everything)", "", docSrc, [this] { doc().editor.FoldToLevel(1); });
+        add("Code: Fold Level 2 (keep top-level open)", "", docSrc, [this] { doc().editor.FoldToLevel(2); });
+        add("Code: Fold Level 3", "", docSrc, [this] { doc().editor.FoldToLevel(3); });
+        add("Code: Fold Comments", "", docSrc, [this] { doc().editor.FoldComments(); });
+    }
     add("View: Zoom In", "Ctrl+=", "Core", [this] { increaseFontSIze(); });
     add("View: Zoom Out", "Ctrl+-", "Core", [this] { decreaseFontSIze(); });
     if (hasDoc)

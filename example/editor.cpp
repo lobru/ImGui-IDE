@@ -11975,6 +11975,21 @@ void Editor::renderMenuBar()
             {
                 e.UnfoldCurrent();
             }
+            if (ImGui::BeginMenu("Fold Level", e.IsFoldingEnabled()))
+            {
+                // Level 2 is the everyday one: keeps top-level blocks
+                // (namespaces/classes) open, folds their children (functions).
+                if (ImGui::MenuItem("Level 1 (everything)"))
+                    e.FoldToLevel(1);
+                if (ImGui::MenuItem("Level 2 (keep top-level open)"))
+                    e.FoldToLevel(2);
+                if (ImGui::MenuItem("Level 3"))
+                    e.FoldToLevel(3);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Fold Comments"))
+                    e.FoldComments();
+                ImGui::EndMenu();
+            }
             ImGui::Separator();
             flag = e.IsCompletingPairedGlyphs();
             if (ImGui::MenuItem("Auto-complete Brackets", nullptr, &flag))
