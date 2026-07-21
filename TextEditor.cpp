@@ -553,6 +553,10 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 		renderPanScrollIndicator();
 	}
 
+	// Roomier item spacing inside the context menus — separators get visible
+	// breathing room around their groups (default spacing made them cramp).
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+	                    ImVec2(ImGui::GetStyle().ItemSpacing.x, ImGui::GetStyle().ItemSpacing.y + 3.0f));
 	if (ImGui::BeginPopup("LineNumberContextMenu", ImGuiWindowFlags_NoMove))
 	{
 		lineNumberContextMenuCallback(contextMenuLine);
@@ -564,6 +568,7 @@ void TextEditor::render(const char* title, const ImVec2& size, bool border)
 		textContextMenuCallback(contextMenuLine, contextMenuColumn);
 		ImGui::EndPopup();
 	}
+	ImGui::PopStyleVar();
 
 	// render find/replace popup
 	renderFindReplace(pos, visibleSize.x - verticalScrollBarSize);

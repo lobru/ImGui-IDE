@@ -47,6 +47,12 @@ Lang langForExtension(const std::string& ext);
 // Empty result if the language is unsupported or the buffer fails to parse.
 std::vector<Symbol> extractSymbols(Lang lang, const std::string& source);
 
+// Blank `<UPPERCASE>_API` export macros (UE's PROJECT_API/ENGINE_API, Windows
+// dllexport wrappers) with spaces — equal length, so byte offsets stay valid.
+// Applied to every C++ parse so `class FOO_API Bar : public Baz` yields Bar
+// (with its base), not a fake class named FOO_API.
+std::string stripApiMacros(const std::string& source);
+
 // Scope-aware receiver-type resolver for member autocomplete. Parses `source`
 // and finds the declaration of `receiver` visible at the cursor, respecting
 // scope + declaration-before-use (so an inner shadow beats an outer decl).

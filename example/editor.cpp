@@ -2634,7 +2634,9 @@ void Editor::middleMousePanScroll(int windowKey)
     float dist = std::sqrt(rel.x * rel.x + rel.y * rel.y);
     float ref = ImGui::GetTextLineHeightWithSpacing() * 8.0f;
     float t = (ref > 0.0f) ? dist / ref : 0.0f;
-    float accel = (prefPanScrollAccel <= 0.0f) ? 1.0f : (1.0f + t * t * prefPanScrollAccel * 0.25f);
+    // Gain rescaled 2026-07-21 (user: default felt too hot) — the 1.0 default
+    // now applies what 0.5 used to; the slider's range keeps its meaning.
+    float accel = (prefPanScrollAccel <= 0.0f) ? 1.0f : (1.0f + t * t * prefPanScrollAccel * 0.125f);
     if (accel > 16.0f)
         accel = 16.0f;
 
@@ -7991,8 +7993,17 @@ void Editor::renderSettings()
         ImGui::SetNextWindowViewport(vp->ID);
         ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
-        ImGui::SetNextWindowFocus();
         settingsFocusRequest = false;
+        // A single-frame SetNextWindowFocus loses to any window that also
+        // requests focus that frame (Find in Files grabs its input's focus on
+        // open, say) — Settings stayed buried. Hold focus for a short linger
+        // window so it reliably lands on top.
+        settingsFocusLinger = 45; // ~0.75s at 60fps
+    }
+    if (settingsFocusLinger > 0)
+    {
+        --settingsFocusLinger;
+        ImGui::SetNextWindowFocus();
     }
     // NoDocking keeps Settings a floating dialog (a docked tab can't be raised to
     // the top by focus alone).
@@ -9679,9 +9690,9 @@ void Editor::mergeExternalChange(TabDocument &t)
 }
 
 //  Queue a transient corner notification.
-void Editor::pushToast(const std::string &text, ImU32 accent, int action)
+void Editor::pushToast(const std::string &text, ImU32 accent, int action, const std::string &file)
 {
-    toasts.push_back({text, ImGui::GetTime() + 5.0, accent, action});
+    toasts.push_back({text, ImGui::GetTime() + 5.0, accent, action, file});
     if (toasts.size() > 6)
         toasts.erase(toasts.begin());
 }
@@ -10046,7 +10057,7 @@ void Editor::renderToasts()
         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking;
 
     int clickedAction = -1; // dispatch AFTER the loop (avoids mutating toasts mid-iterate)
-    std::string clickedText;
+    std::string clickedText, clickedFile;
     for (size_t i = 0; i < toasts.size(); ++i)
     {
         auto &to = toasts[i];
@@ -10068,13 +10079,23 @@ void Editor::renderToasts()
             ImGui::PushStyleColor(ImGuiCol_Text, accent);
             ImGui::TextUnformatted(to.text.c_str());
             ImGui::PopStyleColor();
-            if (ImGui::IsWindowHovered())
+            // Explicit close button — always available, never triggers the action.
+            ImGui::SameLine(0.0f, 10.0f);
+            bool closed = ImGui::SmallButton(("\xc3\x97##tclose" + std::to_string(i)).c_str()); // ×
+            if (closed)
+                to.expiry = now;
+            if (!closed && ImGui::IsWindowHovered())
             {
+                // Hovering pauses expiry — a toast being read never vanishes
+                // mid-read (and gets a short grace after the mouse leaves).
+                if (to.expiry < now + 1.5)
+                    to.expiry = now + 1.5;
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsItemHovered())
                 {
                     clickedAction = to.action;
                     clickedText = to.text;
+                    clickedFile = to.file;
                     to.expiry = now; // dismiss this toast next frame
                 }
             }
@@ -10087,9 +10108,18 @@ void Editor::renderToasts()
 
     if (clickedAction == 1)
         showUpdateDialog = true; // update toast → open the updater
-    else if (clickedAction == 0)
-        requestReply("", -1, "Re: " + clickedText); // open the type-to-Claude popup (instant reply)
-    // clickedAction == 2 (system confirmations): click only dismisses, no re-reply.
+    else if (clickedAction == 4)
+    {
+        // File-carrying toast (screenshot saved, export written, ...) — open it.
+        if (clickedFile.empty())
+            clickedFile = lastScreenshotPath;
+        if (!clickedFile.empty())
+            openFile(clickedFile);
+    }
+    else if (clickedAction == 5)
+        requestReply("", -1, "Re: " + clickedText); // ONLY Claude-originated toasts
+    // 0/2/3 (generic + system confirmations): click just dismisses — a random
+    // status toast must NOT open the reply-to-Claude popup.
 }
 
 //  Append an external-change event to the persistent activity feed.
@@ -12234,8 +12264,9 @@ void Editor::renderMenuBar()
             if (ImGui::MenuItem("Output Panel", nullptr, &script->visible))
             {
             }
-            ImGui::Separator();
-            // Project-type plugins (e.g. Unreal) contribute their submenu here.
+            // Project-type plugins contribute their submenu here. No separator —
+            // when nothing contributes, a trailing separator is just a rogue
+            // line at the bottom of the menu; contributors draw their own.
             pluginRegistry.menu(*this, PluginMenu::Project);
             ImGui::EndMenu();
         }
@@ -15425,7 +15456,7 @@ void Editor::onScreenshotWritten(bool ok, const std::string &path)
 
     lastScreenshotPath = path;
     pushToast("Screenshot saved \xe2\x80\x94 " + std::filesystem::path(path).filename().string(),
-              IM_COL32(120, 200, 130, 255), 4);
+              IM_COL32(120, 200, 130, 255), 4, path); // click opens the PNG
 }
 
 //

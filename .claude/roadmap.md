@@ -39,6 +39,112 @@ that is still genuinely outstanding.
 - [x] **Symbols viewer** (027648c): Types view grouped by construct, external-source section (group by construct per
       language, project-type sections).
 
+## 🚀 User backlog (2026-07-21) — mega batch (UE tooling + editor UX)
+
+### Quick fixes
+- [ ] Rogue separator at the bottom of the Project menu (trailing separator
+      before an empty plugin contribution).
+- [ ] Settings window: always come to top on open (failed when Find-in-Files
+      was open) + brief attention linger.
+- [ ] Pan scroll accel default halved (new 1.0 == old 0.5); rescale stored pref.
+- [ ] `PROJECTNAME_API` / `ENGINE_API` macros polluting symbols + go-to-def:
+      skip ALL-CAPS `*_API` tokens between `class`/`struct` and the real name
+      (ts indexer + goto). Symbols view should catalogue UCLASS/UPROPERTY etc.
+- [ ] Sort-lines on a selection HANGS — fix texttools::sortLines; add
+      "Unique Lines" tool + "Number Lines" tool + insert line before/after.
+- [ ] Context menu: more spacing around separators.
+- [ ] Panels must not clip content on narrow windows (debug panel, dev tools):
+      push/pop item width + wrapping.
+- [ ] Breakpoints removable by clicking the gutter marker; hide debug context
+      items for file types with no adapter support.
+- [ ] Python Ctrl+Shift+/ does nothing (no block comment): keybind priority
+      routing when two actions share a chord — fall back to line comment;
+      user-adjustable priority, smart default.
+
+### Toasts + replies
+- [ ] Toast rework: close button; hover pauses expiry; clicking a toast with a
+      file target opens the file (e.g. screenshot path). Reply-to-Claude only
+      for genuinely Claude-originated messages / CLI API. (User has never seen
+      the Claude toast flow fire — verify end-to-end.)
+
+### Editor behaviors
+- [ ] Smarter quote/brace autocomplete (no doubled quotes); "fix broken pairs"
+      pass on format; format-on-save option; format-selection-only.
+- [ ] Optional horizontal guide lines for text + nav panel (customizable).
+- [ ] Fold system: language-aware block kinds (function/class/namespace/struct)
+      with leveled fold-all (fold functions, keep namespaces/classes open);
+      offscreen fold-marker vertical line hover = grow/highlight, click = toggle.
+- [ ] Fold preview settings: vertical spacing + style variants.
+- [ ] Autocomplete: member-first ranking after `.`/`->`/`:` with smart filter
+      (Sublime-quality); include/import/using completion from cached
+      project+dependency map.
+- [ ] Hover tooltip info toggle in context menu; debug verbosity setting
+      (members, ptr/ref kind, super class for C++ symbols).
+
+### Nav panel + project
+- [ ] Nav panel: right-click empty space = new folder (empty space == project
+      root); drag to empty space moves out of subfolder; context-menu
+      "Move to folder…" for files/folders.
+- [ ] Drag source file from nav into a document inserts the proper
+      project-relative #include/import.
+- [ ] Go to File should also NAVIGATE the nav panel to the file (UE source →
+      the Unreal Engine Source section) and update missing symbols on open.
+- [ ] Open/build should crawl included files + dependencies and build symbols
+      for all of them (supers included) — C++ super classes currently missing.
+      Only #included sources belong in the symbols view.
+- [ ] Tiered resolution as a general rule: fast path first, then slower
+      reliable fallbacks (even shelling to dumpbin etc.) on a WORKER thread —
+      show a working "Go to File" 150ms later instead of a grey one instantly.
+- [ ] Symbols view: namespace organization, merge duplicate entries, prioritize
+      main-source symbols; per-symbol viewer (click std::vector → namespace +
+      members).
+
+### Bigger features / plugins
+- [ ] Rename/refactor: symbol rename in symbols view / palette / context menu
+      with VS-like affected-files display; general principle — displayed data
+      pulled from source is EDITABLE and writes back (edit comment in hover
+      tooltip, param changes sync header/source). Possibly a plugin callback
+      API for programmatic file/text edits.
+- [ ] Structured-data plugin: view/edit .db (sqlite), csv, excel.
+- [ ] Static-analysis plugin: flag missing/unneeded virtual/const etc. with
+      inline fixes + exception markers.
+- [ ] Macros/snippets plugin (Tools + palette) with easy add API; generic
+      codegen helper tools.
+- [ ] Markdown preview: GitHub-parity (tables/column API etc. — compare
+      DevToys); inline code blocks collapsible; watch perf.
+- [ ] Build/run output view: syntax highlighting + inline links to file:line.
+- [ ] cppgen: create + link classes/namespaces; class viewer panel (VS-like,
+      inherited members toggle, interactive override generation).
+
+### Unreal track (epic)
+- [ ] UHT/UBT/UAT + clang tooling: static analysis, GenerateClangDatabase,
+      Engine\Build\BatchFiles automation (H:\UE_5.4). Clarify/automate the
+      IntelliSense-DB story — generate on .uproject open, no manual step.
+- [ ] Right-side context panel for UE projects: context palette per file type
+      (source/build.cs/uplugin/uproject); codeless GUI editors for
+      uplugin/uproject/build.cs/target.cs (module list = ALL engine + plugin
+      modules, not just project's).
+- [ ] UOBJECT-aware symbols: specifier autocomplete (BlueprintCallable,
+      Category...), interactive UCLASS builder, inherited members shown as
+      disabled text in .h with override/BlueprintNativeEvent thunk generation.
+- [ ] UE ini editing: [/Script/Engine.GameUserSettings] → resolve class via
+      UHT/heuristics; config-tagged UPROPERTY list as editable, scoped by
+      header; add missing config classes.
+- [ ] .modules = JSON filetype; ush/usf = HLSL.
+- [ ] Module awareness: scan uproject/build files for the REAL module set
+      (Engine always available), prioritize symbol building accordingly.
+- [ ] uasset tooling: bring in UAssetAPI or CUE4Parse as submodule (current
+      decomp not useful).
+- [ ] UE python scripting: editor-side menu to create/open python scripts in
+      ImGui-IDE; UE python stub support.
+- [ ] Plugin builder: interactive 3rd-party dll linking; build plugin to
+      standalone host project + relink; Intermediate/Binaries autocleanup;
+      switch UE editor version/build config; auto-install IDE's UE plugin.
+- [ ] Snippets for UE patterns: iterators (TActorIterator etc.), delegates,
+      world-type checks, TMap iteration, TFunction/lambda, console command
+      builder, TEXT/FName automation, IWYU/forward-declaration helpers.
+- [ ] Auto-open editor/game crash log when the associated project crashes.
+
 ## 🔧 Open
 
 ### Bugs needing a Windows repro

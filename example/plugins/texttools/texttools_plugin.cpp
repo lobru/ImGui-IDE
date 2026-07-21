@@ -20,6 +20,8 @@ std::string tSortAZ(const std::string &s, std::string &) { return texttools::sor
 std::string tSortZA(const std::string &s, std::string &) { return texttools::sortLines(s, false, false); }
 std::string tSort09(const std::string &s, std::string &) { return texttools::sortLines(s, true, true); }
 std::string tSort90(const std::string &s, std::string &) { return texttools::sortLines(s, true, false); }
+std::string tUnique(const std::string &s, std::string &) { return texttools::uniqueLines(s); }
+std::string tNumber(const std::string &s, std::string &) { return texttools::numberLines(s); }
 std::string tJsonPretty(const std::string &s, std::string &e) { return texttools::jsonPretty(s, e); }
 std::string tJsonMin(const std::string &s, std::string &e) { return texttools::jsonMinify(s, e); }
 std::string tJsonXml(const std::string &s, std::string &e) { return texttools::jsonToXml(s, e); }
@@ -50,6 +52,8 @@ const Tool kDocTools[] = {
     {"Sort Lines Z->A", "Text: Sort Lines Z->A", tSortZA},
     {"Sort Lines 0->9", "Text: Sort Lines 0->9 (numeric)", tSort09},
     {"Sort Lines 9->0", "Text: Sort Lines 9->0 (numeric)", tSort90},
+    {"Unique Lines", "Text: Unique Lines (drop duplicates)", tUnique},
+    {"Number Lines", "Text: Number Lines (1. 2. 3. ...)", tNumber},
     {"JSON: Pretty-print", "JSON: Pretty-print", tJsonPretty, true},
     {"JSON: Minify", "JSON: Minify", tJsonMin},
     {"JSON -> XML", "JSON: Convert to XML", tJsonXml},
@@ -115,8 +119,9 @@ void TextToolsPlugin::onMenu(PluginHost &host, PluginMenu which)
         {
             if (t.separatorBefore)
                 ImGui::Separator();
-            bool isSort = t.fn == tSortAZ || t.fn == tSortZA || t.fn == tSort09 || t.fn == tSort90;
-            if (ImGui::MenuItem(t.menuLabel, nullptr, false, !isSort || sortOk))
+            bool isLineTool = t.fn == tSortAZ || t.fn == tSortZA || t.fn == tSort09 ||
+                              t.fn == tSort90 || t.fn == tUnique || t.fn == tNumber;
+            if (ImGui::MenuItem(t.menuLabel, nullptr, false, !isLineTool || sortOk))
                 applySelectionOrDoc(host, t.menuLabel, t.fn);
         }
     }

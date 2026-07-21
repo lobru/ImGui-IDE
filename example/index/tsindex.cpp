@@ -517,11 +517,45 @@ size_t registeredTypeCount()
 	return runtimeTable().size();
 }
 
-std::vector<Symbol> extractSymbols(Lang lang, const std::string& source)
+// Blank Windows/UE export macros (`CALCULATOR_API`, `ENGINE_API`, plain
+// `PROJECT_API`, ...) with spaces so tree-sitter parses `class X_API Foo`
+// as `class Foo`. Without this the macro becomes the class NAME (polluting
+// symbols + go-to-def) and the real name/base clause parse as garbage —
+// supers were silently lost on every UE class. Equal-length replacement
+// keeps every byte offset valid.
+std::string stripApiMacros(const std::string& source)
+{
+	std::string s = source;
+	size_t i = 0, n = s.size();
+	auto isIdent = [](unsigned char c) { return std::isalnum(c) || c == '_'; };
+	while (i < n)
+	{
+		if (!isIdent((unsigned char) s[i])) { ++i; continue; }
+		size_t b = i;
+		while (i < n && isIdent((unsigned char) s[i])) ++i;
+		size_t len = i - b;
+		// <UPPERCASE>_API, at least one char before the suffix, all [A-Z0-9_],
+		// starting with a letter, and a fresh token (not preceded by ident char).
+		if (len >= 5 && (b == 0 || !isIdent((unsigned char) s[b - 1])) &&
+			s.compare(i - 4, 4, "_API") == 0 && std::isupper((unsigned char) s[b]))
+		{
+			bool ok = true;
+			for (size_t k = b; k < i && ok; ++k)
+				ok = std::isupper((unsigned char) s[k]) || std::isdigit((unsigned char) s[k]) || s[k] == '_';
+			if (ok)
+				std::fill(s.begin() + (ptrdiff_t) b, s.begin() + (ptrdiff_t) i, ' ');
+		}
+	}
+	return s;
+}
+
+std::vector<Symbol> extractSymbols(Lang lang, const std::string& sourceIn)
 {
 	std::vector<Symbol> out;
-	if (lang == Lang::None || source.empty())
+	if (lang == Lang::None || sourceIn.empty())
 		return out;
+	// C-family: neutralize export macros before parsing (see stripApiMacros).
+	const std::string source = (lang == Lang::Cpp) ? stripApiMacros(sourceIn) : sourceIn;
 
 	const std::string& queryStr = tagsQueryFor(lang);
 	if (queryStr.empty())
@@ -1296,7 +1330,11 @@ struct ResolveCache
 		if (!language) return nullptr;
 		TSParser* parser = ts_parser_new();
 		ts_parser_set_language(parser, language);
-		tree = ts_parser_parse_string(parser, nullptr, s.c_str(), (uint32_t) s.size());
+		// Parse the API-macro-stripped text for C++ (equal length, offsets
+		// valid against the caller's original source); key the cache on the
+		// ORIGINAL string so hit checks stay a plain compare.
+		const std::string parsed = (l == Lang::Cpp) ? stripApiMacros(s) : s;
+		tree = ts_parser_parse_string(parser, nullptr, parsed.c_str(), (uint32_t) parsed.size());
 		ts_parser_delete(parser);
 		lang = l;
 		src = s;   // own copy so next call's value-compare is safe
@@ -1398,11 +1436,12 @@ std::string resolveMemberChain(Lang lang, const std::string& source,
 	return type;
 }
 
-MemberTypeMap extractMemberTypes(Lang lang, const std::string& source)
+MemberTypeMap extractMemberTypes(Lang lang, const std::string& sourceIn)
 {
 	MemberTypeMap out;
-	if ((lang != Lang::Cpp && lang != Lang::CSharp) || source.empty()) return out;
-	if (source.size() > 2 * 1024 * 1024) return out;        // index-path size cap
+	if ((lang != Lang::Cpp && lang != Lang::CSharp) || sourceIn.empty()) return out;
+	if (sourceIn.size() > 2 * 1024 * 1024) return out;      // index-path size cap
+	const std::string source = (lang == Lang::Cpp) ? stripApiMacros(sourceIn) : sourceIn;
 	const TSLanguage* language = languageFor(lang);
 	if (!language) return out;
 	TSParser* parser = ts_parser_new();

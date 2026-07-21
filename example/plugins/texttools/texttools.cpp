@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -395,6 +397,70 @@ std::string sortLines(const std::string& in, bool numeric, bool ascending)
 			out += '\n';
 	}
 	return out;
+}
+
+// Shared splitter: `in` -> lines (CR stripped) + trailing-newline flag.
+static std::vector<std::string> splitLines(const std::string& in, bool& trailingNl)
+{
+	trailingNl = !in.empty() && in.back() == '\n';
+	std::vector<std::string> lines;
+	std::string cur;
+	for (char ch : in)
+	{
+		if (ch == '\n')
+		{
+			if (!cur.empty() && cur.back() == '\r')
+				cur.pop_back();
+			lines.push_back(std::move(cur));
+			cur.clear();
+		}
+		else
+			cur += ch;
+	}
+	if (!cur.empty())
+		lines.push_back(std::move(cur));
+	return lines;
+}
+
+static std::string joinLines(const std::vector<std::string>& lines, bool trailingNl)
+{
+	std::string out;
+	for (size_t i = 0; i < lines.size(); ++i)
+	{
+		out += lines[i];
+		if (i + 1 < lines.size() || trailingNl)
+			out += '\n';
+	}
+	return out;
+}
+
+std::string uniqueLines(const std::string& in)
+{
+	bool trailingNl = false;
+	auto lines = splitLines(in, trailingNl);
+	std::unordered_set<std::string> seen;
+	std::vector<std::string> out;
+	out.reserve(lines.size());
+	for (auto& l : lines)
+		if (seen.insert(l).second)
+			out.push_back(std::move(l));
+	return joinLines(out, trailingNl);
+}
+
+std::string numberLines(const std::string& in)
+{
+	bool trailingNl = false;
+	auto lines = splitLines(in, trailingNl);
+	int width = 1;
+	for (size_t n = lines.size(); n >= 10; n /= 10)
+		++width;
+	for (size_t i = 0; i < lines.size(); ++i)
+	{
+		char pre[32];
+		std::snprintf(pre, sizeof(pre), "%*zu. ", width, i + 1);
+		lines[i] = pre + lines[i];
+	}
+	return joinLines(lines, trailingNl);
 }
 
 // ── Case ────────────────────────────────────────────────────────────────

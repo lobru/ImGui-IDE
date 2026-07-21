@@ -243,9 +243,13 @@ class Editor : public PluginHost {
 	// draws them stacked over the main viewport.
 	// action: 0 = clicking writes the text to the reply outbox (feedback bridge),
 	// 1 = clicking opens the Update dialog. Toasts are click-to-act + click-to-dismiss.
-	struct Toast { std::string text; double expiry; ImU32 accent; int action = 0; };
+	// action: 0/2/3 plain (click+X dismiss), 1 open updater, 4 open `file`
+	// (falls back to lastScreenshotPath), 5 reply-to-Claude (ONLY for toasts
+	// carrying a genuine Claude-originated message).
+	struct Toast { std::string text; double expiry; ImU32 accent; int action = 0; std::string file; };
 	std::vector<Toast> toasts;
-	void pushToast(const std::string& text, ImU32 accent, int action = 0);
+	void pushToast(const std::string& text, ImU32 accent, int action = 0,
+	               const std::string& file = {});
 	void renderToasts();
 	void writeToastReply(const std::string& text);   // -> <configDir>/replies/* (bridge outbox)
 
@@ -678,6 +682,7 @@ private:
 	bool settingsVisible = false;
 	bool keybindCapturing = false;   // Settings keybind capture is listening — block app shortcuts
 	bool settingsFocusRequest = false;   // un-collapse + focus the settings window next frame
+	int  settingsFocusLinger = 0;        // frames left to keep forcing focus (beats focus-stealers)
 	// Middle-mouse pan/scroll for non-editor windows (nav tree, settings). Mirrors
 	// the editor widget's pan using the public scroll API; tracks its own per-frame
 	// delta so it never contends with the editor's global drag-delta reset.

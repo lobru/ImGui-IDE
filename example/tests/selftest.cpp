@@ -683,6 +683,25 @@ int main(int argc, char** argv)
 		CHECK(encl("Foo", 1) == "ns", "type Foo enclosed by its namespace ns");
 	}
 
+	// ── UE/Windows export macros stripped from C++ parses ──
+	{
+		std::string src = "class CALC_API AGameMode : public AGameModeBase {\npublic:\n  int Health;\n};\n";
+		std::string stripped = ts::stripApiMacros(src);
+		CHECK(stripped.size() == src.size(), "stripApiMacros preserves length (offsets stay valid)");
+		CHECK(stripped.find("CALC_API") == std::string::npos, "stripApiMacros blanks the export macro");
+		CHECK(stripped.find("AGameMode") != std::string::npos, "stripApiMacros keeps the class name");
+		// Non-macro identifiers survive: lowercase, _API mid-word, extra suffix.
+		std::string keep = "int my_api = 0; struct NOT_API_THING x; MY_APIS y; MyApi z;";
+		CHECK(ts::stripApiMacros(keep) == keep, "stripApiMacros leaves non-matching identifiers alone");
+		auto syms = ts::extractSymbols(ts::Lang::Cpp, src);
+		bool fake = false, real = false;
+		for (auto& s : syms) {
+			if (s.name == "CALC_API")  fake = true;
+			if (s.name == "AGameMode") real = true;
+		}
+		CHECK(real && !fake, "class FOO_API Name indexes Name, not the macro");
+	}
+
 	// ── Tree-sitter C# symbol extraction ──
 	{
 		std::string cs =
@@ -2112,6 +2131,27 @@ int main(int argc, char** argv)
 			"tt: xml -> json (attributes @-prefixed, repeated tags become arrays)");
 		xmlToJson("no xml here", err);
 		CHECK(!err.empty(), "tt: invalid xml reports an error");
+
+		CHECK(uniqueLines("a\nb\na\nc\nb\n") == "a\nb\nc\n", "tt: unique lines keeps first occurrence");
+		CHECK(uniqueLines("x\ny") == "x\ny", "tt: unique lines preserves missing trailing newline");
+		CHECK(numberLines("a\nb\nc") == "1. a\n2. b\n3. c", "tt: number lines 1-based");
+		{
+			// 12 lines -> two-digit width, padded so numbers align.
+			std::string twelve = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\n";
+			std::string numbered = numberLines(twelve);
+			CHECK(numbered.rfind(" 1. a", 0) == 0 && numbered.find("12. l\n") != std::string::npos,
+				"tt: number lines pads to align at 10+");
+		}
+		{
+			// Torture: 50k CRLF lines sorts without hanging and stays stable.
+			std::string big;
+			big.reserve(50000 * 8);
+			for (int i = 0; i < 50000; ++i)
+				big += "line " + std::to_string(50000 - i) + "\r\n";
+			std::string sorted = sortLines(big, true, true);
+			CHECK(sorted.rfind("line 1\n", 0) == 0 && sorted.find("line 50000\n") != std::string::npos,
+				"tt: 50k-line CRLF numeric sort completes");
+		}
 	}
 
 	// ── Debug adapter type inference (project-adapter command lines) ─────────

@@ -27,6 +27,12 @@ std::string xmlToJson(const std::string& in, std::string& err);
 // (lines without one sort after, alphabetically). Preserves the presence or
 // absence of a trailing newline.
 std::string sortLines(const std::string& in, bool numeric, bool ascending);
+// Remove duplicate lines, keeping each line's FIRST occurrence in place
+// (no sorting). Preserves the trailing-newline state.
+std::string uniqueLines(const std::string& in);
+// Prefix every line with its 1-based number ("1. foo"). Width-padded so the
+// numbers align. Preserves the trailing-newline state.
+std::string numberLines(const std::string& in);
 
 // ── Case ────────────────────────────────────────────────────────────────
 enum class Case { Upper, Lower, Title, Camel, Snake };
