@@ -501,6 +501,9 @@ public:
 
 	// setup context menu callbacks (these are called when a user right clicks line numbers or somewhere in the text)
 	// the editor sets up the popup menus, the callback has to populate them
+	// Left-click on the line-number gutter. Return true to CONSUME the click
+	// (no line selection) — e.g. clicking a breakpoint marker removes it.
+	inline void SetLineNumberClickCallback(std::function<bool(int line)> callback) { lineNumberClickCallback = callback; }
 	inline void SetLineNumberContextMenuCallback(std::function<void(int line)> callback) { lineNumberContextMenuCallback = callback; }
 	inline void ClearLineNumberContextMenuCallback() { SetLineNumberContextMenuCallback(nullptr); }
 	inline bool HasLineNumberContextMenuCallback() const { return lineNumberContextMenuCallback != nullptr; }
@@ -1824,6 +1827,7 @@ protected:
 	std::function<void(Decorator&)> decoratorCallback;
 
 	std::function<void(int line)> lineNumberContextMenuCallback;
+	std::function<bool(int line)> lineNumberClickCallback;
 	std::function<void(int line, int column)> textContextMenuCallback;
 
 

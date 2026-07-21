@@ -2666,26 +2666,35 @@ void TextEditor::handleMouseInteractions()
 
 				if (overLineNumbers)
 				{
-					auto start = Coordinate(cursorCoordinate.line, 0);
-					auto end = document.getDown(start);
-
-					if (extendCursor)
+					// Give the host first refusal — clicking a gutter marker
+					// (breakpoint) acts on it instead of selecting the line.
+					if (lineNumberClickCallback && lineNumberClickCallback(cursorCoordinate.line))
 					{
-						auto& cursor = cursors.getCurrent();
-						cursor.update(cursor.getInteractiveEnd() < cursor.getInteractiveStart() ? start : end);
-						autocomplete.cancel();
-					}
-					else if (addCursor)
-					{
-						cursors.addCursor(start, end);
-						autocomplete.cancel();
+						selectingText = false; // consumed — no line-select drag
 					}
 					else
 					{
-						cursors.setCursor(start, end);
-					}
+						auto start = Coordinate(cursorCoordinate.line, 0);
+						auto end = document.getDown(start);
 
-					makeCursorVisible();
+						if (extendCursor)
+						{
+							auto& cursor = cursors.getCurrent();
+							cursor.update(cursor.getInteractiveEnd() < cursor.getInteractiveStart() ? start : end);
+							autocomplete.cancel();
+						}
+						else if (addCursor)
+						{
+							cursors.addCursor(start, end);
+							autocomplete.cancel();
+						}
+						else
+						{
+							cursors.setCursor(start, end);
+						}
+
+						makeCursorVisible();
+					}
 				}
 				else if (overText)
 				{

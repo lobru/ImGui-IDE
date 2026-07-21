@@ -250,6 +250,24 @@ void DebuggerPlugin::toggleBreakpointAtCursor(PluginHost &host)
         sendBreakpointsFor(canon);
 }
 
+// Clicking an EXISTING breakpoint marker in the gutter removes it (VS-style).
+// Clicks on lines without a breakpoint are not consumed — normal line select.
+bool DebuggerPlugin::onGutterClick(PluginHost &host, const PluginDocInfo &doc, int line0)
+{
+    if (doc.filename.empty() || doc.filename == "untitled")
+        return false;
+    std::string canon = canonPath(doc.filename);
+    auto it = breakpoints.find(canon);
+    if (it == breakpoints.end() || !it->second.erase(line0))
+        return false;
+    if (it->second.empty())
+        breakpoints.erase(it);
+    host.hostRefreshMarkers();
+    if (sessionActive)
+        sendBreakpointsFor(canon);
+    return true;
+}
+
 void DebuggerPlugin::contributeMarkers(PluginHost &, const PluginDocInfo &doc,
                                        const std::function<void(int, unsigned, unsigned,
                                                                 const std::string &, const std::string &)> &add)
@@ -576,10 +594,21 @@ void DebuggerPlugin::contributeKeybinds(PluginHost &host, std::vector<PluginKeyb
     PluginHost *h = &host;
     // Conditional emission is the precedence mechanism: only bind chords while
     // they mean something, so the core's own F5=Run / F11=Focus win otherwise.
+    // Breakpoints only exist for file types some adapter can actually debug —
+    // no F9 in a .md or .txt.
     std::string active = host.hostActiveFilename();
     if (!active.empty() && active != "untitled")
-        out.push_back({"debugger.breakpoint", "Toggle breakpoint", "F9",
-                       [this, h] { toggleBreakpointAtCursor(*h); }, {}});
+    {
+        auto ext = std::filesystem::path(active).extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return (char) std::tolower(c); });
+        bool debuggable = isNativeDebugExt(ext) || ext == ".py" || ext == ".pyw" ||
+                          ext == ".cs" || ext == ".fs" || ext == ".vb" ||
+                          adapterOverrides.count(ext) != 0;
+        if (debuggable)
+            out.push_back({"debugger.breakpoint", "Toggle breakpoint", "F9",
+                           [this, h] { toggleBreakpointAtCursor(*h); }, {}});
+    }
     if (sessionActive)
         out.push_back({"debugger.stop", "Stop debugging", "Shift+F5",
                        [this, h] { stopSession(*h); }, {}});

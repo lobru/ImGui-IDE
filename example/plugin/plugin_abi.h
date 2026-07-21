@@ -41,7 +41,9 @@ class EditorPlugin;
 //  5: PluginHost gained hostSetActiveText (whole-document undoable replace);
 //     EditorPlugin gained topLevelMenuVisible (hide a top-level menu when its
 //     project type doesn't apply) (2026-07-21, appended).
-#define IMGUIIDE_PLUGIN_ABI_VERSION 5u
+//  6: EditorPlugin gained onGutterClick (line-number click — breakpoint
+//     remove-on-click) (2026-07-21, appended).
+#define IMGUIIDE_PLUGIN_ABI_VERSION 6u
 
 // Exact export names the loader resolves. Keep in sync with plugin_dll_main.cpp.
 #define IMGUIIDE_PLUGIN_ABI_VERSION_SYMBOL "imguiide_plugin_abi_version"

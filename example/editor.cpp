@@ -7072,6 +7072,80 @@ void Editor::renderMarkdownPreview()
             codeTag.clear();
         };
 
+        // ── GitHub-style pipe tables ──────────────────────────────────────
+        // Rows buffer until the run ends; a valid table needs a header row +
+        // a separator row (---|:--:|...). Invalid runs fall back to plain
+        // inline rendering so a stray '|' never eats text.
+        std::vector<std::string> tableRows;
+        int tableIdx = 0;
+        auto isSeparatorRow = [](const std::string &r) {
+            bool dash = false;
+            for (char c : r)
+            {
+                if (c == '-') dash = true;
+                else if (c != '|' && c != ':' && c != ' ' && c != '\t')
+                    return false;
+            }
+            return dash;
+        };
+        auto splitCells = [](const std::string &r) {
+            std::vector<std::string> cells;
+            std::string body = r;
+            if (!body.empty() && body.front() == '|') body.erase(body.begin());
+            if (!body.empty() && body.back() == '|') body.pop_back();
+            std::string cur;
+            for (char c : body)
+            {
+                if (c == '|') { cells.push_back(cur); cur.clear(); }
+                else cur += c;
+            }
+            cells.push_back(cur);
+            for (auto &c : cells)
+            {
+                size_t s = c.find_first_not_of(" \t"), e = c.find_last_not_of(" \t");
+                c = s == std::string::npos ? std::string() : c.substr(s, e - s + 1);
+            }
+            return cells;
+        };
+        auto flushTable = [&]() {
+            if (tableRows.empty())
+                return;
+            bool valid = tableRows.size() >= 2 && isSeparatorRow(tableRows[1]);
+            if (!valid)
+            {
+                for (auto &r : tableRows)
+                    renderMarkdownInline(r, avail);
+                tableRows.clear();
+                return;
+            }
+            auto header = splitCells(tableRows[0]);
+            int cols = (int) header.size();
+            char tid[32];
+            std::snprintf(tid, sizeof(tid), "##mdtable%d", tableIdx++);
+            if (cols > 0 &&
+                ImGui::BeginTable(tid, cols,
+                                  ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                      ImGuiTableFlags_SizingStretchProp))
+            {
+                for (auto &hcell : header)
+                    ImGui::TableSetupColumn(hcell.c_str());
+                ImGui::TableHeadersRow();
+                for (size_t r = 2; r < tableRows.size(); ++r)
+                {
+                    auto cells = splitCells(tableRows[r]);
+                    ImGui::TableNextRow();
+                    for (int c = 0; c < cols; ++c)
+                    {
+                        ImGui::TableSetColumnIndex(c);
+                        if (c < (int) cells.size())
+                            renderMarkdownInline(cells[c], ImGui::GetContentRegionAvail().x);
+                    }
+                }
+                ImGui::EndTable();
+            }
+            tableRows.clear();
+        };
+
         while (std::getline(ss, line))
         {
             if (!line.empty() && line.back() == '\r')
@@ -7082,6 +7156,7 @@ void Editor::renderMarkdownPreview()
             // fenced code block toggle (info string after the fence names the language)
             if (line.rfind("```", 0) == 0 || line.rfind("~~~", 0) == 0)
             {
+                flushTable();
                 if (!inCode)
                 {
                     codeTag = line.substr(3);
@@ -7108,10 +7183,22 @@ void Editor::renderMarkdownPreview()
             }
             if (a == std::string::npos)
             {
+                flushTable();
                 ImGui::Spacing();
                 continue;
             } // blank line
             std::string body = line.substr(a);
+
+            // Pipe-table rows: accumulate while the run continues.
+            bool rowLike = body.find('|') != std::string::npos &&
+                           (body.front() == '|' || !tableRows.empty() ||
+                            std::count(body.begin(), body.end(), '|') >= 2);
+            if (rowLike)
+            {
+                tableRows.push_back(body);
+                continue;
+            }
+            flushTable();
 
             if (body == "---" || body == "***" || body == "___")
             {
@@ -7158,6 +7245,7 @@ void Editor::renderMarkdownPreview()
             }
             renderMarkdownInline(body, avail);
         }
+        flushTable(); // table run ending at EOF still renders
         if (inCode)
             emitCodeBlock(); // unterminated fence at EOF still renders
         middleMousePanScroll(9); // markdown preview
@@ -14928,6 +15016,19 @@ void Editor::configureTabAutocomplete(TabDocument &t)
         // ✎ — U+270E, present in DejaVu (the � emoji is not; it rendered as tofu).
         if (ImGui::MenuItem("\xe2\x9c\x8e Reply to Claude about this line"))
             requestReply(tptr->filename, line, tptr->filename + ":" + std::to_string(line + 1));
+    });
+    // Left-click on a gutter marker → let plugins act on it (the debugger
+    // removes a breakpoint). Consuming plugins suppress the line selection.
+    t.editor.SetLineNumberClickCallback([this, tptr](int line) -> bool {
+        PluginDocInfo di;
+        di.filename = tptr->filename;
+        auto pext = std::filesystem::path(tptr->filename).extension().string();
+        std::transform(pext.begin(), pext.end(), pext.begin(),
+                       [](unsigned char c) { return (char) std::tolower(c); });
+        di.extLower = pext;
+        if (auto *lang = tptr->editor.GetLanguage())
+            di.languageName = lang->name;
+        return pluginRegistry.gutterClick(*this, di, line);
     });
     TextEditor::AutoCompleteConfig config;
     config.callback = [this, tptr](TextEditor::AutoCompleteState &state) {

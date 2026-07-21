@@ -41,6 +41,8 @@ public:
     // Lives as a "Debug" submenu inside Tools (menu-bar declutter).
     void onMenu(PluginHost &host, PluginMenu which) override;
     void contributeKeybinds(PluginHost &host, std::vector<PluginKeybind> &out) override;
+    // Clicking an existing breakpoint marker in the gutter removes it.
+    bool onGutterClick(PluginHost &host, const PluginDocInfo &doc, int line0) override;
     void contributeMarkers(PluginHost &host, const PluginDocInfo &doc,
                            const std::function<void(int, unsigned, unsigned,
                                                     const std::string &, const std::string &)> &add) override;

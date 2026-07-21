@@ -265,6 +265,16 @@ public:
     // non-Unreal project) instead of showing a disabled placeholder.
     virtual bool topLevelMenuVisible(PluginHost &) { return true; }
 
+    // ── v6 additions ───────────────────────────────────────────────────────
+    // Left-click on a document's line-number gutter. Return true to consume
+    // the click (the editor skips its line selection) — the debugger removes
+    // a breakpoint marker this way. line0 is 0-based.
+    virtual bool onGutterClick(PluginHost &, const PluginDocInfo &, int line0)
+    {
+        (void) line0;
+        return false;
+    }
+
 protected:
     bool enabledState = true; // backs enabled()/setEnabled(); persisted by the registry
 };

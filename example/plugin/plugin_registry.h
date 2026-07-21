@@ -101,6 +101,15 @@ public:
         }
     }
 
+    // Line-number gutter click — first enabled plugin to consume it wins.
+    bool gutterClick(PluginHost &host, const PluginDocInfo &doc, int line0)
+    {
+        for (auto &p : plugins)
+            if (p->enabled() && p->onGutterClick(host, doc, line0))
+                return true;
+        return false;
+    }
+
     // gather autocomplete words
     void autocomplete(PluginHost &host, const PluginDocInfo &doc,
                       const std::function<void(const std::string &)> &addWord)
