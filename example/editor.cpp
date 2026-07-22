@@ -6494,11 +6494,39 @@ void Editor::renderSymbolsPanel()
         for (auto &kv : idx->fileSymbols)
             symbolsFiles.push_back(kv.first);
         std::sort(symbolsFiles.begin(), symbolsFiles.end());
-        for (auto &kv : idx->tsDefs)
-            for (auto &d : kv.second)
-                symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind, {}});
+        // Build rows, DEDUPED by (name, kind, file, line) — a symbol re-indexed
+        // through multiple include paths otherwise appeared several times.
+        {
+            std::unordered_set<std::string> seenRow;
+            for (auto &kv : idx->tsDefs)
+                for (auto &d : kv.second)
+                {
+                    std::string key = kv.first + "\x1f" + std::to_string((int) d.kind) + "\x1f" +
+                                      d.file + "\x1f" + std::to_string(d.line);
+                    if (seenRow.insert(key).second)
+                        symbolsProjectRows.push_back({kv.first, d.file, d.line, d.kind, {}, false, {}});
+                }
+        }
+        // Enrich each row with its enclosing scope (namespace/class) from the
+        // per-file symbol lists — line-keyed lookup. Powers namespace-qualified
+        // labels + grouping in the Types view.
+        for (auto &r : symbolsProjectRows)
+        {
+            auto fit = idx->fileSymbols.find(r.file);
+            if (fit == idx->fileSymbols.end())
+                continue;
+            for (const auto &s : fit->second)
+                if (s.line == r.line && s.name == r.name && !s.enclosingType.empty())
+                {
+                    r.scope = s.enclosingType;
+                    break;
+                }
+        }
         std::sort(symbolsProjectRows.begin(), symbolsProjectRows.end(),
-                  [](const SymRow &a, const SymRow &b) { return a.name < b.name; });
+                  [](const SymRow &a, const SymRow &b) {
+                      if (a.scope != b.scope) return a.scope < b.scope;
+                      return a.name < b.name;
+                  });
         // Lowercase names once per gen (filter is case-insensitive) and mark rows
         // living under an extra source root (engine trees etc.) as external.
         std::vector<std::string> extRoots;
@@ -6626,6 +6654,10 @@ void Editor::renderSymbolsPanel()
                 std::string hdr = std::string(grp.kindName) + " (" + std::to_string(grp.rows.size()) + ")";
                 if (ImGui::TreeNodeEx(hdr.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth))
                 {
+                    // Rows are pre-sorted by (scope, name); emit a dim scope
+                    // sub-header when it changes so entries cluster by namespace
+                    // / enclosing type.
+                    const std::string *lastScope = nullptr;
                     int shown = 0;
                     for (int ri : grp.rows)
                     {
@@ -6635,11 +6667,24 @@ void Editor::renderSymbolsPanel()
                             break;
                         }
                         const auto &row = symbolsProjectRows[(size_t) ri];
+                        if (!row.scope.empty() && (!lastScope || *lastScope != row.scope))
+                        {
+                            lastScope = &row.scope;
+                            ImGui::TextDisabled("  %s", row.scope.c_str());
+                        }
+                        else if (row.scope.empty() && lastScope)
+                        {
+                            lastScope = nullptr;
+                            ImGui::TextDisabled("  (global)");
+                        }
                         ImGui::PushID(ri);
-                        if (ImGui::Selectable(row.name.c_str()))
+                        std::string lbl = row.scope.empty() ? row.name : ("    " + row.name);
+                        if (ImGui::Selectable(lbl.c_str()))
                             projectJump(row.file, row.line);
                         if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("%s:%d", row.file.c_str(), row.line + 1);
+                            ImGui::SetTooltip("%s%s:%d",
+                                              row.scope.empty() ? "" : (row.scope + "::").c_str(),
+                                              row.file.c_str(), row.line + 1);
                         ImGui::PopID();
                     }
                     ImGui::TreePop();
