@@ -3852,6 +3852,41 @@ void TextEditor::handleCharacter(ImWchar character)
 		completePairCloser = 0;
 	}
 
+	// ── Smart pairing (single-cursor, no selection) ──────────────────────────
+	// Two anti-doubling rules keyed off the glyphs adjacent to the caret.
+	if (isPaired && !cursors.anyHasSelection())
+	{
+		auto pe = cursors.getMain().getSelectionEnd();
+		auto glyphAt = [&](Coordinate c) -> char {
+			if (c.column < 0 || c == document.getEndOfLine(c))
+				return 0;
+			std::string s = document.getSectionText(c, document.getRight(c));
+			return s.empty() ? 0 : s[0];
+		};
+		char rightCh = glyphAt(pe);
+		char leftCh = pe.column > 0 ? glyphAt(document.getLeft(pe)) : 0;
+
+		// Rule A — type over an existing closer instead of inserting a new one:
+		// caret sitting just before a matching ")"/"]"/"}"/quote skips forward.
+		if (CodePoint::isPairCloser(character) && (ImWchar) rightCh == character &&
+			(character == closer || CodePoint::isBracketCloser(character)))
+		{
+			moveRight(false, false);
+			return;
+		}
+
+		// Rule B — don't auto-close a quote that is really an apostrophe or the
+		// end of an existing string: suppress the pair when the caret abuts a
+		// word char (don't, it's, foo") so we never leave a stray quote behind.
+		if (character == CodePoint::singleQuote || character == CodePoint::doubleQuote)
+		{
+			bool leftWord = leftCh && (CodePoint::isWord((ImWchar) leftCh) || (ImWchar) leftCh == character);
+			bool rightWord = rightCh && CodePoint::isWord((ImWchar) rightCh);
+			if (leftWord || rightWord)
+				isPaired = false;
+		}
+	}
+
 	if (cursors.anyHasSelection() && isPaired)
 	{
 		// encapsulate the current selections with the requested pairs

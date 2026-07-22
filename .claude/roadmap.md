@@ -79,8 +79,11 @@ that is still genuinely outstanding.
       the Claude toast flow fire — verify end-to-end.)
 
 ### Editor behaviors
-- [ ] Smarter quote/brace autocomplete (no doubled quotes); "fix broken pairs"
+- [~] Smarter quote/brace autocomplete (no doubled quotes); "fix broken pairs"
       pass on format; format-on-save option; format-selection-only.
+      (handleCharacter: type-over existing closer + suppress quote-pairing when
+      caret abuts a word char, so apostrophes/string-closers don't double;
+      remaining: fix-broken-pairs on format, format-on-save, format-selection)
 - [x] Optional horizontal guide lines for text (customizable alpha).
       (SetHorizontalGuides + "Horizontal guides (editor)" pref)
 - [x] Fold system: language-aware block kinds (function/class/namespace/struct)
