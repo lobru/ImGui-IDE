@@ -141,10 +141,10 @@ that is still genuinely outstanding.
       pulled from source is EDITABLE and writes back (edit comment in hover
       tooltip, param changes sync header/source). Possibly a plugin callback
       API for programmatic file/text edits.
-      (first slice: editor right-click "Rename in File…" → whole-word textual
-      replace across the active doc, undo-safe modal. Remaining: cross-file
-      rename w/ affected-files list, symbols-view/palette entry points,
-      editable hover data, plugin edit API.)
+      (first slice: editor right-click "Rename in File…" + F2 keybind + command
+      palette → whole-word textual replace across the active doc, undo-safe
+      modal. Remaining: cross-file rename w/ affected-files list, symbols-view
+      entry point, editable hover data, plugin edit API.)
 - [~] Structured-data plugin: view/edit .db (sqlite), csv, excel.
       (csvtable plugin: CSV/TSV view+edit with write-back; remaining: sqlite,
       xlsx)

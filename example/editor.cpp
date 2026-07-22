@@ -9539,6 +9539,7 @@ void Editor::renderSettings()
                     {"code.hSrc", "Switch Header / Source", "Alt+O", "Code", true, nullptr},
                     {"code.format", "Format Document", "Alt+Shift+F", "Code", true, nullptr},
                     {"code.formatSelection", "Format Selection", "Ctrl+K Ctrl+F", "Code", true, nullptr},
+                    {"code.rename", "Rename in File", "F2", "Code", true, nullptr},
                     {"nav.back", "Navigate back", "Ctrl+Alt+LeftArrow", "Code", true, nullptr},
                     {"nav.forward", "Navigate forward", "Ctrl+Alt+RightArrow", "Code", true, nullptr},
 
@@ -13822,6 +13823,17 @@ void Editor::renderMenuBar()
         else if (keybindPressed("code.formatSelection", "Ctrl+K Ctrl+F"))
         {
             formatActiveDocument(/*quiet*/ false, /*selectionOnly*/ true);
+        }
+        else if (keybindPressed("code.rename", "F2"))
+        {
+            if (!tabs.empty() && !doc().editor.IsReadOnlyEnabled())
+            {
+                int l = 0, c = 0;
+                doc().editor.GetCursor(l, c, 0);
+                std::string w = doc().editor.GetWordAt(l, c);
+                if (!w.empty())
+                    beginRenameInFile(w);
+            }
         }
         else if (keybindPressed("nav.back", "Ctrl+Alt+LeftArrow"))
         {
