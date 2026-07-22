@@ -7521,10 +7521,26 @@ void Editor::renderMarkdownPreview()
             tableRows.clear();
         };
 
+        std::vector<std::string> mdLines;
         while (std::getline(ss, line))
         {
             if (!line.empty() && line.back() == '\r')
                 line.pop_back();
+            mdLines.push_back(line);
+        }
+        // A setext underline is a run of only '=' (h1) or only '-' (h2).
+        auto setextLevel = [](const std::string &s) -> int {
+            size_t a = s.find_first_not_of(" \t");
+            if (a == std::string::npos) return 0;
+            char c = s[a];
+            if (c != '=' && c != '-') return 0;
+            for (size_t i = a; i < s.size(); ++i)
+                if (s[i] != c && s[i] != ' ' && s[i] != '\t') return 0;
+            return c == '=' ? 1 : 2;
+        };
+        for (size_t mdi = 0; mdi < mdLines.size(); ++mdi)
+        {
+            line = mdLines[mdi];
             std::string trimmed = line;
             size_t a = trimmed.find_first_not_of(" \t");
 
@@ -7575,6 +7591,25 @@ void Editor::renderMarkdownPreview()
             }
             flushTable();
 
+            // Setext heading: a plain line underlined by === or ---. The
+            // underline is consumed here; the heading text is the line above.
+            if (mdi + 1 < mdLines.size())
+            {
+                int sl = setextLevel(mdLines[mdi + 1]);
+                bool plainAbove = body[0] != '#' && body[0] != '>' && body[0] != '|' &&
+                                  body != "---" && body != "***" && body != "___";
+                if (sl && plainAbove)
+                {
+                    float scale = sl == 1 ? 1.7f : 1.4f;
+                    ImGui::PushFont(nullptr, ImGui::GetFontSize() * scale);
+                    renderMarkdownInline(body, avail);
+                    ImGui::PopFont();
+                    ImGui::Separator();
+                    ++mdi; // skip the underline row
+                    continue;
+                }
+            }
+
             if (body == "---" || body == "***" || body == "___")
             {
                 ImGui::Separator();
@@ -7598,14 +7633,23 @@ void Editor::renderMarkdownPreview()
             }
             if (body[0] == '>')
             {
-                std::string q = body.substr(1);
-                if (!q.empty() && q[0] == ' ')
+                // Count nesting depth: each leading '>' (optionally space-separated)
+                // adds a level. ">> x" and "> > x" both nest twice.
+                std::string q = body;
+                int depth = 0;
+                while (!q.empty() && q[0] == '>')
+                {
+                    ++depth;
                     q = q.substr(1);
-                ImGui::Indent();
+                    if (!q.empty() && q[0] == ' ')
+                        q = q.substr(1);
+                }
+                float ind = depth * ImGui::GetStyle().IndentSpacing;
+                ImGui::Indent(ind);
                 ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(150, 150, 150, 255));
-                renderMarkdownInline(q, avail - ImGui::GetStyle().IndentSpacing);
+                renderMarkdownInline(q, avail - ind);
                 ImGui::PopStyleColor();
-                ImGui::Unindent();
+                ImGui::Unindent(ind);
                 continue;
             }
             // Ordered list: "1. text" / "12) text". Show the marker, keep the rest.
