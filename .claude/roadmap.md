@@ -141,11 +141,11 @@ that is still genuinely outstanding.
 - [x] Macros/snippets plugin (Tools + palette) with easy add API; generic
       codegen helper tools. (snippets plugin: JSON snippets from
       <config>/snippets.json)
-- [~] Markdown preview: GitHub-parity (tables/column API etc. — compare
+- [x] Markdown preview: GitHub-parity (tables/column API etc. — compare
       DevToys); inline code blocks collapsible; watch perf.
-      (tables/strike/tasklists/nested+ordered lists done; setext headings +
-      nested blockquotes 7a98b95; collapsible code blocks w/ lang+line-count
-      header; remaining: footnotes)
+      (tables/strike/tasklists/nested+ordered lists; setext headings + nested
+      blockquotes 7a98b95; collapsible code blocks 92957b5; footnotes
+      [^id] refs + definitions section)
 - [x] Build/run output view: syntax highlighting + inline links to file:line.
       (parseOutputLink/openOutputLink + severity tint, clipper-rendered)
 - [ ] cppgen: create + link classes/namespaces; class viewer panel (VS-like,

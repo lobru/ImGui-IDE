@@ -7539,6 +7539,9 @@ void Editor::renderMarkdownPreview()
             codeTag.clear();
         };
 
+        // Footnote definitions ("[^id]: text"), collected and rendered at the end.
+        std::vector<std::pair<std::string, std::string>> footnotes;
+
         // ── GitHub-style pipe tables ──────────────────────────────────────
         // Rows buffer until the run ends; a valid table needs a header row +
         // a separator row (---|:--:|...). Invalid runs fall back to plain
@@ -7672,6 +7675,45 @@ void Editor::renderMarkdownPreview()
             } // blank line
             std::string body = line.substr(a);
 
+            // Footnote definition: "[^id]: text" — collected, not rendered inline.
+            if (body.size() > 3 && body[0] == '[' && body[1] == '^')
+            {
+                size_t close = body.find(']');
+                if (close != std::string::npos && close > 2 &&
+                    close + 1 < body.size() && body[close + 1] == ':')
+                {
+                    std::string id = body.substr(2, close - 2);
+                    std::string txt = body.substr(close + 2);
+                    size_t s = txt.find_first_not_of(" \t");
+                    footnotes.emplace_back(id, s == std::string::npos ? std::string() : txt.substr(s));
+                    continue;
+                }
+            }
+            // Inline footnote references: "[^id]" -> `id` (reuses inline-code
+            // styling so the marker stands out without a real superscript).
+            if (body.find("[^") != std::string::npos)
+            {
+                std::string res;
+                res.reserve(body.size());
+                for (size_t i = 0; i < body.size();)
+                {
+                    if (body[i] == '[' && i + 2 < body.size() && body[i + 1] == '^')
+                    {
+                        size_t c = body.find(']', i + 2);
+                        if (c != std::string::npos)
+                        {
+                            res += '`';
+                            res += body.substr(i + 2, c - (i + 2));
+                            res += '`';
+                            i = c + 1;
+                            continue;
+                        }
+                    }
+                    res += body[i++];
+                }
+                body.swap(res);
+            }
+
             // Pipe-table rows: accumulate while the run continues.
             bool rowLike = body.find('|') != std::string::npos &&
                            (body.front() == '|' || !tableRows.empty() ||
@@ -7797,6 +7839,13 @@ void Editor::renderMarkdownPreview()
         flushTable(); // table run ending at EOF still renders
         if (inCode)
             emitCodeBlock(); // unterminated fence at EOF still renders
+        if (!footnotes.empty())
+        {
+            ImGui::Spacing();
+            ImGui::SeparatorText("Footnotes");
+            for (auto &fn : footnotes)
+                renderMarkdownInline(fn.first + ". " + fn.second, avail);
+        }
         middleMousePanScroll(9); // markdown preview
     }
     ImGui::End();
