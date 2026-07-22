@@ -3468,6 +3468,13 @@ void Editor::renderNavigationPanel()
 
         navApplyRangeSelect(); // resolve a pending shift-click range now that order is known
         navSetAllOpen = -1;    // bulk open/close request consumed this frame
+        // Reveal is strictly one-shot: forcing ancestors open renders the target
+        // in the SAME frame, so if it wasn't hit above it isn't in this tree
+        // (filtered out, outside the root, code-only hidden). Dropping it here
+        // stops navRevealIsUnder() from lexically_normal()-ing every row on
+        // every later frame — that per-row path allocation is exactly what
+        // navCanonKey warns about and it cost ~10x frame time.
+        navRevealConsume();
 
         // Context-menu popup. BeginPopupContextItem above sets contextPath when
         // the user right-clicks a tree row; we open the popup here with that

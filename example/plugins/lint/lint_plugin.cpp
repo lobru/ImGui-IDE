@@ -57,12 +57,17 @@ void LintPlugin::onRegister(PluginHost &host)
 
 void LintPlugin::refresh(PluginHost &host)
 {
-    std::string fname = host.hostActiveFilename();
-    std::string text = host.hostActiveText();
-    std::string key = fname + "\x1f" + std::to_string(text.size());
+    // Memo key must be CHEAP: hostActiveText() serializes the whole document,
+    // so testing "did anything change?" with it costs a full copy every frame
+    // (this ran twice a frame — onFrame + contributeMarkers — and dropped a
+    // large file to single-digit fps). Key on filename + undo index instead and
+    // only pull the text on an actual change.
+    std::string key = host.hostActiveFilename() + "\x1f" +
+                      std::to_string(host.hostActiveDocVersion());
     if (key == cacheKey_)
         return;
     cacheKey_ = key;
+    std::string text = host.hostActiveText();
     findings_.clear();
     docLines_.clear();
 

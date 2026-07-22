@@ -1728,6 +1728,7 @@ int main(int argc, char** argv)
 			std::string hostActiveText() const override { return {}; }
 			std::string hostActiveSelection() const override { return {}; }
 			std::string hostActiveFilename() const override { return {}; }
+			int hostActiveDocVersion() const override { return 0; }
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
 			void hostSendToClaude(const std::string&) override {}
@@ -1910,6 +1911,7 @@ int main(int argc, char** argv)
 			std::string hostActiveText() const override { return {}; }
 			std::string hostActiveSelection() const override { return {}; }
 			std::string hostActiveFilename() const override { return {}; }
+			int hostActiveDocVersion() const override { return 0; }
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
 			void hostSendToClaude(const std::string&) override {}
@@ -1986,6 +1988,7 @@ int main(int argc, char** argv)
 			std::string hostActiveText() const override { return {}; }
 			std::string hostActiveSelection() const override { return {}; }
 			std::string hostActiveFilename() const override { return {}; }
+			int hostActiveDocVersion() const override { return 0; }
 			void hostToast(const std::string&) override {}
 			void hostError(const std::string&) override {}
 			void hostSendToClaude(const std::string&) override {}

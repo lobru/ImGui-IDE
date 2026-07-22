@@ -102,6 +102,11 @@ public:
     virtual std::string hostActiveText() const = 0;           // active doc's full text ("" if none)
     virtual std::string hostActiveSelection() const = 0;      // active doc's selection ("" if none)
     virtual std::string hostActiveFilename() const = 0;       // active doc's path ("" if none; "untitled" if unsaved)
+    // Cheap change token for the active doc (undo index). hostActiveText()
+    // SERIALIZES THE WHOLE DOCUMENT — never call it every frame just to test
+    // whether anything changed. Memoize on (hostActiveFilename, this) and only
+    // pull the text when the pair moves.
+    virtual int hostActiveDocVersion() const = 0;
 
     // feedback + running
     virtual void hostToast(const std::string &text) = 0;

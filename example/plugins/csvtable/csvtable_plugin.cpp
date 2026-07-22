@@ -119,12 +119,13 @@ void CsvTablePlugin::onFrame(PluginHost &host)
 
     // Reparse when the document (or its length) changed and there's no pending
     // local edit to write back.
-    std::string text = host.hostActiveText();
-    std::string key = fname + "\x1f" + std::to_string(text.size());
+    // Key on the cheap undo-index token — hostActiveText() copies the whole
+    // document, so it must not run every frame just to detect a change.
+    std::string key = fname + "\x1f" + std::to_string(host.hostActiveDocVersion());
     if (key != cacheKey_ && !dirty_)
     {
         cacheKey_ = key;
-        reparse(text);
+        reparse(host.hostActiveText());
     }
 
     ImGui::Text("%zu rows x %zu cols", grid_.empty() ? 0 : grid_.size() - 1,

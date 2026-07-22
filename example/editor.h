@@ -85,6 +85,7 @@ class Editor : public PluginHost {
 	void hostOpenLuaTab(const std::string &text) override { openLuaInNewTab(text); }
 	std::string hostActiveText() const override { return tabs.empty() ? std::string() : doc().editor.GetText(); }
 	std::string hostActiveFilename() const override { return tabs.empty() ? std::string() : doc().filename; }
+	int hostActiveDocVersion() const override { return tabs.empty() ? 0 : (int) doc().editor.GetUndoIndex(); }
 	std::string hostActiveSelection() const override {
 		if (tabs.empty() || !doc().editor.AnyCursorHasSelection()) return {};
 		return doc().editor.GetCurrentSelectionText();
