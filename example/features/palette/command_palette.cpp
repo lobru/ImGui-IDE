@@ -137,6 +137,8 @@ void Editor::buildPaletteActions()
         add("Code: Fold Level 2 (keep top-level open)", "", docSrc, [this] { doc().editor.FoldToLevel(2); });
         add("Code: Fold Level 3", "", docSrc, [this] { doc().editor.FoldToLevel(3); });
         add("Code: Fold Comments", "", docSrc, [this] { doc().editor.FoldComments(); });
+        add("Edit: Insert Line Below", "Ctrl+Enter", docSrc, [this] { doc().editor.InsertLineBelow(); });
+        add("Edit: Insert Line Above", "Ctrl+Shift+Enter", docSrc, [this] { doc().editor.InsertLineAbove(); });
     }
     add("View: Zoom In", "Ctrl+=", "Core", [this] { increaseFontSIze(); });
     add("View: Zoom Out", "Ctrl+-", "Core", [this] { decreaseFontSIze(); });

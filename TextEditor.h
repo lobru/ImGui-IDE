@@ -532,6 +532,22 @@ public:
 	inline void DeindentLines() { if (!readOnly) deindentLines(); }
 	inline void MoveUpLines() { if (!readOnly) moveUpLines(); }
 	inline void MoveDownLines() { if (!readOnly) moveDownLines(); }
+	// Insert a blank line below / above the main cursor's line and place the
+	// caret on it (VSCode Ctrl+Enter / Ctrl+Shift+Enter). Built on the public
+	// caret + replace primitives so it's a single undoable edit.
+	inline void InsertLineBelow() {
+		if (readOnly) return;
+		int line, col; GetMainCursor(line, col);
+		SetCursor(line, INT_MAX / 2);       // normalizeCoordinate clamps to EOL
+		ReplaceTextInCurrentCursor("\n");
+	}
+	inline void InsertLineAbove() {
+		if (readOnly) return;
+		int line, col; GetMainCursor(line, col);
+		SetCursor(line, 0);
+		ReplaceTextInCurrentCursor("\n");
+		SetCursor(line, 0);                 // caret onto the new blank line
+	}
 	inline void ToggleComments() { if (!readOnly && language) toggleComments(); }
 
 	inline void ToggleCommentsShift() { if (!readOnly && language) toggleCommentsShift(); }

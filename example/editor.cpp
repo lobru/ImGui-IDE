@@ -8852,6 +8852,8 @@ void Editor::renderSettings()
                     {"proj.build", "Build project", "F6", "Project", true, nullptr},
                     {"view.palette", "Command palette", "Ctrl+Shift+P", "View", true, nullptr},
                     {"view.screenshot", "Save screenshot", "Ctrl+Shift+4", "View", true, nullptr},
+                    {"edit.insertLineBelow", "Insert line below", "Ctrl+Enter", "Edit", true, nullptr},
+                    {"edit.insertLineAbove", "Insert line above", "Ctrl+Shift+Enter", "Edit", true, nullptr},
                 };
 
                 // Plugin-contributed binds join the catalogue under each plugin's
@@ -12302,6 +12304,14 @@ void Editor::renderMenuBar()
             {
                 e.MoveDownLines();
             }
+            if (ImGui::MenuItem("Insert Line Below", SHORTCUT "Enter"))
+            {
+                e.InsertLineBelow();
+            }
+            if (ImGui::MenuItem("Insert Line Above", SHORTCUT "Shift+Enter"))
+            {
+                e.InsertLineAbove();
+            }
             if (ImGui::MenuItem("Toggle Comments", " " SHORTCUT "/", nullptr, e.HasLanguage()))
             {
                 e.ToggleComments();
@@ -12894,6 +12904,16 @@ void Editor::renderMenuBar()
         else if (keybindPressed("view.screenshot", "Ctrl+Shift+4"))
         {
             requestScreenshot();
+        }
+        // Insert-line-above BEFORE below: the Shift chord is more specific and
+        // would otherwise be swallowed by the plain Ctrl+Enter match.
+        else if (!tabs.empty() && keybindPressed("edit.insertLineAbove", "Ctrl+Shift+Enter"))
+        {
+            doc().editor.InsertLineAbove();
+        }
+        else if (!tabs.empty() && keybindPressed("edit.insertLineBelow", "Ctrl+Enter"))
+        {
+            doc().editor.InsertLineBelow();
         }
         else if (keybindPressed("file.reopen", "Ctrl+Shift+T"))
         {
