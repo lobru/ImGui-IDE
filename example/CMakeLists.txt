@@ -139,10 +139,11 @@ option(IMGUIIDE_PLUGIN_CPPGEN "Build the C++ code generation plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_PDF "Build the in-app PDF viewer plugin (DLL, Windows)" ON)
 option(IMGUIIDE_PLUGIN_TEXTTOOLS "Build the text tools plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_DEBUGGER "Build the DAP debugger plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_SNIPPETS "Build the snippets/macros plugin (DLL)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS OR IMGUIIDE_PLUGIN_DEBUGGER)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS OR IMGUIIDE_PLUGIN_DEBUGGER OR IMGUIIDE_PLUGIN_SNIPPETS)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 if(IMGUIIDE_PLUGIN_DEBUGGER)
@@ -268,6 +269,15 @@ if(IMGUIIDE_PLUGIN_DEBUGGER)
 	target_include_directories(imguiide_debugger PRIVATE plugins/debugger)
 	target_link_libraries(imguiide_debugger PRIVATE dapclient dbgbridge)
 	target_compile_definitions(imguiide_debugger PRIVATE IMGUIIDE_PLUGIN_DEBUGGER=1)
+endif()
+
+if(IMGUIIDE_PLUGIN_SNIPPETS)
+	# User-defined snippets/macros loaded from <config>/snippets.json.
+	imguiide_add_plugin(imguiide_snippets createSnippetsPlugin
+		plugins/snippets/snippets_plugin.cpp)
+	target_include_directories(imguiide_snippets PRIVATE plugins/snippets)
+	target_link_libraries(imguiide_snippets PRIVATE nlohmann_json)
+	target_compile_definitions(imguiide_snippets PRIVATE IMGUIIDE_PLUGIN_SNIPPETS=1)
 endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only). The PDF
