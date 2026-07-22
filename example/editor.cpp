@@ -3496,6 +3496,17 @@ void Editor::renderNavigationPanel()
                     createEntry(true);
             }
 
+            // Header files: drop a project-relative #include into the active doc.
+            {
+                auto hext = std::filesystem::path(ctxPath).extension().string();
+                std::transform(hext.begin(), hext.end(), hext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                bool isHeader = hext == ".h" || hext == ".hpp" || hext == ".hxx" ||
+                                hext == ".hh" || hext == ".inl" || hext == ".cuh";
+                if (!isDir && isHeader &&
+                    ImGui::MenuItem("Insert #include in active document", nullptr, false, !tabs.empty()))
+                    insertIncludeIntoActiveDoc(includeStringForPath(ctxPath));
+            }
+
             // Shell/path actions — separated from the editor-open group above, since
             // "Open in Explorer" is a different meaning of "open" than "Open" (editor).
             ImGui::Separator();
@@ -5494,6 +5505,77 @@ const std::vector<std::filesystem::path> &Editor::buildIncludeRoots()
         }
     }
     return buildIncRootsCache_;
+}
+
+std::string Editor::includeStringForPath(const std::string &headerPath)
+{
+    std::filesystem::path hp = std::filesystem::path(headerPath).lexically_normal();
+    auto under = [](const std::filesystem::path &child, const std::filesystem::path &base,
+                    std::string &relOut) -> bool {
+        auto rel = child.lexically_relative(base);
+        if (rel.empty())
+            return false;
+        std::string s = rel.generic_string();
+        if (s == "." || s.rfind("../", 0) == 0 || s == "..")
+            return false;
+        relOut = s;
+        return true;
+    };
+    // Prefer the shortest relative path across all include roots.
+    std::string best;
+    for (const auto &r : buildIncludeRoots())
+    {
+        std::string rel;
+        if (under(hp, r.lexically_normal(), rel) && (best.empty() || rel.size() < best.size()))
+            best = rel;
+    }
+    if (best.empty() && !projectRoot.empty())
+        under(hp, projectRoot.lexically_normal(), best);
+    if (best.empty())
+        best = hp.filename().generic_string();
+    return "#include \"" + best + "\"";
+}
+
+void Editor::insertIncludeIntoActiveDoc(const std::string &incLine)
+{
+    if (tabs.empty())
+        return;
+    auto &t = doc();
+    std::string text = t.editor.GetText();
+    if (text.find(incLine) != std::string::npos)
+    {
+        pushToast("Already included: " + incLine, IM_COL32(200, 180, 90, 255));
+        return;
+    }
+    // Insertion offset = just past the last existing #include line; else top.
+    size_t off = 0, insertOff = 0;
+    bool found = false;
+    std::istringstream ss(text);
+    std::string ln;
+    while (std::getline(ss, ln))
+    {
+        size_t lineLen = ln.size() + 1; // GetText() uses LF line endings
+        size_t a = ln.find_first_not_of(" \t");
+        if (a != std::string::npos && ln.compare(a, 8, "#include") == 0)
+        {
+            insertOff = off + lineLen;
+            found = true;
+        }
+        off += lineLen;
+    }
+    if (!found)
+        insertOff = 0;
+    std::string out = text.substr(0, insertOff) + incLine + "\n" + text.substr(insertOff);
+
+    // Cursor line after insert: everything from the insert point down shifts
+    // by one line, so keep the caret on the same logical line it was on.
+    int l = 0, c = 0;
+    t.editor.GetCursor(l, c, 0);
+    int insertedLine = (int) std::count(text.begin(), text.begin() + insertOff, '\n');
+    t.editor.SelectAll();
+    t.editor.ReplaceTextInCurrentCursor(out); // one undoable transaction
+    t.editor.SetCursor(l + (l >= insertedLine ? 1 : 0), 0);
+    pushToast("Inserted " + incLine, IM_COL32(120, 200, 120, 255));
 }
 
 const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()

@@ -660,6 +660,12 @@ public:
 	bool         navRevealHit(const std::string& fileAbs) const;        // target == this file?
 	void         navRevealConsume() { navRevealTarget.clear(); }
 	std::string  navRevealTarget; // normalized path pending reveal (empty = none)
+	// Best project-relative #include line for a header (uses buildIncludeRoots,
+	// falling back to project-root-relative, then bare filename).
+	std::string  includeStringForPath(const std::string& headerPath);
+	// Insert an #include after the last existing #include of the active doc
+	// (undo-safe, deduped). No-op when there is no active document.
+	void         insertIncludeIntoActiveDoc(const std::string& incLine);
 	void         navDragSourceSet(const std::string& p) { navDragSource = p; }
 	void         navMoveOrCopy(const std::string& src,
 	                           const std::string& destDir, bool copy);
