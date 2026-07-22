@@ -12098,18 +12098,24 @@ void Editor::renderDocumentWindow(TabDocument &t)
         {
             t.editor.SelectAll();
         }
-        // Path helpers — only on whitespace right-click. If the user clicked
-        // on a word the word-aware items (Go to Definition, etc.) take priority.
-        if (word.empty() && t.filename != "untitled")
+        // Path helpers live in a submenu, so they no longer compete with the
+        // word-aware items for top-level space — and they're now reachable on
+        // ANY right-click (they used to appear only when you happened to click
+        // whitespace, which made them hard to find).
+        if (t.filename != "untitled")
         {
             ImGui::Separator();
-            if (ImGui::MenuItem("Open Containing Folder"))
+            if (ImGui::BeginMenu("File"))
             {
-                openContainingFolder();
-            }
-            if (ImGui::MenuItem("Copy File Path"))
-            {
-                ImGui::SetClipboardText(t.filename.c_str());
+                if (ImGui::MenuItem("Open Containing Folder"))
+                {
+                    openContainingFolder();
+                }
+                if (ImGui::MenuItem("Copy File Path"))
+                {
+                    ImGui::SetClipboardText(t.filename.c_str());
+                }
+                ImGui::EndMenu();
             }
             ImGui::Separator();
         }
@@ -12625,72 +12631,74 @@ void Editor::renderDocumentWindow(TabDocument &t)
                     ImGui::Separator();
             }
 
-            // Definition = where it's defined (bodies / .cpp). Declaration =
-            // where it's declared (prototypes / headers). Both project-wide,
-            // both handle namespaced/qualified names.
-            if (navigable && ImGui::MenuItem("Go to Definition"))
+            // Declaration vs definition only means something where headers
+            // exist (C/C++); other languages have a single definition site.
+            bool hasDecl = lang && (lang->name == "C" || lang->name == "C++");
+            // C# SDK symbols have no on-disk source (ref assemblies). For a
+            // fully namespace-qualified BCL type we can decompile the runtime
+            // assembly to real C# (ilspycmd); for anything else, fall back to
+            // the Microsoft Learn docs page. Only treat a symbol as a
+            // documented .NET/BCL type when it's namespace-qualified under a
+            // Microsoft-owned root — project types, NuGet packages
+            // (Newtonsoft.*, etc.) and linked projects have their own roots,
+            // and a symbol the project itself defines is never a BCL type.
+            bool bclRooted = false;
+            if (lang && lang->name == "C#" && !isKeyword && !seg.empty() && !navigable)
             {
-                goToDefinitionProjectWide(qualified, false);
+                if (auto dot = qualified.find('.'); dot != std::string::npos)
+                {
+                    std::string r = qualified.substr(0, dot);
+                    bclRooted = (r == "System" || r == "Microsoft" ||
+                                 r == "Windows" || r == "Internal" || r == "Mono");
+                }
             }
-            // In-file rename: whole-word textual replace across the active
-            // document (undo-safe). A first slice of full semantic refactor.
-            if (!isKeyword && !seg.empty() && !t.editor.IsReadOnlyEnabled() &&
-                ImGui::MenuItem("Rename in File\xe2\x80\xa6"))
+
+            // Navigation and symbol actions get their own submenus — the flat
+            // list ran to eight entries on a C# symbol and buried the common
+            // Copy/Cut/Paste items.
+            if ((navigable || bclRooted) && ImGui::BeginMenu("Go to"))
             {
-                beginRenameInFile(seg);
-            }
-            // Declaration vs definition only means something where
-            // headers exist (C/C++); other languages have a single
-            // definition site, so don't show it for them.
-            {
-                bool hasDecl = lang && (lang->name == "C" || lang->name == "C++");
-                if (navigable && hasDecl && ImGui::MenuItem("Go to Declaration"))
+                if (navigable && ImGui::MenuItem("Definition"))
+                {
+                    goToDefinitionProjectWide(qualified, false);
+                }
+                if (navigable && hasDecl && ImGui::MenuItem("Declaration"))
                 {
                     goToDefinitionProjectWide(qualified, true);
                 }
-                // C# SDK symbols have no on-disk source (ref assemblies).
-                // For a fully namespace-qualified BCL type we can decompile
-                // the runtime assembly to real C# (ilspycmd); for anything
-                // else, fall back to the Microsoft Learn docs page.
-                if (lang && lang->name == "C#" && !isKeyword && !seg.empty())
+                if (bclRooted)
                 {
-                    // Only treat a symbol as a documented .NET/BCL type when it's
-                    // namespace-qualified under a Microsoft-owned root. Project
-                    // types, NuGet packages (Newtonsoft.*, etc.) and linked
-                    // projects have their own roots, so the Decompile / Learn
-                    // options no longer appear for them (they're meaningless there).
-                    bool bclRooted = false;
-                    if (auto dot = qualified.find('.'); dot != std::string::npos)
-                    {
-                        std::string r = qualified.substr(0, dot);
-                        bclRooted = (r == "System" || r == "Microsoft" ||
-                                     r == "Windows" || r == "Internal" || r == "Mono");
-                    }
-                    // A symbol the project itself defines is never a BCL type.
-                    if (navigable)
-                        bclRooted = false;
-                    if (bclRooted)
-                    {
-                        if (ImGui::MenuItem("Go to Decompiled Source"))
-                            openCSharpDecompiled(qualified);
-                        if (ImGui::MenuItem("Look up in Microsoft Learn"))
-                            openCSharpLearn(qualified);
-                    }
+                    if (ImGui::MenuItem("Decompiled Source"))
+                        openCSharpDecompiled(qualified);
+                    if (ImGui::MenuItem("Microsoft Learn"))
+                        openCSharpLearn(qualified);
                 }
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Find References"))
+            if (ImGui::BeginMenu("Symbol"))
             {
-                findReferencesOf(t, word);
-            }
-            if (ImGui::MenuItem("Inspect Symbol"))
-            {
-                symInspectName = seg;
-                symInspectOpen = true;
-                symInspectFocus = true;
-            }
-            if (ImGui::MenuItem("Select All Occurrences (this file)"))
-            {
-                t.editor.SelectAllOccurrencesOf(word, true, true);
+                // In-file rename: whole-word textual replace across the active
+                // document (undo-safe). First slice of full semantic refactor.
+                if (!isKeyword && !seg.empty() && !t.editor.IsReadOnlyEnabled() &&
+                    ImGui::MenuItem("Rename in File\xe2\x80\xa6", "F2"))
+                {
+                    beginRenameInFile(seg);
+                }
+                if (ImGui::MenuItem("Find References"))
+                {
+                    findReferencesOf(t, word);
+                }
+                if (ImGui::MenuItem("Inspect Symbol"))
+                {
+                    symInspectName = seg;
+                    symInspectOpen = true;
+                    symInspectFocus = true;
+                }
+                if (ImGui::MenuItem("Select All Occurrences (this file)"))
+                {
+                    t.editor.SelectAllOccurrencesOf(word, true, true);
+                }
+                ImGui::EndMenu();
             }
         }
 
