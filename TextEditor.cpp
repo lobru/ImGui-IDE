@@ -1000,6 +1000,34 @@ void TextEditor::renderIndentGuides()
 		}
 	}
 
+	// Offscreen fold handles: when an UNFOLDED block's start line has scrolled
+	// above the viewport but its body is still visible, the gutter fold triangle
+	// is off-screen and the block can't be collapsed. Draw a clickable vertical
+	// guide at the block's indent spanning the visible body — hover brightens +
+	// thickens it, click folds the block (VSCode "sticky fold" affordance).
+	{
+		float topY = cursorScreenPos.y + firstVisibleIndex * glyphSize.y;
+		for (auto& fr : foldRanges)
+		{
+			if (fr.folded || fr.start.line >= firstVisibleLine || fr.end.line < firstVisibleLine)
+				continue;
+			int endLine = std::min(fr.end.line, lastVisibleLine);
+			int endVI = lineToVisualIndex(endLine);
+			float botY = cursorScreenPos.y + (endVI + 1) * glyphSize.y;
+			int depth = (fr.start.line < (int)levels.size()) ? levels[fr.start.line] : 0;
+			float x = cursorScreenPos.x + textOffset + columnToX(fr.start.line, depth * ts);
+			bool hov = ImGui::IsMouseHoveringRect(ImVec2(x - 3.0f, topY), ImVec2(x + 3.0f, botY));
+			ImU32 c = hov ? IM_COL32(120, 170, 255, 255) : IM_COL32(120, 170, 255, 110);
+			drawList->AddLine(ImVec2(x, topY), ImVec2(x, botY), c, hov ? 2.5f : 1.5f);
+			if (hov)
+			{
+				ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+				if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+					foldRanges.foldAtStart(document, fr.start.line);
+			}
+		}
+	}
+
 	drawList->PopClipRect();
 }
 
@@ -5263,6 +5291,24 @@ void TextEditor::Folder::foldToLevel(Document& document, int level)
 			foldedStartLines.insert(fr.start.line);
 	}
 	updateVisibility(document);
+}
+
+
+//	Fold the (first) unfolded range whose start is `startLine`. Used by the
+//	offscreen fold-guide affordance in renderIndentGuides.
+void TextEditor::Folder::foldAtStart(Document& document, int startLine)
+{
+	if (!foldingEnabled) return;
+	for (auto& fr : *this)
+	{
+		if (fr.start.line == startLine && !fr.folded)
+		{
+			fr.folded = true;
+			foldedStartLines.insert(fr.start.line);
+			updateVisibility(document);
+			return;
+		}
+	}
 }
 
 

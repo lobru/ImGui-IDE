@@ -1417,6 +1417,7 @@ protected:
 		void unfoldAll(Document& document);
 		void foldToLevel(Document& document, int level); // fold nesting depth >= level
 		void foldByType(Document& document, int type);   // fold all ranges of one FoldType
+		void foldAtStart(Document& document, int startLine); // fold the range starting at startLine
 
 		// Toggle the innermost fold whose range covers `line` (cursor's line).
 		// `forceFolded` = +1 means force fold, -1 means force unfold, 0 means toggle.
