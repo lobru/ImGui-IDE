@@ -397,9 +397,13 @@ const TextEditor::Language *Editor::languageForPath(const std::string &path)
     if (ext == ".glsl" || ext == ".vert" || ext == ".frag" ||
         ext == ".geom" || ext == ".comp" || ext == ".tesc" || ext == ".tese")
         return TextEditor::Language::Glsl();
-    if (ext == ".hlsl" || ext == ".hlsli" || ext == ".fx" || ext == ".fxh" || ext == ".addonfx")
+    // UE shader sources (.ush headers / .usf shader files) are HLSL.
+    if (ext == ".hlsl" || ext == ".hlsli" || ext == ".fx" || ext == ".fxh" || ext == ".addonfx" ||
+        ext == ".ush" || ext == ".usf")
         return TextEditor::Language::Hlsl();
-    if (ext == ".json" || ext == ".jsonl" || ext == ".uplugin" || ext == ".uproject" || ext == ".gltf")
+    // UE .modules is a JSON manifest (module name -> build changelist).
+    if (ext == ".json" || ext == ".jsonl" || ext == ".uplugin" || ext == ".uproject" ||
+        ext == ".gltf" || ext == ".modules")
         return TextEditor::Language::Json();
     if (ext == ".md" || ext == ".markdown")
         return TextEditor::Language::Markdown();
@@ -844,6 +848,32 @@ void Editor::renderScriptOutputWindow()
             for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i)
             {
                 const std::string &ln = outputLines[(size_t) i];
+                // Tint diagnostic severity: red for errors, amber for warnings,
+                // green for success lines. Cheap case-insensitive substring scan.
+                auto has = [&](const char *needle) {
+                    for (size_t p = 0; p + std::strlen(needle) <= ln.size(); ++p)
+                    {
+                        size_t k = 0;
+                        for (; needle[k]; ++k)
+                            if (std::tolower((unsigned char) ln[p + k]) != needle[k])
+                                break;
+                        if (!needle[k])
+                            return true;
+                    }
+                    return false;
+                };
+                bool tint = true;
+                ImU32 sev = 0;
+                if (has("error") || has(": fatal") || has("failed"))
+                    sev = IM_COL32(235, 110, 100, 255);
+                else if (has("warning") || has("warn:"))
+                    sev = IM_COL32(240, 200, 90, 255);
+                else if (has("build succeeded") || has("build succeed") || has("0 error"))
+                    sev = IM_COL32(120, 200, 120, 255);
+                else
+                    tint = false;
+                if (tint)
+                    ImGui::PushStyleColor(ImGuiCol_Text, sev);
                 OutputLink lk;
                 if (parseOutputLink(ln, lk))
                 {
@@ -873,6 +903,8 @@ void Editor::renderScriptOutputWindow()
                 {
                     ImGui::TextUnformatted(ln.c_str());
                 }
+                if (tint)
+                    ImGui::PopStyleColor();
             }
         }
         clipper.End();

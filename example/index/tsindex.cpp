@@ -192,7 +192,7 @@ Lang langForExtension(const std::string& extIn)
 		// Shader sources (ReShade FX / HLSL) are C-like; the C++ grammar extracts
 		// their structs, functions and techniques well enough for navigation.
 		ext == ".fx" || ext == ".fxh" || ext == ".addonfx" ||
-		ext == ".hlsl" || ext == ".hlsli")
+		ext == ".hlsl" || ext == ".hlsli" || ext == ".ush" || ext == ".usf")
 		return Lang::Cpp;
 	if (ext == ".cs")
 		return Lang::CSharp;
