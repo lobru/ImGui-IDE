@@ -6379,6 +6379,85 @@ static void renderSymbolGroup(const std::vector<ts::Symbol> &syms, const std::st
     }
 }
 
+// Floating inspector for one symbol (opened from the context menu). Shows what
+// the index + curated tables know: kind, enclosing scope, def sites (click to
+// jump), and members (click a member to inspect IT — chaining through types).
+void Editor::renderSymbolInspector()
+{
+    if (!symInspectOpen)
+        return;
+    if (symInspectFocus)
+    {
+        ImGui::SetNextWindowFocus();
+        symInspectFocus = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(340.0f, 380.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Symbol Inspector###symInspect", &symInspectOpen))
+    {
+        ImGui::End();
+        return;
+    }
+    const std::string &name = symInspectName;
+    ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.15f);
+    ImGui::TextUnformatted(name.c_str());
+    ImGui::PopFont();
+
+    auto idx = indexSnapshot();
+    // Kind + scope + def sites from the project index.
+    if (idx)
+    {
+        if (auto dit = idx->tsDefs.find(name); dit != idx->tsDefs.end() && !dit->second.empty())
+        {
+            ImGui::TextDisabled("kind: %s", symKindTag(dit->second.front().kind));
+            ImGui::SeparatorText("Defined at");
+            int shown = 0;
+            for (auto &d : dit->second)
+            {
+                if (++shown > 40) { ImGui::TextDisabled("(… more)"); break; }
+                ImGui::PushID(shown);
+                std::string leaf = std::filesystem::path(d.file).filename().string();
+                std::string lbl = leaf + ":" + std::to_string(d.line + 1);
+                if (ImGui::Selectable(lbl.c_str()))
+                    hostJumpTo(d.file, d.line);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", d.file.c_str());
+                ImGui::PopID();
+            }
+        }
+        else
+            ImGui::TextDisabled("(not defined in this project — external / library type)");
+    }
+
+    // Members: prefer the project index; fall back to the curated STL/known table.
+    ImGui::SeparatorText("Members");
+    const std::vector<std::string> *members = nullptr;
+    if (idx)
+        if (auto mit = idx->members.find(name); mit != idx->members.end() && !mit->second.empty())
+            members = &mit->second;
+    if (!members)
+        members = ts::stlMembers(name);
+    if (!members || members->empty())
+        ImGui::TextDisabled("(no members known)");
+    else
+    {
+        ImGui::BeginChild("##symMembers");
+        for (size_t i = 0; i < members->size(); ++i)
+        {
+            ImGui::PushID((int) i);
+            // Clicking a member re-inspects it (chains through nested types).
+            if (ImGui::Selectable((*members)[i].c_str()))
+            {
+                symInspectName = (*members)[i];
+                symInspectFocus = true;
+            }
+            ImGui::PopID();
+        }
+        middleMousePanScroll(7); // symbol inspector members
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
 void Editor::renderSymbolsPanel()
 {
     if (!symbolsPanelVisible)
@@ -10743,6 +10822,7 @@ void Editor::render()
     renderRunArgsPopup();
     renderReferencesPanel();
     renderSymbolsPanel();
+    renderSymbolInspector();
     renderFindInFilesPanel();
     appShortcutsSuppressed = false;                 // a focused plugin window may re-raise it below
     pluginRegistry.frame(*this); // in-process plugins: dockable windows + polling
@@ -11966,6 +12046,12 @@ void Editor::renderDocumentWindow(TabDocument &t)
             if (ImGui::MenuItem("Find References"))
             {
                 findReferencesOf(t, word);
+            }
+            if (ImGui::MenuItem("Inspect Symbol"))
+            {
+                symInspectName = seg;
+                symInspectOpen = true;
+                symInspectFocus = true;
             }
             if (ImGui::MenuItem("Select All Occurrences (this file)"))
             {

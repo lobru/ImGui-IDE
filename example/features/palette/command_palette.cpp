@@ -139,6 +139,15 @@ void Editor::buildPaletteActions()
         add("Code: Fold Comments", "", docSrc, [this] { doc().editor.FoldComments(); });
         add("Edit: Insert Line Below", "Ctrl+Enter", docSrc, [this] { doc().editor.InsertLineBelow(); });
         add("Edit: Insert Line Above", "Ctrl+Shift+Enter", docSrc, [this] { doc().editor.InsertLineAbove(); });
+        add("Code: Inspect Symbol Under Cursor", "", docSrc, [this] {
+            int ln, col; doc().editor.GetMainCursor(ln, col);
+            std::string w = doc().editor.GetQualifiedWordAt(ln, col);
+            if (w.empty()) w = doc().editor.GetWordAt(ln, col);
+            // last path segment
+            for (size_t i = 0; i < w.size(); ++i)
+                if (w[i] == ':' && i + 1 < w.size() && w[i + 1] == ':') { w = w.substr(i + 2); i = 0; }
+            if (!w.empty()) { symInspectName = w; symInspectOpen = true; symInspectFocus = true; }
+        });
     }
     add("View: Zoom In", "Ctrl+=", "Core", [this] { increaseFontSIze(); });
     add("View: Zoom Out", "Ctrl+-", "Core", [this] { decreaseFontSIze(); });

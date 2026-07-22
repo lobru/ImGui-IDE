@@ -1078,6 +1078,13 @@ private:
 	bool                            symbolsProjectMode  = false;   // false = document outline
 	char                            symbolsFilter[128]  = {};
 	void renderSymbolsPanel();
+	// Per-symbol inspector: a small floating window showing a symbol's kind,
+	// scope, definition sites (clickable) and members (curated + indexed).
+	// Opened from the right-click menu's "Inspect Symbol".
+	std::string symInspectName;
+	bool        symInspectOpen = false;
+	bool        symInspectFocus = false;
+	void renderSymbolInspector();
 	std::string                     symbolsCacheFile;              // doc-mode cache key (filename)
 	size_t                          symbolsCacheUndo = (size_t) -1;// doc-mode cache key (edit count)
 	std::vector<ts::Symbol>         symbolsCacheSyms;              // parsed outline of the active doc
