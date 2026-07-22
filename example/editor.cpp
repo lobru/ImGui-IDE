@@ -12543,6 +12543,26 @@ void Editor::renderDocumentWindow(TabDocument &t)
     ImVec2 editorSize = ImGui::GetContentRegionAvail();
     t.editor.Render("##editorContent", editorSize);
 
+    // Drag a header from the nav panel onto the editor → insert its
+    // project-relative #include (Render ends with EndChild, so the editor
+    // child is the last item and can be a drop target).
+    if (ImGui::BeginDragDropTarget())
+    {
+        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload("NAVPATH"))
+        {
+            std::string src((const char *) payload->Data, payload->DataSize - 1);
+            auto ext = std::filesystem::path(src).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            bool isHeader = ext == ".h" || ext == ".hpp" || ext == ".hxx" ||
+                            ext == ".hh" || ext == ".inl" || ext == ".cuh";
+            if (isHeader)
+                insertIncludeIntoActiveDoc(includeStringForPath(src));
+            else
+                pushToast("Drop a header (.h/.hpp) to insert an #include", IM_COL32(200, 180, 90, 255));
+        }
+        ImGui::EndDragDropTarget();
+    }
+
     // Hover hint: when the user hovers a known symbol in the editor for
     // `hoverDelaySec` without moving the mouse, show a tooltip with the
     // symbol's best-guess definition line + a reference count.

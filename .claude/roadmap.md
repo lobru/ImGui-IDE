@@ -112,12 +112,12 @@ that is still genuinely outstanding.
       (empty-space BeginPopupContextWindow w/ NoOpenOverItems → New File/Folder/
       Paste/Reveal in the project root; remaining: drag-to-empty move-out,
       Move-to-folder picker)
-- [~] Drag source file from nav into a document inserts the proper
+- [x] Drag source file from nav into a document inserts the proper
       project-relative #include/import.
-      (nav header right-click → "Insert #include in active document":
-      includeStringForPath picks the shortest include-root-relative path,
-      insertIncludeIntoActiveDoc drops it after the last #include, undo-safe +
-      deduped. Remaining: the actual drag-drop gesture into the editor.)
+      (nav header right-click OR drag-drop onto the editor → includeStringForPath
+      picks the shortest include-root-relative path, insertIncludeIntoActiveDoc
+      drops it after the last #include, undo-safe + deduped. Non-C++ import
+      syntaxes still TODO.)
 - [x] Go to File should also NAVIGATE the nav panel to the file (UE source →
       the Unreal Engine Source section) and update missing symbols on open.
       (openFile → navRevealFile: expands ancestor folders, scrolls to + selects
