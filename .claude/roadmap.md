@@ -77,9 +77,10 @@ that is still genuinely outstanding.
 - [ ] Smarter quote/brace autocomplete (no doubled quotes); "fix broken pairs"
       pass on format; format-on-save option; format-selection-only.
 - [ ] Optional horizontal guide lines for text + nav panel (customizable).
-- [ ] Fold system: language-aware block kinds (function/class/namespace/struct)
+- [x] Fold system: language-aware block kinds (function/class/namespace/struct)
       with leveled fold-all (fold functions, keep namespaces/classes open);
       offscreen fold-marker vertical line hover = grow/highlight, click = toggle.
+      (foldToLevel/foldByType/foldAtStart + offscreen hover-guide, 5190458)
 - [ ] Fold preview settings: vertical spacing + style variants.
 - [ ] Autocomplete: member-first ranking after `.`/`->`/`:` with smart filter
       (Sublime-quality); include/import/using completion from cached
@@ -116,8 +117,10 @@ that is still genuinely outstanding.
       inline fixes + exception markers.
 - [ ] Macros/snippets plugin (Tools + palette) with easy add API; generic
       codegen helper tools.
-- [ ] Markdown preview: GitHub-parity (tables/column API etc. — compare
+- [~] Markdown preview: GitHub-parity (tables/column API etc. — compare
       DevToys); inline code blocks collapsible; watch perf.
+      (tables/strike/tasklists/nested+ordered lists done; setext headings +
+      nested blockquotes 7a98b95; remaining: collapsible code, footnotes)
 - [ ] Build/run output view: syntax highlighting + inline links to file:line.
 - [ ] cppgen: create + link classes/namespaces; class viewer panel (VS-like,
       inherited members toggle, interactive override generation).
