@@ -2003,6 +2003,28 @@ void Editor::openAddSourceLocationPicker()
     state = State::addSourceLoc;
 }
 
+void Editor::navBeginMoveToFolder(const std::vector<std::string> &paths)
+{
+    navMoveSrc.clear();
+    for (const auto &p : paths)
+        if (!p.empty())
+            navMoveSrc.push_back(p);
+    if (navMoveSrc.empty())
+        return;
+    if (auto *vp = ImGui::GetWindowViewport())
+        dialogViewportId = vp->ID;
+    else
+        dialogViewportId = ImGui::GetMainViewport()->ID;
+    dialogNeedsPlacement = true;
+    IGFD::FileDialogConfig config;
+    config.countSelectionMax = 1;
+    config.path = dialogStartDir();
+    config.flags = ImGuiFileDialogFlags_DontShowHiddenFiles | ImGuiFileDialogFlags_OptionalFileName;
+    populateFileDialogPlaces();
+    ImGuiFileDialog::Instance()->OpenDialog("nav-move-to", "Move to Folder...", nullptr, config);
+    state = State::moveToFolder;
+}
+
 void Editor::addSourceLocation(const std::string &path)
 {
     std::error_code ec;
@@ -3541,6 +3563,20 @@ void Editor::renderNavigationPanel()
             {
                 navClipboardPath = ctxPath;
                 navClipboardIsCut = true;
+            }
+            if (ImGui::MenuItem(("Move to folder\xe2\x80\xa6" +
+                                 (navSelected.size() > 1 ? " (" + std::to_string(navSelected.size()) + ")" : std::string()))
+                                    .c_str()))
+            {
+                // The action targets the whole multi-selection (which always
+                // includes the right-clicked row).
+                std::vector<std::string> srcs;
+                if (navSelected.size() > 1)
+                    for (auto &k : navSelected)
+                        srcs.push_back(k);
+                else
+                    srcs.push_back(ctxPath);
+                navBeginMoveToFolder(srcs);
             }
             if (ImGui::MenuItem("Paste", nullptr, false,
                                 !navClipboardPath.empty() && isDir))
@@ -11391,6 +11427,56 @@ void Editor::render()
                         : std::filesystem::path(dialog->GetCurrentPath());
                 addSourceLocation(target.string());
             }
+            state = State::edit;
+            dialog->Close();
+        }
+    }
+    else if (state == State::moveToFolder)
+    {
+        ImGuiViewport *vp = ImGui::FindViewportByID(dialogViewportId);
+        if (!vp)
+            vp = ImGui::GetMainViewport();
+        auto dialog = ImGuiFileDialog::Instance();
+        if (dialogNeedsPlacement)
+        {
+            ImGui::SetNextWindowViewport(vp->ID);
+            ImVec2 sz(vp->Size.x * 0.7f, vp->Size.y * 0.7f);
+            ImVec2 pos(vp->Pos.x + (vp->Size.x - sz.x) * 0.5f, vp->Pos.y + (vp->Size.y - sz.y) * 0.5f);
+            ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+            ImGui::SetNextWindowSize(sz, ImGuiCond_Always);
+            dialogNeedsPlacement = false;
+        }
+        bool finished = dialog->Display("nav-move-to", ImGuiWindowFlags_NoCollapse,
+                                        ImVec2(480.0f, 320.0f), vp->Size);
+        saveFileDialogPlaces();
+        if (finished)
+        {
+            if (dialog->IsOk())
+            {
+                std::error_code ec;
+                std::string picked = dialog->GetFilePathName();
+                std::filesystem::path destDir =
+                    (!picked.empty() && std::filesystem::is_regular_file(picked, ec))
+                        ? std::filesystem::path(picked).parent_path()
+                        : std::filesystem::path(dialog->GetCurrentPath());
+                int moved = 0;
+                for (const auto &src : navMoveSrc)
+                {
+                    // Skip no-op (already in dest) and moving a folder into itself.
+                    auto sp = std::filesystem::path(src);
+                    if (sp.parent_path() == destDir)
+                        continue;
+                    navMoveOrCopy(src, destDir.string(), /*copy*/ false);
+                    ++moved;
+                }
+                if (moved)
+                {
+                    navMarkListDirty();
+                    pushToast("Moved " + std::to_string(moved) + " item" + (moved == 1 ? "" : "s"),
+                              IM_COL32(120, 200, 120, 255));
+                }
+            }
+            navMoveSrc.clear();
             state = State::edit;
             dialog->Close();
         }

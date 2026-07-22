@@ -561,8 +561,12 @@ private:
 		confirmError,
 		gotoLine,
 		openProject,
-		addSourceLoc
+		addSourceLoc,
+		moveToFolder
 	} state = State::edit;
+	// Nav "Move to folder…" — paths queued for the folder-picker dialog.
+	std::vector<std::string> navMoveSrc;
+	void navBeginMoveToFolder(const std::vector<std::string>& paths);
 
 	// Goto-line dialog state
 	void showGotoLine();

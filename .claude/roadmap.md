@@ -110,8 +110,9 @@ that is still genuinely outstanding.
       root); drag to empty space moves out of subfolder; context-menu
       "Move to folder…" for files/folders.
       (empty-space BeginPopupContextWindow w/ NoOpenOverItems → New File/Folder/
-      Paste/Reveal in the project root; remaining: drag-to-empty move-out,
-      Move-to-folder picker)
+      Paste/Reveal in the project root; "Move to folder…" context item opens a
+      folder picker and moves the whole selection; remaining: drag-to-empty
+      move-out)
 - [x] Drag source file from nav into a document inserts the proper
       project-relative #include/import.
       (nav header right-click OR drag-drop onto the editor → includeStringForPath
@@ -129,9 +130,10 @@ that is still genuinely outstanding.
 - [ ] Tiered resolution as a general rule: fast path first, then slower
       reliable fallbacks (even shelling to dumpbin etc.) on a WORKER thread —
       show a working "Go to File" 150ms later instead of a grey one instantly.
-- [ ] Symbols view: namespace organization, merge duplicate entries, prioritize
+- [x] Symbols view: namespace organization, merge duplicate entries, prioritize
       main-source symbols; per-symbol viewer (click std::vector → namespace +
-      members).
+      members). (SymRow scope-sort + grouping, dedupe, project section first,
+      external-root tagging, renderSymbolInspector per-symbol viewer)
 
 ### Bigger features / plugins
 - [ ] Rename/refactor: symbol rename in symbols view / palette / context menu
