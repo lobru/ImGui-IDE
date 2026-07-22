@@ -94,9 +94,12 @@ that is still genuinely outstanding.
       (foldToLevel/foldByType/foldAtStart + offscreen hover-guide, 5190458)
 - [x] Fold preview settings: vertical spacing + style variants.
       (gap/rounding/opacity/v-pad sliders + Chip/Text/Outline style combo)
-- [ ] Autocomplete: member-first ranking after `.`/`->`/`:` with smart filter
+- [~] Autocomplete: member-first ranking after `.`/`->`/`:` with smart filter
       (Sublime-quality); include/import/using completion from cached
       project+dependency map.
+      (member completion already returns members-only; added acFuzzyScore
+      subsequence fallback so "v.pb" surfaces push_back, ranked by
+      contiguity/word-boundary/case/length; remaining: include/using completion)
 - [x] Hover tooltip info toggle in context menu; debug verbosity setting
       (members, ptr/ref kind, super class for C++ symbols).
       (prefCtxHoverInfo + prefCtxVerbose, both in Settings + right-click menu)
@@ -125,16 +128,21 @@ that is still genuinely outstanding.
       pulled from source is EDITABLE and writes back (edit comment in hover
       tooltip, param changes sync header/source). Possibly a plugin callback
       API for programmatic file/text edits.
-- [ ] Structured-data plugin: view/edit .db (sqlite), csv, excel.
-- [ ] Static-analysis plugin: flag missing/unneeded virtual/const etc. with
-      inline fixes + exception markers.
-- [ ] Macros/snippets plugin (Tools + palette) with easy add API; generic
-      codegen helper tools.
+- [~] Structured-data plugin: view/edit .db (sqlite), csv, excel.
+      (csvtable plugin: CSV/TSV view+edit with write-back; remaining: sqlite,
+      xlsx)
+- [x] Static-analysis plugin: flag missing/unneeded virtual/const etc. with
+      inline fixes + exception markers. (lint plugin: contributeMarkers +
+      one-click Fix + flag-store persistence)
+- [x] Macros/snippets plugin (Tools + palette) with easy add API; generic
+      codegen helper tools. (snippets plugin: JSON snippets from
+      <config>/snippets.json)
 - [~] Markdown preview: GitHub-parity (tables/column API etc. — compare
       DevToys); inline code blocks collapsible; watch perf.
       (tables/strike/tasklists/nested+ordered lists done; setext headings +
       nested blockquotes 7a98b95; remaining: collapsible code, footnotes)
-- [ ] Build/run output view: syntax highlighting + inline links to file:line.
+- [x] Build/run output view: syntax highlighting + inline links to file:line.
+      (parseOutputLink/openOutputLink + severity tint, clipper-rendered)
 - [ ] cppgen: create + link classes/namespaces; class viewer panel (VS-like,
       inherited members toggle, interactive override generation).
 
@@ -152,7 +160,8 @@ that is still genuinely outstanding.
 - [ ] UE ini editing: [/Script/Engine.GameUserSettings] → resolve class via
       UHT/heuristics; config-tagged UPROPERTY list as editable, scoped by
       header; add missing config classes.
-- [ ] .modules = JSON filetype; ush/usf = HLSL.
+- [x] .modules = JSON filetype; ush/usf = HLSL. (languageForPath +
+      tsindex langForExtension)
 - [ ] Module awareness: scan uproject/build files for the REAL module set
       (Engine always available), prioritize symbol building accordingly.
 - [ ] uasset tooling: bring in UAssetAPI or CUE4Parse as submodule (current

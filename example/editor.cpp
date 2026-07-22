@@ -15714,6 +15714,39 @@ static std::string resolveReceiverType(const std::string &buf, const std::string
     return {};
 }
 
+// Sublime-style fuzzy subsequence score: every char of `term` must appear in
+// `cand` in order (case-insensitive). Higher is better; -1 means no match.
+// Rewards contiguous runs, matches at word boundaries / camelHumps, exact
+// case, and shorter candidates — so "pb" ranks push_back above other hits.
+static int acFuzzyScore(const std::string &cand, const std::string &term)
+{
+    if (term.empty())
+        return 0;
+    size_t ti = 0;
+    int score = 0, prevIdx = -2;
+    for (size_t ci = 0; ci < cand.size() && ti < term.size(); ++ci)
+    {
+        char c = cand[ci], tc = term[ti];
+        if (std::tolower((unsigned char) c) == std::tolower((unsigned char) tc))
+        {
+            score += 10;
+            if ((int) ci == prevIdx + 1)
+                score += 15; // contiguous with the previous match
+            bool boundary = ci == 0 || cand[ci - 1] == '_' ||
+                            (std::islower((unsigned char) cand[ci - 1]) && std::isupper((unsigned char) c));
+            if (boundary)
+                score += 20;
+            if (c == tc)
+                score += 3; // exact-case bonus
+            prevIdx = (int) ci;
+            ++ti;
+        }
+    }
+    if (ti < term.size())
+        return -1; // not all term chars consumed
+    return score - (int) cand.size();
+}
+
 void Editor::configureTabAutocomplete(TabDocument &t)
 {
     // Wire the autocomplete callback + debounced rebuild for a SINGLE tab and
@@ -15998,13 +16031,36 @@ void Editor::configureTabAutocomplete(TabDocument &t)
                                 mtrie.insert(m);
                             std::vector<std::string> hits;
                             mtrie.findSuggestions(hits, state.searchTerm);
+                            // Prefix miss but members exist: fuzzy subsequence
+                            // rank so "v.pb" still surfaces push_back. Prefix
+                            // hits (above) always win when present.
+                            if (hits.empty() && !state.searchTerm.empty())
+                            {
+                                std::vector<std::pair<int, std::string>> scored;
+                                std::unordered_set<std::string> seenm;
+                                for (auto &m : members)
+                                {
+                                    int s = acFuzzyScore(m, state.searchTerm);
+                                    if (s >= 0 && seenm.insert(m).second)
+                                        scored.emplace_back(s, m);
+                                }
+                                std::stable_sort(scored.begin(), scored.end(),
+                                                 [](const auto &a, const auto &b) { return a.first > b.first; });
+                                for (auto &p : scored)
+                                {
+                                    if (hits.size() >= 20)
+                                        break;
+                                    hits.push_back(p.second);
+                                }
+                            }
                             if (!hits.empty())
                             {
                                 state.suggestions = std::move(hits);
                                 return; // members only
                             }
-                            // Members exist but none match the search term — fall
-                            // through to identifier completion (never an empty popup).
+                            // Members exist but nothing matched even fuzzily —
+                            // fall through to identifier completion (never an
+                            // empty popup).
                         }
                     }
                 }
