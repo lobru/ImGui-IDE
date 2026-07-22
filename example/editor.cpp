@@ -7201,7 +7201,7 @@ void Editor::renderMarkdownInline(const std::string &text, float wrapWidth)
     // Fast path: a line with no inline markup needs no per-word styling/measuring.
     // ImGui::TextUnformatted with a wrap pos wraps AND clips off-screen cheaply —
     // this is the bulk of typical markdown and the main perf win.
-    if (text.find_first_of("*_`[") == std::string::npos)
+    if (text.find_first_of("*_`[~") == std::string::npos)
     {
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
         ImGui::TextUnformatted(text.c_str());
@@ -7214,7 +7214,7 @@ void Editor::renderMarkdownInline(const std::string &text, float wrapWidth)
         std::string s;
         int style;
         std::string url;
-    }; // style 0 norm,1 bold,2 italic,3 code
+    }; // style 0 norm,1 bold,2 italic,3 code,4 strikethrough
     std::vector<Word> words;
     std::string cur;
     int style = 0;
@@ -7248,6 +7248,13 @@ void Editor::renderMarkdownInline(const std::string &text, float wrapWidth)
             flush();
             style = 3;
             ++i;
+            continue;
+        }
+        if (c == '~' && i + 1 < text.size() && text[i + 1] == '~')
+        { // ~~strikethrough~~
+            flush();
+            style = (style == 4) ? 0 : 4;
+            i += 2;
             continue;
         }
         if (c == '[')
@@ -7331,10 +7338,18 @@ void Editor::renderMarkdownInline(const std::string &text, float wrapWidth)
                     : wd.style == 3 ? IM_COL32(220, 170, 90, 255)  // code
                     : wd.style == 1 ? IM_COL32(255, 255, 255, 255) // bold (bright)
                     : wd.style == 2 ? IM_COL32(205, 205, 165, 255) // italic
+                    : wd.style == 4 ? IM_COL32(150, 150, 150, 255) // strikethrough (dim)
                                     : ImGui::GetColorU32(ImGuiCol_Text);
         ImGui::PushStyleColor(ImGuiCol_Text, col);
         ImGui::TextUnformatted(wd.s.c_str());
         ImGui::PopStyleColor();
+        if (wd.style == 4)
+        {
+            // ImGui has no strikethrough — draw a line across the word's rect.
+            ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            float y = (a.y + b.y) * 0.5f;
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), col, 1.0f);
+        }
         if (link)
         {
             if (ImGui::IsItemHovered())
@@ -7596,10 +7611,25 @@ void Editor::renderMarkdownPreview()
             if (body.rfind("- ", 0) == 0 || body.rfind("* ", 0) == 0 || body.rfind("+ ", 0) == 0)
             {
                 ImGui::Indent();
-                ImGui::TextUnformatted("\xe2\x80\xa2"); // bullet
+                // GitHub task list: "- [ ] " / "- [x] " renders a checkbox. Use
+                // ASCII bracket markers (font-safe) — checked is green.
+                std::string rest = body.substr(2);
+                bool taskUnchecked = rest.rfind("[ ] ", 0) == 0;
+                bool taskChecked = rest.rfind("[x] ", 0) == 0 || rest.rfind("[X] ", 0) == 0;
+                if (taskUnchecked || taskChecked)
+                {
+                    rest = rest.substr(4);
+                    if (taskChecked)
+                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 200, 120, 255));
+                    ImGui::TextUnformatted(taskChecked ? "[x]" : "[ ]");
+                    if (taskChecked)
+                        ImGui::PopStyleColor();
+                }
+                else
+                    ImGui::TextUnformatted("\xe2\x80\xa2"); // bullet
                 ImGui::SameLine();
-                renderMarkdownInline(body.substr(2),
-                                     avail - ImGui::GetStyle().IndentSpacing - ImGui::CalcTextSize("\xe2\x80\xa2 ").x);
+                renderMarkdownInline(rest,
+                                     avail - ImGui::GetStyle().IndentSpacing - ImGui::CalcTextSize("[x] ").x);
                 ImGui::Unindent();
                 continue;
             }
