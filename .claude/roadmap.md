@@ -114,11 +114,11 @@ that is still genuinely outstanding.
       Move-to-folder picker)
 - [ ] Drag source file from nav into a document inserts the proper
       project-relative #include/import.
-- [~] Go to File should also NAVIGATE the nav panel to the file (UE source →
+- [x] Go to File should also NAVIGATE the nav panel to the file (UE source →
       the Unreal Engine Source section) and update missing symbols on open.
       (openFile → navRevealFile: expands ancestor folders, scrolls to + selects
-      the row; works in the tree view incl. the UE Source section. Remaining:
-      flat-list mode reveal; symbol refresh already runs on open/save.)
+      the row in BOTH tree and flat-list views, incl. the UE Source section;
+      symbol refresh already runs on open/save.)
 - [ ] Open/build should crawl included files + dependencies and build symbols
       for all of them (supers included) — C++ super classes currently missing.
       Only #included sources belong in the symbols view.

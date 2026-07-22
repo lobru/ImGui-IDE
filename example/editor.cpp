@@ -2838,8 +2838,17 @@ static void navRenderFlat(Editor *self, const std::filesystem::path &root,
         if (!self->navNameMatches(item.name)) // name filter (cheap string compare)
             continue;
         ImGui::PushID(id++);
-        if (ImGui::Selectable(item.name.c_str()))
-            self->openFile(item.path.string());
+        std::string fpath = item.path.string();
+        bool sel = self->navIsSelected(fpath);
+        if (ImGui::Selectable(item.name.c_str(), sel))
+            self->openFile(fpath);
+        // Reveal target (go-to-file etc.): scroll it into view + select, once.
+        if (self->navRevealHit(fpath))
+        {
+            ImGui::SetScrollHereY(0.5f);
+            self->navSetOnlySelected(fpath);
+            self->navRevealConsume();
+        }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay))
         {
             std::error_code rec;
