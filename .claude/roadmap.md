@@ -73,10 +73,11 @@ that is still genuinely outstanding.
       patch to the vendored FetchContent source (fork or local .patch).
 
 ### Toasts + replies
-- [ ] Toast rework: close button; hover pauses expiry; clicking a toast with a
+- [x] Toast rework: close button; hover pauses expiry; clicking a toast with a
       file target opens the file (e.g. screenshot path). Reply-to-Claude only
-      for genuinely Claude-originated messages / CLI API. (User has never seen
-      the Claude toast flow fire — verify end-to-end.)
+      for genuinely Claude-originated messages / CLI API. (renderToasts: ×
+      close button, hover extends expiry, action==4 opens file, reply only for
+      action==5. End-to-end Claude-toast verify still pending a real message.)
 
 ### Editor behaviors
 - [x] Smarter quote/brace autocomplete (no doubled quotes); "fix broken pairs"
@@ -105,9 +106,12 @@ that is still genuinely outstanding.
       (prefCtxHoverInfo + prefCtxVerbose, both in Settings + right-click menu)
 
 ### Nav panel + project
-- [ ] Nav panel: right-click empty space = new folder (empty space == project
+- [~] Nav panel: right-click empty space = new folder (empty space == project
       root); drag to empty space moves out of subfolder; context-menu
       "Move to folder…" for files/folders.
+      (empty-space BeginPopupContextWindow w/ NoOpenOverItems → New File/Folder/
+      Paste/Reveal in the project root; remaining: drag-to-empty move-out,
+      Move-to-folder picker)
 - [ ] Drag source file from nav into a document inserts the proper
       project-relative #include/import.
 - [ ] Go to File should also NAVIGATE the nav panel to the file (UE source →

@@ -3170,6 +3170,63 @@ void Editor::renderNavigationPanel()
             ImGui::TextDisabled("(folder not found: %s)", root.string().c_str());
         }
 
+        // Empty-space right-click → create in the PROJECT ROOT. NoOpenOverItems
+        // means a right-click on a tree row still gets the per-item menu; only
+        // the blank area below/around the tree opens this one.
+        if (!root.empty() && std::filesystem::is_directory(root, ec) &&
+            ImGui::BeginPopupContextWindow("##navRootCtx",
+                                           ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+        {
+            auto createInRoot = [&](bool folder) {
+                std::error_code nec;
+                std::filesystem::path target = root / (folder ? "New Folder" : "New File.txt");
+                for (int n = 2; std::filesystem::exists(target, nec); ++n)
+                    target = root / (folder ? ("New Folder (" + std::to_string(n) + ")")
+                                            : ("New File (" + std::to_string(n) + ").txt"));
+                bool ok = false;
+                if (folder)
+                    ok = std::filesystem::create_directory(target, nec) && !nec;
+                else
+                {
+                    std::ofstream f(target);
+                    ok = f.good();
+                }
+                if (ok)
+                {
+                    navMarkListDirty();
+                    navRenameTarget = target.string();
+                    std::snprintf(navRenameBuf, sizeof(navRenameBuf), "%s",
+                                  target.filename().string().c_str());
+                }
+            };
+            ImGui::TextDisabled("%s", root.filename().string().c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("New File"))
+                createInRoot(false);
+            if (ImGui::MenuItem("New Folder"))
+                createInRoot(true);
+            if (ImGui::MenuItem("Paste", nullptr, false, !navClipboardPath.empty()))
+            {
+                auto src = std::filesystem::path(navClipboardPath);
+                auto dst = root / src.filename();
+                std::error_code pec;
+                if (navClipboardIsCut)
+                    std::filesystem::rename(src, dst, pec);
+                else
+                    std::filesystem::copy(src, dst,
+                                          std::filesystem::copy_options::recursive |
+                                              std::filesystem::copy_options::overwrite_existing,
+                                          pec);
+                if (navClipboardIsCut)
+                    navClipboardPath.clear();
+                navMarkListDirty();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reveal in Explorer"))
+                navOpenPathInExplorer(root.string());
+            ImGui::EndPopup();
+        }
+
         // ── Plugin-provided extra source root ────────────────────────────────
         // A project-type plugin (e.g. Unreal) can expose a second read-only root
         // — the engine's Source tree — so its headers are browsable. Resolving it
