@@ -141,10 +141,11 @@ option(IMGUIIDE_PLUGIN_TEXTTOOLS "Build the text tools plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_DEBUGGER "Build the DAP debugger plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_SNIPPETS "Build the snippets/macros plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_CSVTABLE "Build the CSV table viewer plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_LINT "Build the static-analysis (lint) plugin (DLL)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS OR IMGUIIDE_PLUGIN_DEBUGGER OR IMGUIIDE_PLUGIN_SNIPPETS OR IMGUIIDE_PLUGIN_CSVTABLE)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS OR IMGUIIDE_PLUGIN_DEBUGGER OR IMGUIIDE_PLUGIN_SNIPPETS OR IMGUIIDE_PLUGIN_CSVTABLE OR IMGUIIDE_PLUGIN_LINT)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 if(IMGUIIDE_PLUGIN_DEBUGGER)
@@ -288,6 +289,15 @@ if(IMGUIIDE_PLUGIN_CSVTABLE)
 		plugins/csvtable/csvtable_plugin.cpp)
 	target_include_directories(imguiide_csvtable PRIVATE plugins/csvtable)
 	target_compile_definitions(imguiide_csvtable PRIVATE IMGUIIDE_PLUGIN_CSVTABLE=1)
+endif()
+
+if(IMGUIIDE_PLUGIN_LINT)
+	# Heuristic static analysis: gutter markers + an Analysis panel with
+	# one-click fixes. Pure line scanning; no external deps.
+	imguiide_add_plugin(imguiide_lint createLintPlugin
+		plugins/lint/lint_plugin.cpp)
+	target_include_directories(imguiide_lint PRIVATE plugins/lint)
+	target_compile_definitions(imguiide_lint PRIVATE IMGUIIDE_PLUGIN_LINT=1)
 endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only). The PDF
