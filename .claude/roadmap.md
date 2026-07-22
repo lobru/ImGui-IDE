@@ -61,9 +61,11 @@ that is still genuinely outstanding.
 - [ ] insert line before/after Text tools options.
 - [ ] Panels must not clip content on narrow windows (debug panel, dev tools):
       push/pop item width + wrapping.  [chip: editor input QoL]
-- [ ] Python Ctrl+Shift+/ does nothing (no block comment): keybind priority
+- [x] Python Ctrl+Shift+/ does nothing (no block comment): keybind priority
       routing when two actions share a chord — fall back to line comment;
       user-adjustable priority, smart default.  [chip: editor input QoL]
+      (toggleCommentsShift falls back to toggleComments when no block
+      delimiters / no selection, so the chord is never a no-op)
 - [ ] Middle-mouse pan/scroll INSIDE the ImGuiFileDialog file list — needs a
       patch to the vendored FetchContent source (fork or local .patch).
 

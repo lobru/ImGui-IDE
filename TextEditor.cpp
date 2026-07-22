@@ -4388,13 +4388,21 @@ void TextEditor::toggleCommentsShift()
 	const std::string& cs = language->commentStart;
 	const std::string& ce = language->commentEnd;
 
-	// Shift‑variant only makes sense for block‑style comments
+	// Block‑style needs both delimiters. Languages without them (Python, shell,
+	// …) fall back to the line‑comment toggle so the chord is never a no‑op.
 	if (cs.empty() || ce.empty())
+	{
+		toggleComments();
 		return;
+	}
 
 	auto& cursor = cursors.getCurrent();
+	// No selection → nothing to wrap; degrade to the line‑comment toggle.
 	if (!cursor.hasSelection())
+	{
+		toggleComments();
 		return;
+	}
 
 	auto selStart = cursor.getSelectionStart();
 	auto selEnd = cursor.getSelectionEnd();
