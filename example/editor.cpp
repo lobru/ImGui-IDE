@@ -1498,7 +1498,7 @@ bool Editor::formatBraceNewLineForExt(const std::string &ext) const
 // buffer is replaced via a single select-all + replace transaction, so Ctrl+Z
 // reverts the format in one step. No-ops if clang-format isn't on PATH or the
 // language isn't one it handles.
-void Editor::formatActiveDocument()
+void Editor::formatActiveDocument(bool quiet, bool selectionOnly)
 {
     if (tabs.empty())
         return;
@@ -1560,8 +1560,22 @@ void Editor::formatActiveDocument()
         tool = Tool::Gofmt;
     if (tool == Tool::None)
     {
-        showError("Format: no formatter configured for '" + ext + "' files.");
+        if (!quiet)
+            showError("Format: no formatter configured for '" + ext + "' files.");
         return;
+    }
+
+    // Selection-only formatting: clang-format takes --lines=A:B (1-based,
+    // inclusive). The other CLI formatters have no comparable range flag, so
+    // they fall back to whole-document formatting.
+    std::string clangLines;
+    if (selectionOnly && tool == Tool::ClangFormat && t.editor.AnyCursorHasSelection())
+    {
+        int sl, sc, el, ec2;
+        t.editor.GetCursor(sl, sc, el, ec2, 0);
+        if (el < sl)
+            std::swap(sl, el);
+        clangLines = " --lines=" + std::to_string(sl + 1) + ":" + std::to_string(el + 1);
     }
 
     std::error_code ec;
@@ -1600,11 +1614,12 @@ void Editor::formatActiveDocument()
                                        // `false` (not `Never`) — the enum values are clang-format
                                        // 13+, but `false` parses on 12 and 13+ alike.
         cf.close();
-        int rc = run("clang-format " + q + " 2>nul");
+        int rc = run("clang-format" + clangLines + " " + q + " 2>nul");
         std::filesystem::remove(src, ec);
         if (rc != 0 || out.empty())
         {
-            showError("Format: clang-format failed (on PATH? syntax error?).");
+            if (!quiet)
+                showError("Format: clang-format failed (on PATH? syntax error?).");
             return;
         }
     }
@@ -8131,6 +8146,8 @@ void Editor::loadSettings()
                 prefFormatBraceJs = (v == "1" || v == "true");
             else if (k == "format_brace_java")
                 prefFormatBraceJava = (v == "1" || v == "true");
+            else if (k == "format_on_save")
+                prefFormatOnSave = (v == "1" || v == "true");
             else if (k == "show_fps")
                 prefShowFps = (v == "1" || v == "true");
             else if (k == "ctx_hover_info")
@@ -8337,6 +8354,7 @@ void Editor::saveSettings()
     f << "complete_pairs=" << (prefCompletePairs ? "1" : "0") << "\n";
     f << "format_brace_newline=" << (prefFormatBraceNewLine ? "1" : "0") << "\n";
     f << "format_brace_cpp=" << (prefFormatBraceCpp ? "1" : "0") << "\n";
+    f << "format_on_save=" << (prefFormatOnSave ? "1" : "0") << "\n";
     f << "format_brace_cs=" << (prefFormatBraceCs ? "1" : "0") << "\n";
     f << "format_brace_js=" << (prefFormatBraceJs ? "1" : "0") << "\n";
     f << "format_brace_java=" << (prefFormatBraceJava ? "1" : "0") << "\n";
@@ -8612,6 +8630,10 @@ void Editor::renderSettings()
                 ImGui::Checkbox("Other", &prefFormatBraceNewLine);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Code > Format Document (Alt+Shift+F) runs clang-format.\nChecked = brace on next line (Allman); unchecked = attached (same line).");
+                if (ImGui::Checkbox("Format document on save", &prefFormatOnSave))
+                    saveSettings();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Run the configured formatter automatically when you save.\nSilently skips file types with no formatter.");
                 ImGui::Checkbox("Show FPS on status bar", &prefShowFps);
                 ImGui::Checkbox("Ctrl + scroll wheel adjusts editor font size", &prefCtrlScrollZoom);
                 if (ImGui::Checkbox("Symbol info in right-click menu", &prefCtxHoverInfo))
@@ -9120,6 +9142,7 @@ void Editor::renderSettings()
                     {"code.lower", "Selection -> lowercase", "Ctrl+K Ctrl+L", "Code", true, "lowerCase"},
                     {"code.hSrc", "Switch Header / Source", "Alt+O", "Code", true, nullptr},
                     {"code.format", "Format Document", "Alt+Shift+F", "Code", true, nullptr},
+                    {"code.formatSelection", "Format Selection", "Ctrl+K Ctrl+F", "Code", true, nullptr},
                     {"nav.back", "Navigate back", "Ctrl+Alt+LeftArrow", "Code", true, nullptr},
                     {"nav.forward", "Navigate forward", "Ctrl+Alt+RightArrow", "Code", true, nullptr},
 
@@ -9878,6 +9901,8 @@ void Editor::saveFile()
 {
     try
     {
+        if (prefFormatOnSave)
+            formatActiveDocument(/*quiet*/ true); // silent no-op when no formatter for this type
         auto &t = doc();
         t.editor.StripTrailingWhitespaces();
         std::string out = t.editor.GetText(); // serialize ONCE (was twice — slow on huge files)
@@ -12601,6 +12626,10 @@ void Editor::renderMenuBar()
             {
                 formatActiveDocument();
             }
+            if (ImGui::MenuItem("Format Selection", "Ctrl+K, Ctrl+F", false, e.AnyCursorHasSelection()))
+            {
+                formatActiveDocument(/*quiet*/ false, /*selectionOnly*/ true);
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Navigate Back", "Ctrl+Alt+Left", false, navHistory.canBack()))
             {
@@ -13310,6 +13339,10 @@ void Editor::renderMenuBar()
         else if (keybindPressed("code.format", "Alt+Shift+F"))
         {
             formatActiveDocument();
+        }
+        else if (keybindPressed("code.formatSelection", "Ctrl+K Ctrl+F"))
+        {
+            formatActiveDocument(/*quiet*/ false, /*selectionOnly*/ true);
         }
         else if (keybindPressed("nav.back", "Ctrl+Alt+LeftArrow"))
         {

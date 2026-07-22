@@ -739,7 +739,11 @@ private:
 	bool   prefFormatBraceJs   = false;     // JS / TS (conventionally same-line)
 	bool   prefFormatBraceJava = false;     // Java (conventionally same-line)
 	bool   formatBraceNewLineForExt(const std::string& ext) const;   // resolve per-lang brace pref
-	void   formatActiveDocument();          // run clang-format over the active doc (undo-safe)
+	// Run the configured formatter over the active doc (undo-safe). quiet
+	// suppresses the "no formatter configured" error (used by format-on-save);
+	// selectionOnly restricts clang-format to the selected line range.
+	void   formatActiveDocument(bool quiet = false, bool selectionOnly = false);
+	bool   prefFormatOnSave    = false;     // run the formatter automatically on save
 	bool   prefShowFps         = false;   // FPS readout on the status bar
 	bool   prefCtxHoverInfo    = true;    // show symbol hover info in the right-click menu
 	bool   prefCtxVerbose      = false;   // verbose symbol debug (kind, scope, members) in the menu
