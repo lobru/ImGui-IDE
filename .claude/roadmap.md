@@ -106,13 +106,13 @@ that is still genuinely outstanding.
       (prefCtxHoverInfo + prefCtxVerbose, both in Settings + right-click menu)
 
 ### Nav panel + project
-- [~] Nav panel: right-click empty space = new folder (empty space == project
+- [x] Nav panel: right-click empty space = new folder (empty space == project
       root); drag to empty space moves out of subfolder; context-menu
       "Move to folder…" for files/folders.
       (empty-space BeginPopupContextWindow w/ NoOpenOverItems → New File/Folder/
       Paste/Reveal in the project root; "Move to folder…" context item opens a
-      folder picker and moves the whole selection; remaining: drag-to-empty
-      move-out)
+      folder picker and moves the whole selection; drag-to-empty drop zone
+      (active-drag-gated) moves the item to the project root, Ctrl = copy)
 - [x] Drag source file from nav into a document inserts the proper
       project-relative #include/import.
       (nav header right-click OR drag-drop onto the editor → includeStringForPath

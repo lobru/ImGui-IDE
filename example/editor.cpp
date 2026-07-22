@@ -3440,6 +3440,32 @@ void Editor::renderNavigationPanel()
             }
         }
 
+        // Drag-to-empty: while a nav item is being dragged, the blank area
+        // below the tree becomes a drop zone that moves it to the project root
+        // (Ctrl = copy). Gated on an active drag so it never covers the
+        // empty-space right-click menu when nothing is being dragged.
+        if (!root.empty() && ImGui::IsDragDropActive())
+        {
+            ImVec2 rem = ImGui::GetContentRegionAvail();
+            if (rem.y > 4.0f)
+            {
+                ImGui::Dummy(rem);
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload *pl = ImGui::AcceptDragDropPayload("NAVPATH"))
+                    {
+                        std::string src((const char *) pl->Data, pl->DataSize - 1);
+                        if (std::filesystem::path(src).parent_path() != root)
+                        {
+                            navMoveOrCopy(src, root.string(), ImGui::GetIO().KeyCtrl);
+                            navMarkListDirty();
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+            }
+        }
+
         navApplyRangeSelect(); // resolve a pending shift-click range now that order is known
         navSetAllOpen = -1;    // bulk open/close request consumed this frame
 
