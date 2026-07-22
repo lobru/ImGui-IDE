@@ -7525,7 +7525,13 @@ void Editor::renderMarkdownPreview()
             float h = (std::min)(lines, 24) * ImGui::GetTextLineHeightWithSpacing() +
                       ImGui::GetStyle().FramePadding.y * 4.0f;
             ImGui::PushID(codeBlockIdx);
-            blk.ed.Render("##mdcode", ImVec2(avail, h), /*border*/ true);
+            // Collapsible: a long code block can be folded away. The header
+            // shows the fence language + line count; default-open so short
+            // docs read normally. State persists per block via the pushed ID.
+            std::string hdr = (codeTag.empty() ? "code" : codeTag) + "  \xc2\xb7  " +
+                              std::to_string(lines) + (lines == 1 ? " line" : " lines");
+            if (ImGui::CollapsingHeader((hdr + "###mdcodehdr").c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+                blk.ed.Render("##mdcode", ImVec2(avail, h), /*border*/ true);
             ImGui::PopID();
             ++mdCodeUsed;
             ++codeBlockIdx;

@@ -144,7 +144,8 @@ that is still genuinely outstanding.
 - [~] Markdown preview: GitHub-parity (tables/column API etc. — compare
       DevToys); inline code blocks collapsible; watch perf.
       (tables/strike/tasklists/nested+ordered lists done; setext headings +
-      nested blockquotes 7a98b95; remaining: collapsible code, footnotes)
+      nested blockquotes 7a98b95; collapsible code blocks w/ lang+line-count
+      header; remaining: footnotes)
 - [x] Build/run output view: syntax highlighting + inline links to file:line.
       (parseOutputLink/openOutputLink + severity tint, clipper-rendered)
 - [ ] cppgen: create + link classes/namespaces; class viewer panel (VS-like,
