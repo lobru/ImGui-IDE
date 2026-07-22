@@ -652,6 +652,14 @@ public:
 	bool         navIsFlat() const     { return navFlatFiles; }
 	int          navBulkOpenRequest() const { return navSetAllOpen; }   // -1 none / 0 collapse / 1 expand
 	bool         navIsShowingExcluded() const { return navShowExcluded; }
+	// Reveal-in-tree: navRevealFile() requests the tree expand its ancestors,
+	// scroll to it, and select it on the next frame. The nav-render helpers
+	// query navRevealIsUnder()/navRevealHit() and clear it via navRevealConsume().
+	void         navRevealFile(const std::string& path);
+	bool         navRevealIsUnder(const std::string& folderAbs) const;  // target inside this folder?
+	bool         navRevealHit(const std::string& fileAbs) const;        // target == this file?
+	void         navRevealConsume() { navRevealTarget.clear(); }
+	std::string  navRevealTarget; // normalized path pending reveal (empty = none)
 	void         navDragSourceSet(const std::string& p) { navDragSource = p; }
 	void         navMoveOrCopy(const std::string& src,
 	                           const std::string& destDir, bool copy);

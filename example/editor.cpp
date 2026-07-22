@@ -2087,6 +2087,34 @@ void Editor::navSetOnlySelected(const std::filesystem::path &p)
     navSelected.insert(navCanonKey(p));
 }
 
+// ── Reveal-in-tree ──
+// navRevealFile() stores a normalized target; the nav-render helpers force the
+// ancestor folders open, scroll to the row, and select it, then consume it.
+void Editor::navRevealFile(const std::string &path)
+{
+    navRevealTarget = navCanonKey(std::filesystem::path(path));
+}
+
+bool Editor::navRevealIsUnder(const std::string &folderAbs) const
+{
+    if (navRevealTarget.empty())
+        return false;
+    std::string f = navCanonKey(std::filesystem::path(folderAbs));
+    // The target must be strictly deeper and share the folder as a prefix
+    // ending on a path separator (so "/a/bc" is not "under" "/a/b").
+    if (navRevealTarget.size() <= f.size() ||
+        navRevealTarget.compare(0, f.size(), f) != 0)
+        return false;
+    char sep = navRevealTarget[f.size()];
+    return sep == '/' || sep == '\\';
+}
+
+bool Editor::navRevealHit(const std::string &fileAbs) const
+{
+    return !navRevealTarget.empty() &&
+           navCanonKey(std::filesystem::path(fileAbs)) == navRevealTarget;
+}
+
 // ── Nav shift-click range selection ──
 // navVisibleOrder is filled in render order each frame; a shift-click records a
 // target, and navApplyRangeSelect() (called after the tree renders) selects every
@@ -2671,6 +2699,8 @@ static void navRenderEntry(Editor *self,
             ImGui::SetNextItemOpen(self->navBulkOpenRequest() == 1, ImGuiCond_Always);
         else if (self->navFilterActive())
             ImGui::SetNextItemOpen(true, ImGuiCond_Always); // reveal filtered matches
+        else if (self->navRevealIsUnder(absPath))
+            ImGui::SetNextItemOpen(true, ImGuiCond_Always); // expand ancestors of a reveal target
         bool open = ImGui::TreeNodeEx(name.c_str(), flags);
         navTooltip(e, true);
         navDnD(true);
@@ -2711,6 +2741,14 @@ static void navRenderEntry(Editor *self,
         if (self->navIsSelected(absPath))
             flags |= ImGuiTreeNodeFlags_Selected;
         ImGui::TreeNodeEx(name.c_str(), flags);
+        // Reveal target: scroll it into view + select it, then consume so this
+        // fires once (the ancestor folders were already forced open above).
+        if (self->navRevealHit(absPath))
+        {
+            ImGui::SetScrollHereY(0.5f);
+            self->navSetOnlySelected(absPath);
+            self->navRevealConsume();
+        }
         navTooltip(e, false);
         navDnD(false);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
@@ -9867,6 +9905,11 @@ void Editor::openFile(const std::string &path)
             }
         }
     }
+    // A text file is about to open in the editor (go-to-file, go-to-def, an
+    // include jump, an output link, a nav click). Reveal it in the nav tree so
+    // the panel follows the active file — expands ancestors, scrolls, selects.
+    navRevealFile(path);
+
     // If this file is already open in some tab, just bring it forward instead
     // of opening a second copy. Compare canonical paths so different ways of
     // spelling the same path (relative vs absolute, mixed separators, etc.)
