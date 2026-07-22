@@ -6977,17 +6977,31 @@ void Editor::renderDevTools()
                     fpsWindowWorstMs = 0.0f;
                 }
             }
-            if (ImGui::SmallButton("Open crash.log"))
-                navOpenExternally((cfg / "crash.log").string());
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Open config dir"))
-                navOpenExternally(cfg.string());
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Test toast"))
-                pushToast("\xe2\x9c\x8e Dev Tools test toast", IM_COL32(170, 130, 250, 255));
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Activity log"))
-                externalChangesVisible = true;
+            // Wrap the action buttons so a narrow window flows them onto the
+            // next line instead of clipping the rightmost ones off-screen.
+            {
+                struct Btn { const char *label; std::function<void()> act; };
+                std::vector<Btn> btns = {
+                    {"Open crash.log", [&] { navOpenExternally((cfg / "crash.log").string()); }},
+                    {"Open config dir", [&] { navOpenExternally(cfg.string()); }},
+                    {"Test toast", [&] { pushToast("\xe2\x9c\x8e Dev Tools test toast", IM_COL32(170, 130, 250, 255)); }},
+                    {"Activity log", [&] { externalChangesVisible = true; }},
+                };
+                const ImGuiStyle &st = ImGui::GetStyle();
+                float visX2 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+                for (size_t i = 0; i < btns.size(); ++i)
+                {
+                    if (ImGui::SmallButton(btns[i].label))
+                        btns[i].act();
+                    if (i + 1 < btns.size())
+                    {
+                        float lastX2 = ImGui::GetItemRectMax().x;
+                        float nextW = ImGui::CalcTextSize(btns[i + 1].label).x + st.FramePadding.x * 2.0f;
+                        if (lastX2 + st.ItemSpacing.x + nextW < visX2)
+                            ImGui::SameLine();
+                    }
+                }
+            }
 
             if (ImGui::BeginTable("##watch", 2,
                                   ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp))

@@ -58,9 +58,12 @@ that is still genuinely outstanding.
 - [x] Fold Level 1/2/3 + Fold Comments (5b61588).
 - [x] Settings: expose hidden custom-interpreter + filetype overrides (ab2fa97).
 - [x] File dialog new-folder — already built in (Create Directory button).
-- [ ] insert line before/after Text tools options.
-- [ ] Panels must not clip content on narrow windows (debug panel, dev tools):
+- [x] insert line before/after Text tools options. (InsertLineAbove/Below,
+      Ctrl+Enter / Ctrl+Shift+Enter, Selection menu + palette)
+- [~] Panels must not clip content on narrow windows (debug panel, dev tools):
       push/pop item width + wrapping.  [chip: editor input QoL]
+      (Dev Tools action buttons now wrap to next line via width-aware SameLine;
+      debug panel still to audit)
 - [x] Python Ctrl+Shift+/ does nothing (no block comment): keybind priority
       routing when two actions share a chord — fall back to line comment;
       user-adjustable priority, smart default.  [chip: editor input QoL]
@@ -78,17 +81,20 @@ that is still genuinely outstanding.
 ### Editor behaviors
 - [ ] Smarter quote/brace autocomplete (no doubled quotes); "fix broken pairs"
       pass on format; format-on-save option; format-selection-only.
-- [ ] Optional horizontal guide lines for text + nav panel (customizable).
+- [x] Optional horizontal guide lines for text (customizable alpha).
+      (SetHorizontalGuides + "Horizontal guides (editor)" pref)
 - [x] Fold system: language-aware block kinds (function/class/namespace/struct)
       with leveled fold-all (fold functions, keep namespaces/classes open);
       offscreen fold-marker vertical line hover = grow/highlight, click = toggle.
       (foldToLevel/foldByType/foldAtStart + offscreen hover-guide, 5190458)
-- [ ] Fold preview settings: vertical spacing + style variants.
+- [x] Fold preview settings: vertical spacing + style variants.
+      (gap/rounding/opacity/v-pad sliders + Chip/Text/Outline style combo)
 - [ ] Autocomplete: member-first ranking after `.`/`->`/`:` with smart filter
       (Sublime-quality); include/import/using completion from cached
       project+dependency map.
-- [ ] Hover tooltip info toggle in context menu; debug verbosity setting
+- [x] Hover tooltip info toggle in context menu; debug verbosity setting
       (members, ptr/ref kind, super class for C++ symbols).
+      (prefCtxHoverInfo + prefCtxVerbose, both in Settings + right-click menu)
 
 ### Nav panel + project
 - [ ] Nav panel: right-click empty space = new folder (empty space == project
