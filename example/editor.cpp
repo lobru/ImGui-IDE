@@ -7608,29 +7608,52 @@ void Editor::renderMarkdownPreview()
                 ImGui::Unindent();
                 continue;
             }
-            if (body.rfind("- ", 0) == 0 || body.rfind("* ", 0) == 0 || body.rfind("+ ", 0) == 0)
+            // Ordered list: "1. text" / "12) text". Show the marker, keep the rest.
+            std::string orderedMarker;
             {
-                ImGui::Indent();
-                // GitHub task list: "- [ ] " / "- [x] " renders a checkbox. Use
-                // ASCII bracket markers (font-safe) — checked is green.
-                std::string rest = body.substr(2);
-                bool taskUnchecked = rest.rfind("[ ] ", 0) == 0;
-                bool taskChecked = rest.rfind("[x] ", 0) == 0 || rest.rfind("[X] ", 0) == 0;
-                if (taskUnchecked || taskChecked)
+                size_t d = 0;
+                while (d < body.size() && std::isdigit((unsigned char) body[d]))
+                    ++d;
+                if (d > 0 && d + 1 < body.size() && (body[d] == '.' || body[d] == ')') && body[d + 1] == ' ')
+                    orderedMarker = body.substr(0, d + 1); // "1."
+            }
+            bool bulleted = body.rfind("- ", 0) == 0 || body.rfind("* ", 0) == 0 || body.rfind("+ ", 0) == 0;
+            if (bulleted || !orderedMarker.empty())
+            {
+                // Nesting: 2 leading spaces (or one tab) per level, capped.
+                int lvl = 1 + (int) std::min<size_t>(a / 2, 5);
+                float ind = lvl * ImGui::GetStyle().IndentSpacing;
+                ImGui::Indent(ind);
+                std::string rest;
+                float markerW;
+                if (!orderedMarker.empty())
                 {
-                    rest = rest.substr(4);
-                    if (taskChecked)
-                        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 200, 120, 255));
-                    ImGui::TextUnformatted(taskChecked ? "[x]" : "[ ]");
-                    if (taskChecked)
-                        ImGui::PopStyleColor();
+                    rest = body.substr(orderedMarker.size() + 1); // skip marker + space
+                    ImGui::TextUnformatted(orderedMarker.c_str());
+                    markerW = ImGui::CalcTextSize((orderedMarker + " ").c_str()).x;
                 }
                 else
-                    ImGui::TextUnformatted("\xe2\x80\xa2"); // bullet
+                {
+                    // GitHub task list: "- [ ] " / "- [x] " -> checkbox marker.
+                    rest = body.substr(2);
+                    bool taskChecked = rest.rfind("[x] ", 0) == 0 || rest.rfind("[X] ", 0) == 0;
+                    bool taskUnchecked = rest.rfind("[ ] ", 0) == 0;
+                    if (taskUnchecked || taskChecked)
+                    {
+                        rest = rest.substr(4);
+                        if (taskChecked)
+                            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 200, 120, 255));
+                        ImGui::TextUnformatted(taskChecked ? "[x]" : "[ ]");
+                        if (taskChecked)
+                            ImGui::PopStyleColor();
+                    }
+                    else
+                        ImGui::TextUnformatted("\xe2\x80\xa2"); // bullet
+                    markerW = ImGui::CalcTextSize("[x] ").x;
+                }
                 ImGui::SameLine();
-                renderMarkdownInline(rest,
-                                     avail - ImGui::GetStyle().IndentSpacing - ImGui::CalcTextSize("[x] ").x);
-                ImGui::Unindent();
+                renderMarkdownInline(rest, avail - ind - markerW);
+                ImGui::Unindent(ind);
                 continue;
             }
             renderMarkdownInline(body, avail);
