@@ -140,10 +140,11 @@ option(IMGUIIDE_PLUGIN_PDF "Build the in-app PDF viewer plugin (DLL, Windows)" O
 option(IMGUIIDE_PLUGIN_TEXTTOOLS "Build the text tools plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_DEBUGGER "Build the DAP debugger plugin (DLL)" ON)
 option(IMGUIIDE_PLUGIN_SNIPPETS "Build the snippets/macros plugin (DLL)" ON)
+option(IMGUIIDE_PLUGIN_CSVTABLE "Build the CSV table viewer plugin (DLL)" ON)
 
 # Static deps linked INTO a plugin DLL must be position-independent (a no-op on
 # Windows; required to pull a static archive into a shared object elsewhere).
-if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS OR IMGUIIDE_PLUGIN_DEBUGGER OR IMGUIIDE_PLUGIN_SNIPPETS)
+if(IMGUIIDE_PLUGIN_UNREAL OR IMGUIIDE_PLUGIN_UEVR OR IMGUIIDE_PLUGIN_TERMINAL OR IMGUIIDE_PLUGIN_CPPGEN OR IMGUIIDE_PLUGIN_PDF OR IMGUIIDE_PLUGIN_TEXTTOOLS OR IMGUIIDE_PLUGIN_DEBUGGER OR IMGUIIDE_PLUGIN_SNIPPETS OR IMGUIIDE_PLUGIN_CSVTABLE)
 	set_property(TARGET imgui imguifd TextEditorLib PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 if(IMGUIIDE_PLUGIN_DEBUGGER)
@@ -278,6 +279,15 @@ if(IMGUIIDE_PLUGIN_SNIPPETS)
 	target_include_directories(imguiide_snippets PRIVATE plugins/snippets)
 	target_link_libraries(imguiide_snippets PRIVATE nlohmann_json)
 	target_compile_definitions(imguiide_snippets PRIVATE IMGUIIDE_PLUGIN_SNIPPETS=1)
+endif()
+
+if(IMGUIIDE_PLUGIN_CSVTABLE)
+	# View/edit CSV & TSV documents as an interactive table (write-back via
+	# hostSetActiveText). Pure parsing; no external deps.
+	imguiide_add_plugin(imguiide_csvtable createCsvTablePlugin
+		plugins/csvtable/csvtable_plugin.cpp)
+	target_include_directories(imguiide_csvtable PRIVATE plugins/csvtable)
+	target_compile_definitions(imguiide_csvtable PRIVATE IMGUIIDE_PLUGIN_CSVTABLE=1)
 endif()
 
 # In-app updater talks to GitHub over HTTPS via WinHTTP (Windows only). The PDF
