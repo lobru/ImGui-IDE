@@ -741,6 +741,8 @@ private:
 	bool   formatBraceNewLineForExt(const std::string& ext) const;   // resolve per-lang brace pref
 	void   formatActiveDocument();          // run clang-format over the active doc (undo-safe)
 	bool   prefShowFps         = false;   // FPS readout on the status bar
+	bool   prefCtxHoverInfo    = true;    // show symbol hover info in the right-click menu
+	bool   prefCtxVerbose      = false;   // verbose symbol debug (kind, scope, members) in the menu
 	bool   prefCtrlScrollZoom  = true;    // Ctrl+wheel adjusts editor font size
 	bool   prefInvertPan       = true;    // inverted ("grab the content") pan is the default
 	bool   prefWordWrap        = false;   // soft-wrap long lines

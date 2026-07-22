@@ -7911,6 +7911,10 @@ void Editor::loadSettings()
                 prefFormatBraceJava = (v == "1" || v == "true");
             else if (k == "show_fps")
                 prefShowFps = (v == "1" || v == "true");
+            else if (k == "ctx_hover_info")
+                prefCtxHoverInfo = (v == "1" || v == "true");
+            else if (k == "ctx_verbose")
+                prefCtxVerbose = (v == "1" || v == "true");
             else if (k == "theme")
             {
                 prefTheme = std::atoi(v.c_str());
@@ -8115,6 +8119,8 @@ void Editor::saveSettings()
     f << "format_brace_js=" << (prefFormatBraceJs ? "1" : "0") << "\n";
     f << "format_brace_java=" << (prefFormatBraceJava ? "1" : "0") << "\n";
     f << "show_fps=" << (prefShowFps ? "1" : "0") << "\n";
+    f << "ctx_hover_info=" << (prefCtxHoverInfo ? "1" : "0") << "\n";
+    f << "ctx_verbose=" << (prefCtxVerbose ? "1" : "0") << "\n";
     f << "theme=" << prefTheme << "\n";
     f << "ctrl_scroll_zoom=" << (prefCtrlScrollZoom ? "1" : "0") << "\n";
     f << "autocomplete=" << (autocomplete ? "1" : "0") << "\n";
@@ -8386,6 +8392,14 @@ void Editor::renderSettings()
                     ImGui::SetTooltip("Code > Format Document (Alt+Shift+F) runs clang-format.\nChecked = brace on next line (Allman); unchecked = attached (same line).");
                 ImGui::Checkbox("Show FPS on status bar", &prefShowFps);
                 ImGui::Checkbox("Ctrl + scroll wheel adjusts editor font size", &prefCtrlScrollZoom);
+                if (ImGui::Checkbox("Symbol info in right-click menu", &prefCtxHoverInfo))
+                    saveSettings();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Show the hovered symbol's type/signature (from clangd) at the top of the context menu.");
+                if (ImGui::Checkbox("Verbose symbol debug in right-click menu", &prefCtxVerbose))
+                    saveSettings();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Also show the symbol's kind, definition-site count, and member list.");
                 ImGui::Checkbox("Autosave", &prefAutoSave);
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Periodically save documents that already have a path.\nNew (untitled) buffers are skipped — they need Save As first.");
@@ -11856,6 +11870,52 @@ void Editor::renderDocumentWindow(TabDocument &t)
                     // (e.g. cross-file Lua functions) even though the jump would succeed.
                     known = idx->defs.count(seg) != 0 || idx->tsDefs.count(seg) != 0;
             bool navigable = known && !isKeyword;
+
+            // Symbol info header (Settings ▸ Editor). Non-interactive; shows what
+            // the index knows about the right-clicked symbol. Verbose mode adds
+            // the kind, enclosing scope, def-site count, and member list.
+            if ((prefCtxHoverInfo || prefCtxVerbose) && !seg.empty() && !isKeyword)
+            {
+                auto idx = indexSnapshot();
+                bool drewAny = false;
+                if (prefCtxHoverInfo && !lspHoverText.empty() &&
+                    lspHoverText.find(seg) != std::string::npos)
+                {
+                    // clangd hover (types/signatures) when it happens to be cached
+                    // for this word. Trim to a couple of lines for the menu.
+                    std::string h = lspHoverText;
+                    if (h.size() > 200) h = h.substr(0, 200) + "…";
+                    ImGui::PushTextWrapPos(360.0f);
+                    ImGui::TextDisabled("%s", h.c_str());
+                    ImGui::PopTextWrapPos();
+                    drewAny = true;
+                }
+                if (prefCtxVerbose && idx)
+                {
+                    ts::Kind kind = ts::Kind::Unknown;
+                    if (auto dit = idx->tsDefs.find(seg); dit != idx->tsDefs.end() && !dit->second.empty())
+                        kind = dit->second.front().kind;
+                    int defSites = 0;
+                    if (auto dit = idx->tsDefs.find(seg); dit != idx->tsDefs.end())
+                        defSites = (int) dit->second.size();
+                    ImGui::TextDisabled("%s  \xc2\xb7  %s  \xc2\xb7  %d def site%s", seg.c_str(),
+                                        symKindTag(kind), defSites, defSites == 1 ? "" : "s");
+                    if (auto mit = idx->members.find(seg); mit != idx->members.end() && !mit->second.empty())
+                    {
+                        std::string ms = "members: ";
+                        for (size_t i = 0; i < mit->second.size() && i < 12; ++i)
+                            ms += (i ? ", " : "") + mit->second[i];
+                        if (mit->second.size() > 12)
+                            ms += ", … (" + std::to_string(mit->second.size() - 12) + " more)";
+                        ImGui::PushTextWrapPos(360.0f);
+                        ImGui::TextDisabled("%s", ms.c_str());
+                        ImGui::PopTextWrapPos();
+                    }
+                    drewAny = true;
+                }
+                if (drewAny)
+                    ImGui::Separator();
+            }
 
             // Definition = where it's defined (bodies / .cpp). Declaration =
             // where it's declared (prototypes / headers). Both project-wide,
