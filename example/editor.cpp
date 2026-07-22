@@ -5640,6 +5640,99 @@ void Editor::insertIncludeIntoActiveDoc(const std::string &incLine)
     pushToast("Inserted " + incLine, IM_COL32(120, 200, 120, 255));
 }
 
+void Editor::beginRenameInFile(const std::string &word)
+{
+    if (word.empty() || tabs.empty())
+        return;
+    renameSymOld = word;
+    std::snprintf(renameSymBuf, sizeof(renameSymBuf), "%s", word.c_str());
+    renameSymFocus = true;
+    // OpenPopup happens in renderRenameInFilePopup() so it lands on the
+    // top-level popup stack (this is called from inside the editor's own
+    // context-menu popup).
+}
+
+void Editor::renameInFile(const std::string &oldName, const std::string &newName)
+{
+    if (tabs.empty() || oldName.empty() || newName.empty() || newName == oldName)
+        return;
+    auto &t = doc();
+    std::string text = t.editor.GetText();
+    auto isIdent = [](char c) { return std::isalnum((unsigned char) c) || c == '_'; };
+    std::string out;
+    out.reserve(text.size());
+    size_t i = 0, n = text.size(), count = 0;
+    while (i < n)
+    {
+        if (text.compare(i, oldName.size(), oldName) == 0)
+        {
+            bool lb = (i == 0) || !isIdent(text[i - 1]);
+            bool rb = (i + oldName.size() >= n) || !isIdent(text[i + oldName.size()]);
+            if (lb && rb)
+            {
+                out += newName;
+                i += oldName.size();
+                ++count;
+                continue;
+            }
+        }
+        out += text[i++];
+    }
+    if (count == 0)
+    {
+        pushToast("Rename: no whole-word matches of " + oldName, IM_COL32(200, 180, 90, 255));
+        return;
+    }
+    int l = 0, c = 0;
+    t.editor.GetCursor(l, c, 0);
+    t.editor.SelectAll();
+    t.editor.ReplaceTextInCurrentCursor(out); // one undoable transaction
+    t.editor.SetCursor(l, 0);
+    pushToast("Renamed " + std::to_string(count) + " occurrence" + (count == 1 ? "" : "s") +
+                  " of " + oldName,
+              IM_COL32(120, 200, 120, 255));
+}
+
+void Editor::renderRenameInFilePopup()
+{
+    if (renameSymOld.empty())
+        return;
+    if (!ImGui::IsPopupOpen("Rename in File##renameInFile"))
+        ImGui::OpenPopup("Rename in File##renameInFile");
+    // Center the modal over the main viewport on first appearance.
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->GetCenter().x, vp->GetCenter().y), ImGuiCond_Appearing,
+                            ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Rename in File##renameInFile", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::Text("Rename \"%s\" to:", renameSymOld.c_str());
+        if (renameSymFocus)
+        {
+            ImGui::SetKeyboardFocusHere();
+            renameSymFocus = false;
+        }
+        ImGui::SetNextItemWidth(320.0f);
+        bool commit = ImGui::InputText("##renameInput", renameSymBuf, sizeof(renameSymBuf),
+                                       ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::TextDisabled("Whole-word textual replace across this file (undo-safe).");
+        ImGui::Separator();
+        if (ImGui::Button("Rename") || commit)
+        {
+            renameInFile(renameSymOld, renameSymBuf);
+            renameSymOld.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            renameSymOld.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 const std::vector<std::filesystem::path> &Editor::systemIncludeDirs()
 {
     if (sysIncludeComputed_)
@@ -11309,6 +11402,7 @@ void Editor::render()
     renderSettings();
     renderToasts(); // transient Claude-edited notifications, drawn over everything
     renderReplyPopup(); // "Reply to Claude" modal (gutter dot / Dev Tools / toast)
+    renderRenameInFilePopup(); // in-file symbol rename modal
 
     // Diff-against-other file picker — overlay on any state.
     if (diffOtherMode)
@@ -12529,6 +12623,13 @@ void Editor::renderDocumentWindow(TabDocument &t)
             if (navigable && ImGui::MenuItem("Go to Definition"))
             {
                 goToDefinitionProjectWide(qualified, false);
+            }
+            // In-file rename: whole-word textual replace across the active
+            // document (undo-safe). A first slice of full semantic refactor.
+            if (!isKeyword && !seg.empty() && !t.editor.IsReadOnlyEnabled() &&
+                ImGui::MenuItem("Rename in File\xe2\x80\xa6"))
+            {
+                beginRenameInFile(seg);
             }
             // Declaration vs definition only means something where
             // headers exist (C/C++); other languages have a single

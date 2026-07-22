@@ -670,6 +670,15 @@ public:
 	// Insert an #include after the last existing #include of the active doc
 	// (undo-safe, deduped). No-op when there is no active document.
 	void         insertIncludeIntoActiveDoc(const std::string& incLine);
+	// In-file rename: whole-word textual replace of oldName across the active
+	// document, undo-safe. beginRenameInFile opens the rename popup prefilled
+	// with the word under the cursor; renderRenameInFilePopup draws the modal.
+	void         beginRenameInFile(const std::string& word);
+	void         renameInFile(const std::string& oldName, const std::string& newName);
+	void         renderRenameInFilePopup();
+	std::string  renameSymOld;            // identifier being renamed (empty = popup closed)
+	char         renameSymBuf[256] = "";  // new-name edit buffer
+	bool         renameSymFocus = false;  // focus the input on first frame
 	void         navDragSourceSet(const std::string& p) { navDragSource = p; }
 	void         navMoveOrCopy(const std::string& src,
 	                           const std::string& destDir, bool copy);

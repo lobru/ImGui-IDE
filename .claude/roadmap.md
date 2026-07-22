@@ -136,11 +136,15 @@ that is still genuinely outstanding.
       external-root tagging, renderSymbolInspector per-symbol viewer)
 
 ### Bigger features / plugins
-- [ ] Rename/refactor: symbol rename in symbols view / palette / context menu
+- [~] Rename/refactor: symbol rename in symbols view / palette / context menu
       with VS-like affected-files display; general principle — displayed data
       pulled from source is EDITABLE and writes back (edit comment in hover
       tooltip, param changes sync header/source). Possibly a plugin callback
       API for programmatic file/text edits.
+      (first slice: editor right-click "Rename in File…" → whole-word textual
+      replace across the active doc, undo-safe modal. Remaining: cross-file
+      rename w/ affected-files list, symbols-view/palette entry points,
+      editable hover data, plugin edit API.)
 - [~] Structured-data plugin: view/edit .db (sqlite), csv, excel.
       (csvtable plugin: CSV/TSV view+edit with write-back; remaining: sqlite,
       xlsx)
